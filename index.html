@@ -4427,14 +4427,20 @@ document.addEventListener('keydown', e => {
 })();
 
 
-// Show auth screen or boot directly if session exists
+// Show auth screen or boot directly if a valid session exists
 (function init() {
-  const hasToken  = !!localStorage.getItem('rams_token');
-  const isDemo    = !localStorage.getItem('rams_api_url');
-  if (hasToken || isDemo) {
+  const token    = localStorage.getItem('rams_token');
+  const hasUser  = !!localStorage.getItem('rams_user');
+
+  // Only skip login if we have BOTH a token and a stored user
+  // A stale/demo token without a real user still requires login
+  if (token && hasUser) {
     hideAuthScreen();
     bootApp();
   } else {
+    // Clear any partial/stale state before showing login
+    localStorage.removeItem('rams_token');
+    localStorage.removeItem('rams_user');
     showAuthScreen();
   }
 })();
