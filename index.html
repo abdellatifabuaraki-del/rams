@@ -544,7 +544,7 @@ tbody tr:hover td{background:var(--s2);}
 .pill-gray   { background: var(--s2); color: var(--muted); border: 1px solid var(--border); }
 
 /* ═══ TABLE ═══ */
-.table-wrap { overflow-x: auto; overflow-y: visible; }
+.table-wrap { overflow-x: auto; overflow-y: visible; -webkit-overflow-scrolling: touch; }
 table { width: 100%; border-collapse: collapse; }
 thead { position: sticky; top: 0; z-index: 10; }
 th {
@@ -1115,6 +1115,168 @@ tr:hover td { background: var(--s2); }
 /* Auth gate — app hidden until JS confirms valid session */
 #app { display: none !important; }
 #app.session-active { display: flex !important; }
+
+
+/* ── Hamburger button (hidden on desktop) ─── */
+.header-hamburger {
+  display: none;
+  width: 36px; height: 36px;
+  background: none; border: none;
+  cursor: pointer; flex-shrink: 0;
+  align-items: center; justify-content: center;
+  border-radius: 7px; color: var(--text);
+  transition: background .15s;
+}
+.header-hamburger:hover { background: var(--s2); }
+.header-hamburger svg { display: block; }
+
+/* ═══════════════════════════════════════════════════════
+   RESPONSIVE BREAKPOINTS
+   ════════════════════════════════════════════════════════ */
+
+/* ── Tablet (≤1024px) ───────────────────────────────────── */
+@media (max-width: 1024px) {
+  :root { --sw: 220px; }
+
+  .kpi-grid, .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  .dash-grid { grid-template-columns: 1fr; }
+  .dash-grid2 { grid-template-columns: 1fr 1fr; }
+  .analytics-grid { grid-template-columns: 1fr; }
+  .billing-grid { grid-template-columns: 1fr; }
+  .integ-grid { grid-template-columns: repeat(2, 1fr); }
+  .settings-layout { grid-template-columns: 180px 1fr; gap: 14px; }
+  .chat-layout { grid-template-columns: 200px 1fr; }
+
+  .content-pad { padding: 18px 20px; }
+  .pg-hdr { flex-wrap: wrap; }
+  .pg-hdr-r { flex-wrap: wrap; }
+}
+
+/* ── Mobile (≤768px) ────────────────────────────────────── */
+@media (max-width: 768px) {
+  :root { --sw: 0px; --hh: 56px; }
+
+  /* Body scrolls on mobile instead of being locked */
+  body { overflow: auto; height: auto; }
+  .app { flex-direction: column; height: auto; min-height: 100vh; overflow: visible; }
+
+  /* Sidebar becomes a slide-in drawer on mobile */
+  .sidebar {
+    position: fixed; left: 0; top: 0; bottom: 0;
+    width: 260px !important;
+    z-index: 1200;
+    transform: translateX(-100%);
+    transition: transform .25s ease;
+    overflow-y: auto;
+  }
+  .sidebar.mobile-open { transform: translateX(0); }
+
+  /* Mobile sidebar overlay backdrop */
+  .mobile-overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(7,17,43,.5);
+    z-index: 1100;
+    backdrop-filter: blur(2px);
+  }
+  .mobile-overlay.active { display: block; }
+
+  /* Right panel takes full width */
+  .right { width: 100%; min-width: 0; overflow: visible; }
+
+  /* Header: show hamburger, hide search cmd */
+  .header { padding: 0 14px; gap: 8px; }
+  .header-hamburger { display: flex !important; }
+  .search-cmd { display: none; }
+  .hdr-sep { display: none; }
+
+  /* Content scrolls naturally */
+  .content { overflow: visible; height: auto; }
+  .content-pad { padding: 14px 14px 80px; }
+
+  /* Grids → single column */
+  .kpi-grid, .stat-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .dash-grid, .dash-grid2 { grid-template-columns: 1fr; gap: 12px; }
+  .analytics-grid { grid-template-columns: 1fr; }
+  .billing-grid { grid-template-columns: 1fr; }
+  .integ-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .form-row, .form-row-3 { grid-template-columns: 1fr; }
+  .settings-layout { grid-template-columns: 1fr; }
+  .settings-nav { flex-direction: row; flex-wrap: wrap; gap: 4px; margin-bottom: 14px; }
+  .settings-nav-item { padding: 6px 10px; font-size: 12px; }
+  .chat-layout { grid-template-columns: 1fr; height: auto; }
+  .chat-threads { display: none; }
+  .chat-threads.mobile-open { display: flex; }
+
+  /* Page header stacks */
+  .pg-hdr { flex-direction: column; align-items: flex-start; gap: 10px; margin-bottom: 14px; }
+  .pg-hdr-l h1 { font-size: 17px; }
+  .pg-hdr-r { width: 100%; justify-content: flex-start; flex-wrap: wrap; gap: 6px; }
+  .pg-hdr-r .btn { font-size: 12px; padding: 7px 12px; }
+
+  /* Filter bar wraps and stacks */
+  .filter-bar { gap: 6px; }
+  .filter-bar .filter-inp,
+  .filter-bar .filter-sel { font-size: 12px; padding: 7px 10px; }
+
+  /* Tables: scroll horizontally */
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { min-width: 600px; }
+  td, th { padding: 9px 10px; font-size: 12px; }
+
+  /* Cards */
+  .card { padding: 14px; }
+  .stat-card { padding: 14px 12px; }
+  .stat-val { font-size: 24px; }
+
+  /* Kanban scrolls horizontally */
+  .kanban-board { overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 16px; }
+  .kanban-col { min-width: 220px; flex-shrink: 0; }
+
+  /* Drawer full-screen on mobile */
+  .drawer { width: 100% !important; max-width: 100vw; }
+
+  /* Modals full-screen on mobile */
+  .modal {
+    width: 100% !important;
+    max-width: 100% !important;
+    border-radius: 16px 16px 0 0;
+    margin: auto 0 0;
+    max-height: 90vh;
+  }
+  .overlay { align-items: flex-end !important; }
+
+  /* Notifications panel */
+  .notif-panel { right: 8px; left: 8px; width: auto; }
+
+  /* Bulk bar */
+  .bulk-bar { flex-wrap: wrap; gap: 6px; }
+
+  /* Buttons in mobile */
+  .btn-sm { font-size: 12px; padding: 6px 10px; }
+
+  /* RBAC matrix scrolls */
+  .rbac-wrap { overflow-x: auto; }
+
+  /* Billing plan cards */
+  .plan-cards { flex-direction: column; }
+
+  /* Toast stack */
+  #toast-stack { left: 12px; right: 12px; bottom: 12px; }
+  .toast { min-width: 0; width: 100%; }
+}
+
+/* ── Small mobile (≤480px) ──────────────────────────────── */
+@media (max-width: 480px) {
+  .kpi-grid, .stat-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat-val { font-size: 20px; }
+  .stat-lbl { font-size: 11px; }
+  .integ-grid { grid-template-columns: 1fr; }
+  .content-pad { padding: 12px 12px 80px; }
+  .pg-hdr-l h1 { font-size: 15px; }
+  td, th { padding: 8px 8px; font-size: 11.5px; }
+  .btn { font-size: 12px; padding: 7px 11px; }
+}
 </style>
 </style>
 </head>
@@ -1183,6 +1345,11 @@ tr:hover td { background: var(--s2); }
 <div class="right">
   <!-- HEADER -->
   <header class="header" role="banner">
+    <button class="header-hamburger" onclick="toggleMobileSidebar()" aria-label="Open menu" id="hamburger-btn">
+      <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+      </svg>
+    </button>
     <div class="hdr-title">RAMS <span>·</span> <span id="hdr-page-title">Dashboard</span></div>
     <div class="search-cmd" onclick="openCmd()" role="button" tabindex="0" aria-label="Open command palette">
       <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -1640,7 +1807,7 @@ tr:hover td { background: var(--s2); }
       <div class="card">
         <div style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:14px;font-weight:800">Permission Matrix</div>
         <div class="table-wrap">
-          <table class="rbac-table" id="rbac-matrix" style="width:100%;border-collapse:collapse" role="grid" aria-label="Permission matrix"></table>
+          <table class="rbac-table" id="rbac-matrix" class="rbac-wrap" style="width:100%;border-collapse:collapse" role="grid" aria-label="Permission matrix"></table>
         </div>
       </div>
     </div>
@@ -1913,6 +2080,9 @@ tr:hover td { background: var(--s2); }
 
 <!-- Toast Stack -->
 <div id="toast-stack" role="alert" aria-live="polite" aria-atomic="false"></div>
+
+<!-- Mobile sidebar overlay -->
+<div class="mobile-overlay" id="mobile-overlay" onclick="toggleMobileSidebar()"></div>
 
 <!-- LOGIN SCREEN -->
 <div id="auth-screen" style="display:flex;position:fixed;inset:0;z-index:9999;background:var(--bg);align-items:center;justify-content:center;flex-direction:column">
@@ -3816,6 +3986,68 @@ document.addEventListener('keydown', e => {
 
 // Show auth screen or boot directly if a valid session exists
 // ── INIT — runs immediately, auth screen is default visible ──────────────────
+
+// ════════════════════════════════════════════════════════
+// MOBILE / RESPONSIVE
+// ════════════════════════════════════════════════════════
+
+function toggleMobileSidebar() {
+  const sidebar  = document.getElementById('sidebar');
+  const overlay  = document.getElementById('mobile-overlay');
+  const isOpen   = sidebar.classList.contains('mobile-open');
+  if (isOpen) {
+    sidebar.classList.remove('mobile-open');
+    overlay.classList.remove('active');
+    document.body.style.overflow = '';
+  } else {
+    sidebar.classList.add('mobile-open');
+    overlay.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
+}
+
+function closeMobileSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('mobile-overlay');
+  sidebar.classList.remove('mobile-open');
+  overlay.classList.remove('active');
+  document.body.style.overflow = '';
+}
+
+// Close sidebar when a nav item is tapped on mobile
+document.querySelectorAll('.sb-item').forEach(item => {
+  item.addEventListener('click', () => {
+    if (window.innerWidth <= 768) closeMobileSidebar();
+  });
+});
+
+// Handle resize — reset mobile sidebar state when going desktop
+window.addEventListener('resize', () => {
+  if (window.innerWidth > 768) {
+    closeMobileSidebar();
+    document.body.style.overflow = '';
+  }
+});
+
+// Swipe to open sidebar from left edge
+(function initSwipeGesture() {
+  let touchStartX = 0;
+  let touchStartY = 0;
+  document.addEventListener('touchstart', e => {
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+  }, { passive: true });
+  document.addEventListener('touchend', e => {
+    if (window.innerWidth > 768) return;
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    const dy = Math.abs(e.changedTouches[0].clientY - touchStartY);
+    // Swipe right from left edge to open
+    if (touchStartX < 30 && dx > 60 && dy < 80) toggleMobileSidebar();
+    // Swipe left to close
+    if (dx < -60 && dy < 80) closeMobileSidebar();
+  }, { passive: true });
+})();
+
 (function init() {
   try {
     const token  = localStorage.getItem('rams_token');
