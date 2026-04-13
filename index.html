@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 
 <!-- Primary Meta -->
 <title>RAMS — Recruitment Agency Management System</title>
@@ -1116,7 +1119,7 @@ tr:hover td { background: var(--s2); }
 </style>
 </head>
 <body>
-<div class="app" id="app" style="display:none">
+<div class="app" id="app">
 <aside class="sidebar" id="sidebar">
   <div class="sb-logo">
     <div class="sb-logo-mark">R</div>
@@ -2534,7 +2537,7 @@ tr:hover td { background: var(--s2); }
 <div id="toast-stack" role="alert" aria-live="polite" aria-atomic="false"></div>
 
 <!-- LOGIN SCREEN -->
-<div id="auth-screen" style="display:none;position:fixed;inset:0;z-index:9999;background:var(--bg);align-items:center;justify-content:center;flex-direction:column">
+<div id="auth-screen" style="display:flex;position:fixed;inset:0;z-index:9999;background:var(--bg);align-items:center;justify-content:center;flex-direction:column">
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:40px 36px;width:100%;max-width:400px;box-shadow:var(--lg)">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:28px">
       <div style="width:36px;height:36px;background:var(--brand);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:#fff">RM</div>
@@ -4434,25 +4437,37 @@ document.addEventListener('keydown', e => {
 
 
 // Show auth screen or boot directly if a valid session exists
+// ── INIT — runs immediately, auth screen is default visible ──────────────────
 (function init() {
-  const token   = localStorage.getItem('rams_token');
-  const hasUser = !!localStorage.getItem('rams_user');
-  const apiUrl  = localStorage.getItem('rams_api_url');
+  try {
+    const token  = localStorage.getItem('rams_token');
+    const user   = localStorage.getItem('rams_user');
+    const apiUrl = localStorage.getItem('rams_api_url');
 
-  // Only auto-login if:
-  // 1. We have a real API URL (not demo mode)
-  // 2. We have both a token and a stored user
-  const isRealSession = token && hasUser && apiUrl && token !== 'demo';
+    // Only restore session if ALL THREE exist AND token is not the demo placeholder
+    const validSession = token && user && apiUrl && token !== 'demo' && token.length > 10;
 
-  if (isRealSession) {
-    hideAuthScreen();
-    bootApp();
-  } else {
-    // Clear any stale or demo session — always show login fresh
-    localStorage.removeItem('rams_token');
-    localStorage.removeItem('rams_user');
-    // Keep rams_api_url so the field is pre-filled on the login screen
-    showAuthScreen();
+    if (validSession) {
+      // Confirmed real session — hide auth screen and boot
+      document.getElementById('auth-screen').style.display = 'none';
+      const appEl = document.getElementById('app');
+      appEl.classList.add('session-active');
+      appEl.style.display = 'flex';
+      bootApp();
+    } else {
+      // No valid session — wipe everything and stay on auth screen
+      localStorage.removeItem('rams_token');
+      localStorage.removeItem('rams_user');
+      // Pre-fill the API URL field if previously saved
+      const urlInput = document.getElementById('api-url-input');
+      if (urlInput && apiUrl) urlInput.value = apiUrl;
+      const emailInput = document.getElementById('login-email');
+      if (emailInput) emailInput.focus();
+    }
+  } catch(e) {
+    // Any error → show auth screen (fail safe)
+    console.error('Init error:', e);
+    localStorage.clear();
   }
 })();
 </script>
