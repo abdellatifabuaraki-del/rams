@@ -1108,6 +1108,10 @@ tr:hover td { background: var(--s2); }
   animation: slideUp .2s var(--transition);
 }
 .bulk-bar span { font-size: 13px; font-weight: 700; flex: 1; }
+
+/* Auth gate — app hidden until JS confirms valid session */
+#app { display: none !important; }
+#app.session-active { display: flex !important; }
 </style>
 </style>
 </head>
@@ -2624,7 +2628,9 @@ function showAuthScreen() {
 }
 function hideAuthScreen() {
   document.getElementById('auth-screen').style.display = 'none';
-  document.getElementById('app').style.display = 'flex';
+  const appEl = document.getElementById('app');
+  appEl.classList.add('session-active');
+  appEl.style.display = 'flex';
 }
 async function handleLogin() {
   const email = document.getElementById('login-email').value.trim();
@@ -4429,18 +4435,23 @@ document.addEventListener('keydown', e => {
 
 // Show auth screen or boot directly if a valid session exists
 (function init() {
-  const token    = localStorage.getItem('rams_token');
-  const hasUser  = !!localStorage.getItem('rams_user');
+  const token   = localStorage.getItem('rams_token');
+  const hasUser = !!localStorage.getItem('rams_user');
+  const apiUrl  = localStorage.getItem('rams_api_url');
 
-  // Only skip login if we have BOTH a token and a stored user
-  // A stale/demo token without a real user still requires login
-  if (token && hasUser) {
+  // Only auto-login if:
+  // 1. We have a real API URL (not demo mode)
+  // 2. We have both a token and a stored user
+  const isRealSession = token && hasUser && apiUrl && token !== 'demo';
+
+  if (isRealSession) {
     hideAuthScreen();
     bootApp();
   } else {
-    // Clear any partial/stale state before showing login
+    // Clear any stale or demo session — always show login fresh
     localStorage.removeItem('rams_token');
     localStorage.removeItem('rams_user');
+    // Keep rams_api_url so the field is pre-filled on the login screen
     showAuthScreen();
   }
 })();
