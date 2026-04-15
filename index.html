@@ -391,25 +391,25 @@ tbody tr:hover td{background:var(--s2);}
   </div>
   <div class="sb-section">
     <div class="sb-sec-lbl">Core</div>
-    <div class="sb-item active" onclick="go('dashboard',this)"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span class="sb-label">Dashboard</span></div>
-    <div class="sb-item" onclick="go('pipeline',this)"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span class="sb-label">Pipeline</span><span class="sb-badge" id="sb-pipeline-count">0</span></div>
-    <div class="sb-item" onclick="go('applicants',this)"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span class="sb-label">Applicants</span><span class="sb-badge" id="sb-app-count">0</span></div>
-    <div class="sb-item" onclick="go('documents',this)"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span class="sb-label">Documents</span><span class="sb-badge red" id="sb-doc-count">0</span></div>
-    <div class="sb-item" onclick="go('joborders',this)"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg><span class="sb-label">Job Orders</span><span class="sb-badge" id="sb-job-count">0</span></div>
+    <div class="sb-item active" onclick="go('dashboard',this)" data-page="dashboard"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span class="sb-label">Dashboard</span></div>
+    <div class="sb-item" onclick="go('pipeline',this)" data-page="pipeline"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span class="sb-label">Pipeline</span><span class="sb-badge" id="sb-pipeline-count">0</span></div>
+    <div class="sb-item" onclick="go('applicants',this)" data-page="applicants"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span class="sb-label">Applicants</span><span class="sb-badge" id="sb-app-count">0</span></div>
+    <div class="sb-item" onclick="go('documents',this)" data-page="documents"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span class="sb-label">Documents</span><span class="sb-badge red" id="sb-doc-count">0</span></div>
+    <div class="sb-item" onclick="go('joborders',this)" data-page="jobs"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg><span class="sb-label">Job Orders</span><span class="sb-badge" id="sb-job-count">0</span></div>
   </div>
   <div class="sb-section">
     <div class="sb-sec-lbl">Analytics</div>
-    <div class="sb-item" onclick="go('analytics',this)"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span class="sb-label">Analytics</span></div>
-    <div class="sb-item" onclick="go('accounting',this)"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><span class="sb-label">Accounting</span></div>
-    <div class="sb-item" onclick="go('audit',this)"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span class="sb-label">Audit Trail</span></div>
+    <div class="sb-item" onclick="go('analytics',this)" data-page="analytics"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span class="sb-label">Analytics</span></div>
+    <div class="sb-item" onclick="go('accounting',this)" data-page="accounting"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><span class="sb-label">Accounting</span></div>
+    <div class="sb-item" onclick="go('audit',this)" data-page="audit"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span class="sb-label">Audit Trail</span></div>
   </div>
   <div class="sb-section">
     <div class="sb-sec-lbl">Workspace</div>
-    <div class="sb-item" onclick="go('chat',this)"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="sb-label">Chat</span><span class="sb-badge amber" id="sb-chat-count">5</span></div>
-    <div class="sb-item" onclick="go('integrations',this)"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><line x1="12" y1="8" x2="5" y2="16"/><line x1="12" y1="8" x2="19" y2="16"/></svg><span class="sb-label">Integrations</span></div>
+    <div class="sb-item" onclick="go('chat',this)" data-page="chat"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="sb-label">Chat</span><span class="sb-badge amber" id="sb-chat-count">5</span></div>
+    <div class="sb-item" onclick="go('integrations',this)" data-page="integrations"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><line x1="12" y1="8" x2="5" y2="16"/><line x1="12" y1="8" x2="19" y2="16"/></svg><span class="sb-label">Integrations</span></div>
 
-    <div class="sb-item" onclick="go('roles',this)"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg><span class="sb-label">Roles & Permissions</span></div>
-    <div class="sb-item" onclick="go('settings',this)"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg><span class="sb-label">Settings</span></div>
+    <div class="sb-item" onclick="go('roles',this)" data-page="roles"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg><span class="sb-label">Roles & Permissions</span></div>
+    <div class="sb-item" onclick="go('settings',this)" data-page="settings"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg><span class="sb-label">Settings</span></div>
   </div>
   <div class="sb-footer">
 
@@ -458,7 +458,7 @@ tbody tr:hover td{background:var(--s2);}
         <div class="notif-foot"><button class="btn btn-ghost btn-xs" style="font-size:11.5px;color:var(--brand)">View all activity</button></div>
       </div>
     </div>
-    <div class="hdr-avatar" data-tip="Maria Aguilar" onclick="nav('settings')" aria-label="User profile" role="button" tabindex="0">MA</div>
+    <div class="hdr-avatar" id="hdr-avatar" data-tip="Maria Aguilar" onclick="nav('settings')" aria-label="User profile" role="button" tabindex="0">MA</div>
   </header>
 
   <!-- CONTENT -->
@@ -1243,7 +1243,7 @@ let currentSettingsSection = 'general';
 const PAGE_TITLES = {
   dashboard:'Dashboard', pipeline:'Pipeline', applicants:'Applicants',
   documents:'Documents', jobs:'Job Orders', analytics:'Analytics',
-  accounting:'Accounting', audit:'Audit Trail',
+  accounting:'Accounting', audit:'Audit Trail', chat:'Chat', integrations:'Integrations', settings:'Settings', roles:'Roles & Permissions',
   chat:'Team Chat', integrations:'Integrations', settings:'Settings', roles:'Roles & Permissions'
 };
 
@@ -1760,7 +1760,7 @@ function renderApplicants() {
   const pages = Math.ceil(total/APP_PER_PAGE);
   document.getElementById('pg-info').textContent = `${Math.min(start+1,total)}–${Math.min(start+APP_PER_PAGE,total)} of ${total}`;
   document.getElementById('applicant-count-label').textContent = `${total} applicant${total!==1?'s':''}`;
-  document.getElementById('sb-applicant-cnt').textContent = DB.applicants.length;
+  document.getElementById('sb-app-count').textContent = DB.applicants.length;
   renderPagination(pages);
   updateBulkBar();
 }
@@ -1936,7 +1936,7 @@ function renderDocs() {
       </div>
     </div>
   `).join('');
-  document.getElementById('sb-doc-cnt').textContent = DB.documents.filter(d=>d.status==='Pending').length;
+  document.getElementById('sb-doc-count').textContent = DB.documents.filter(d=>d.status==='Pending').length;
 }
 function approveDoc(id) {
   const d = DB.documents.find(x=>x.id===id);
@@ -1993,7 +1993,7 @@ function renderJobs() {
       </td>
     </tr>
   `).join('') : `<tr><td colspan="9"><div class="empty-state"><div class="empty-icon">💼</div><div class="empty-title">No job orders found</div></div></td></tr>`;
-  document.getElementById('sb-job-cnt').textContent = DB.jobs.filter(j=>j.status==='Open').length;
+  document.getElementById('sb-job-count').textContent = DB.jobs.filter(j=>j.status==='Open').length;
 }
 function openAddJob() {
   document.getElementById('j-title').value=''; document.getElementById('j-employer').value='';
@@ -2247,6 +2247,65 @@ function switchSettings(section, el) {
   if (el) el.classList.add('active');
   renderSettings();
 }
+// ════════════════════════════════════════════════════════
+// SETTINGS DATA
+// ════════════════════════════════════════════════════════
+const SETTINGS_SECTIONS = {
+  general: {
+    title: 'General Settings',
+    fields: [
+      { lbl: 'Agency Name',        sub: 'Your company name shown across the system',       type: 'input',  value: 'Recruitment Company' },
+      { lbl: 'System Language',    sub: 'Interface language',                               type: 'select', opts: ['English','Arabic','French'] },
+      { lbl: 'Timezone',           sub: 'Used for timestamps and scheduling',               type: 'select', opts: ['Asia/Manila (UTC+8)','UTC','Asia/Dubai (UTC+4)'] },
+      { lbl: 'Date Format',        sub: 'How dates are displayed across the system',        type: 'select', opts: ['DD/MM/YYYY','MM/DD/YYYY','YYYY-MM-DD'] },
+      { lbl: 'Dark Mode',          sub: 'Toggle dark/light theme',                         type: 'toggle', value: false },
+    ]
+  },
+  agency: {
+    title: 'Agency Profile',
+    fields: [
+      { lbl: 'Agency License No.', sub: 'POEA/government-issued license number',           type: 'input',  value: '' },
+      { lbl: 'Country',            sub: 'Country of operation',                             type: 'input',  value: 'Philippines' },
+      { lbl: 'Address',            sub: 'Physical office address',                          type: 'input',  value: '' },
+      { lbl: 'Contact Email',      sub: 'Primary contact email for the agency',             type: 'input',  value: '' },
+      { lbl: 'Contact Phone',      sub: 'Primary phone number',                             type: 'input',  value: '' },
+    ]
+  },
+  notifications: {
+    title: 'Notifications',
+    fields: [
+      { lbl: 'Email Notifications', sub: 'Send email alerts for important events',         type: 'toggle', value: true },
+      { lbl: 'Applicant Updates',   sub: 'Notify when applicant status changes',           type: 'toggle', value: true },
+      { lbl: 'Document Alerts',     sub: 'Notify when documents need review',              type: 'toggle', value: true },
+      { lbl: 'Job Order Alerts',    sub: 'Notify when job orders are near deadline',       type: 'toggle', value: false },
+      { lbl: 'System Alerts',       sub: 'Critical system and security alerts',            type: 'toggle', value: true },
+    ]
+  },
+  security: {
+    title: 'Security',
+    fields: [
+      { lbl: 'Two-Factor Authentication', sub: 'Require 2FA for all admin accounts',      type: 'toggle', value: false },
+      { lbl: 'Session Timeout',    sub: 'Auto-logout after inactivity',                   type: 'select', opts: ['30 minutes','1 hour','4 hours','Never'] },
+      { lbl: 'Password Policy',    sub: 'Enforce strong password requirements',            type: 'toggle', value: true },
+      { lbl: 'Login Audit Log',    sub: 'Track all login attempts',                       type: 'toggle', value: true },
+      { lbl: 'Change Password',    sub: 'Update your account password',                   type: 'button', lbl2: 'Change Password', danger: false },
+    ]
+  },
+  users: {
+    title: 'Users & Access',
+    fields: []
+  },
+  data: {
+    title: 'Data Management',
+    fields: [
+      { lbl: 'Export All Data',    sub: 'Download a full CSV export of all records',       type: 'button', lbl2: 'Export Data',    danger: false },
+      { lbl: 'Backup Database',    sub: 'Create a backup of the current database',         type: 'button', lbl2: 'Create Backup',  danger: false },
+      { lbl: 'Clear Audit Log',    sub: 'Permanently delete all audit trail entries',      type: 'button', lbl2: 'Clear Audit Log',danger: true },
+      { lbl: 'Reset Demo Data',    sub: 'Restore the system to default demo state',        type: 'button', lbl2: 'Reset Data',      danger: true },
+    ]
+  },
+};
+
 function renderSettings() {
   const sec = SETTINGS_SECTIONS[currentSettingsSection];
   if (!sec) return;
@@ -2459,6 +2518,13 @@ document.getElementById('li-btn').addEventListener('click',_doLogin);
 document.getElementById('li-email').addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();document.getElementById('li-pass').focus();}});
 document.getElementById('li-pass').addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();_doLogin();}});
 // Init
+
+// ── Navigation alias (HTML uses go(), JS uses nav()) ─────────────────────────
+const PAGE_ALIAS = { joborders: 'jobs' };
+function go(page, el) {
+  nav(PAGE_ALIAS[page] || page);
+}
+
 (function(){
   try{
     var t=localStorage.getItem('rams_token');
