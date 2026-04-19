@@ -905,6 +905,74 @@ tr:hover td{background:var(--s2);}
   transition:opacity .15s;
 }
 @media (hover:none) { .doc-preview-btn { opacity:1; } }
+
+/* ── Permission matrix toggle buttons ───────────────────── */
+.perm-toggle {
+  width: 34px; height: 28px;
+  border-radius: 6px;
+  border: 1.5px solid transparent;
+  font-size: 13px; font-weight: 700;
+  cursor: pointer;
+  transition: all .12s;
+  font-family: 'Bricolage Grotesque', sans-serif;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.perm-on {
+  background: var(--gbg);
+  color: var(--green);
+  border-color: #86efac;
+}
+.perm-on:hover {
+  background: var(--green);
+  color: #fff;
+  border-color: var(--green);
+}
+.perm-off {
+  background: var(--s2);
+  color: var(--muted);
+  border-color: var(--border);
+}
+.perm-off:hover {
+  background: var(--rbg);
+  color: var(--red);
+  border-color: #fca5a5;
+}
+#rbac-matrix { table-layout: fixed; }
+#rbac-matrix td, #rbac-matrix th { padding: 8px 6px; vertical-align: middle; }
+#rbac-matrix tbody tr:hover { background: var(--s2); }
+
+/* ── Sidebar expand button (shown when collapsed) ────────── */
+.sb-expand-btn {
+  display: none;
+  position: absolute;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: var(--brand);
+  border: none;
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(20,71,230,.4);
+  transition: background .15s, transform .15s;
+  z-index: 10;
+}
+.sb-expand-btn:hover {
+  background: var(--brand-d);
+  transform: translateX(-50%) scale(1.1);
+}
+.sidebar.collapsed .sb-expand-btn {
+  display: flex;
+}
+.sidebar.collapsed .sb-collapse-btn {
+  display: none;
+}
+/* Sidebar position relative for expand button positioning */
+.sidebar { position: relative; }
 </style>
 </head>
 <body>
@@ -937,7 +1005,7 @@ tr:hover td{background:var(--s2);}
   <div class="sb-logo">
     <div class="sb-logo-mark">R</div>
     <div style="min-width:0"><div class="sb-logo-text">RAMS</div><div class="sb-logo-ver">Recruitment System</div></div>
-    <button class="sb-collapse-btn" onclick="toggleSidebar()">◀</button>
+    <button class="sb-collapse-btn" id="sb-toggle-btn" onclick="toggleSidebar()" title="Toggle sidebar" aria-label="Toggle sidebar">◀</button>
   </div>
   <div class="sb-org" style="cursor:default">
     <div class="sb-org-icon">RC</div>
@@ -994,6 +1062,9 @@ tr:hover td{background:var(--s2);}
       </button>
     </div>
   </div>
+  <!-- Expand button — shown only when sidebar is collapsed -->
+  <button class="sb-expand-btn" id="sb-expand-btn" onclick="toggleSidebar()"
+          title="Expand sidebar" aria-label="Expand sidebar">▶</button>
 </aside>
 
 <div class="right">
@@ -1728,8 +1799,11 @@ tr:hover td{background:var(--s2);}
       <div class="pg-hdr">
         <div class="pg-hdr-l"><h1>Roles & Permissions</h1><p>Define what each role can access and do.</p></div>
         <div class="pg-hdr-r">
-          <button class="btn btn-s btn-sm" onclick="exportData('roles')">Export Matrix</button>
-          <button class="btn btn-p btn-sm" onclick="toast('Custom role builder coming soon','info')">+ Custom Role</button>
+          <button class="btn btn-ghost btn-sm" onclick="resetPermissions()">↺ Reset</button>
+          <button class="btn btn-s btn-sm" onclick="savePermissions()">💾 Save Permissions</button>
+          <button class="btn btn-s btn-sm" onclick="exportData('roles')">⬇ Export</button>
+          <button class="btn btn-s btn-sm" onclick="openCreateUser()">+ Create User</button>
+          <button class="btn btn-p btn-sm" onclick="openAddRole()">+ Custom Role</button>
         </div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px" id="role-cards"></div>
@@ -2210,7 +2284,12 @@ function nav(page) {
 // SIDEBAR
 // ════════════════════════════════════════════════════════
 function toggleSidebar() {
-  document.getElementById('sidebar').classList.toggle('collapsed');
+  var sb  = document.getElementById('sidebar');
+  var btn = document.getElementById('sb-toggle-btn');
+  var collapsed = sb.classList.toggle('collapsed');
+  if (btn) btn.textContent = collapsed ? '▶' : '◀';
+  // Store state
+  try { localStorage.setItem('rams_sb_collapsed', collapsed ? '1' : '0'); } catch(e) {}
 }
 function toggleRoleDropdown() {
   document.getElementById('role-dropdown').classList.toggle('open');
@@ -3612,21 +3691,104 @@ const PERMISSIONS=[
   ['View Dashboard',true,true,true,true,true,true],
 ];
 function renderRoles() {
-  document.getElementById('role-cards').innerHTML = ROLES_CONFIG.map(r=>`
-    <div class="card cp card-hover" style="cursor:default">
+  document.getElementById('role-cards').innerHTML = ROLES_CONFIG.map((r,ri)=>`
+    <div class="card cp" style="position:relative">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
         <div style="width:32px;height:32px;border-radius:8px;background:${r.color}20;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:${r.color}">${r.name[0]}</div>
-        <div style="font-size:13.5px;font-weight:800">${r.name}</div>
+        <div style="flex:1">
+          <div style="font-size:13.5px;font-weight:800">${r.name}</div>
+          <div style="font-size:11px;color:var(--dim)">${r.users} user${r.users!==1?'s':''}</div>
+        </div>
       </div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">${r.desc}</div>
-      <div style="font-size:11px;font-family:'IBM Plex Mono',monospace;color:var(--dim)">${r.users} user${r.users!==1?'s':''}</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">${r.desc}</div>
+      <div class="role-actions">
+        <button class="btn btn-s btn-sm" style="flex:1" onclick="editRole(${ri})">✏ Edit</button>
+        <button class="btn btn-danger btn-xs" onclick="deleteRole(${ri})">✕</button>
+      </div>
     </div>
   `).join('');
+
   const matrix = document.getElementById('rbac-matrix');
   const roleNames = ROLES_CONFIG.map(r=>r.name);
-  matrix.innerHTML=`<thead><tr><th style="text-align:left">Permission</th>${roleNames.map(r=>`<th>${r}</th>`).join('')}</tr></thead><tbody>${
-    PERMISSIONS.map(([perm,...perms])=>`<tr><td>${perm}</td>${perms.map(p=>`<td><span class="${p?'rbac-check':'rbac-x'}">${p?'✓':'·'}</span></td>`).join('')}</tr>`).join('')
-  }</tbody>`;
+
+  matrix.innerHTML = '<thead><tr>'
+    + '<th style="text-align:left;min-width:180px">Permission</th>'
+    + roleNames.map((r,ri)=>`<th style="text-align:center;min-width:90px">
+        <div style="font-size:12px;font-weight:700">${r}</div>
+      </th>`).join('')
+    + '</tr></thead><tbody>'
+    + PERMISSIONS.map(([perm,...vals], pi)=>`<tr>
+        <td style="font-size:12.5px;font-weight:600;color:var(--text2)">${perm}</td>
+        ${vals.map((v,ri)=>`
+          <td style="text-align:center">
+            <button class="perm-toggle ${v?'perm-on':'perm-off'}"
+                    onclick="togglePermission(${pi},${ri})"
+                    title="${v?'Revoke':'Grant'} ${perm} for ${roleNames[ri]}"
+                    aria-label="${perm} - ${roleNames[ri]}: ${v?'Allowed':'Denied'}"
+                    aria-pressed="${v}">
+              ${v?'✓':'✕'}
+            </button>
+          </td>`).join('')}
+      </tr>`).join('')
+    + '</tbody>';
+}
+
+function togglePermission(permIdx, roleIdx) {
+  PERMISSIONS[permIdx][roleIdx + 1] = !PERMISSIONS[permIdx][roleIdx + 1];
+  var val = PERMISSIONS[permIdx][roleIdx + 1];
+  // Update just this button without full re-render (performance)
+  var matrix = document.getElementById('rbac-matrix');
+  var rows = matrix.querySelectorAll('tbody tr');
+  if (rows[permIdx]) {
+    var btns = rows[permIdx].querySelectorAll('.perm-toggle');
+    if (btns[roleIdx]) {
+      btns[roleIdx].textContent = val ? '✓' : '✕';
+      btns[roleIdx].className = 'perm-toggle ' + (val ? 'perm-on' : 'perm-off');
+      btns[roleIdx].setAttribute('aria-pressed', val);
+      btns[roleIdx].title = (val ? 'Revoke ' : 'Grant ') + PERMISSIONS[permIdx][0] + ' for ' + ROLES_CONFIG[roleIdx].name;
+    }
+  }
+  // Mark as unsaved
+  var saveBtn = document.querySelector('[onclick="savePermissions()"]');
+  if (saveBtn && !saveBtn.dataset.dirty) {
+    saveBtn.dataset.dirty = '1';
+    saveBtn.textContent = '💾 Save Permissions*';
+    saveBtn.style.background = 'var(--amber)';
+    saveBtn.style.color = '#fff';
+  }
+}
+
+var _permissionsOriginal = null;
+
+function savePermissions() {
+  _permissionsOriginal = PERMISSIONS.map(row => row.slice());
+  addAudit('UPDATE', 'Roles', 'Permission matrix updated');
+  toast('Permissions saved', 'success');
+  var saveBtn = document.querySelector('[onclick="savePermissions()"]');
+  if (saveBtn) {
+    saveBtn.removeAttribute('data-dirty');
+    saveBtn.textContent = '💾 Save Permissions';
+    saveBtn.style.background = '';
+    saveBtn.style.color = '';
+  }
+}
+
+function resetPermissions() {
+  if (!confirm('Reset all permissions to last saved state?')) return;
+  if (_permissionsOriginal) {
+    _permissionsOriginal.forEach(function(row, i) {
+      PERMISSIONS[i] = row.slice();
+    });
+  }
+  renderRoles();
+  toast('Permissions reset', 'info');
+  var saveBtn = document.querySelector('[onclick="savePermissions()"]');
+  if (saveBtn) {
+    saveBtn.removeAttribute('data-dirty');
+    saveBtn.textContent = '💾 Save Permissions';
+    saveBtn.style.background = '';
+    saveBtn.style.color = '';
+  }
 }
 
 // ════════════════════════════════════════════════════════
@@ -3763,6 +3925,15 @@ function go(page, el) {
 }
 
 (function(){
+  try {
+    var sbState = localStorage.getItem('rams_sb_collapsed');
+    if (sbState === '1') {
+      var sb  = document.getElementById('sidebar');
+      var btn = document.getElementById('sb-toggle-btn');
+      if (sb)  sb.classList.add('collapsed');
+      if (btn) btn.textContent = '▶';
+    }
+  } catch(e) {}
   try{
     var t=localStorage.getItem('rams_token');
     var u=JSON.parse(localStorage.getItem('rams_user')||'null');
@@ -3962,17 +4133,6 @@ document.addEventListener('DOMContentLoaded', function() {
 // ════════════════════════════════════════════════════════
 // USER MANAGEMENT (Admin)
 // ════════════════════════════════════════════════════════
-function openCreateUser() {
-  document.getElementById('user-modal-title').textContent = 'Create New User';
-  document.getElementById('u-name').value = '';
-  document.getElementById('u-email').value = '';
-  document.getElementById('u-role').value = 'Recruiter';
-  document.getElementById('u-status').value = 'Active';
-  document.getElementById('u-password').value = '';
-  document.getElementById('u-error').style.display = 'none';
-  openOverlay('overlay-create-user');
-  setTimeout(function(){ document.getElementById('u-name').focus(); }, 100);
-}
 
 function submitCreateUser() {
   var name     = document.getElementById('u-name').value.trim();
@@ -4060,6 +4220,8 @@ var editingUserIdx = -1;
 function openCreateUser() {
   editingUserIdx = -1;
   document.getElementById('user-modal-title').textContent = 'Create New User';
+  var btn = document.getElementById('submit-user-btn');
+  if (btn) btn.textContent = 'Create User';
   document.getElementById('u-name').value = '';
   document.getElementById('u-email').value = '';
   document.getElementById('u-role').value = 'Recruiter';
@@ -4076,6 +4238,8 @@ function openEditUser(idx) {
   if (!u) return;
   editingUserIdx = idx;
   document.getElementById('user-modal-title').textContent = 'Edit User';
+  var btn = document.getElementById('submit-user-btn');
+  if (btn) btn.textContent = 'Save Changes';
   document.getElementById('u-name').value = u.name;
   document.getElementById('u-email').value = u.email;
   document.getElementById('u-role').value = u.role;
@@ -6212,70 +6376,30 @@ function deleteDocFromPreview() {
   </div>
 </div>
 
-<!-- Create / Edit User Modal -->
-<div class="overlay" id="overlay-user" onclick="closeOverlayIfBg(event,'overlay-user')" role="dialog" aria-modal="true">
-  <div class="modal modal-sm">
-    <div class="modal-hdr">
-      <div><h2 id="user-modal-title">Create New User</h2><p>Add a team member to the system</p></div>
-      <button class="close-btn" onclick="closeOverlay('overlay-user')" aria-label="Close">✕</button>
-    </div>
-    <div class="modal-body">
-      <div class="f-grp">
-        <label class="f-lbl">Full Name <span class="req">*</span></label>
-        <input class="f-inp" type="text" id="u-name" placeholder="e.g. Maria Santos">
-      </div>
-      <div class="f-grp">
-        <label class="f-lbl">Email Address <span class="req">*</span></label>
-        <input class="f-inp" type="email" id="u-email" placeholder="maria@company.com" autocomplete="off">
-      </div>
-      <div class="f-row">
-        <div class="f-grp">
-          <label class="f-lbl">Role <span class="req">*</span></label>
-          <select class="f-inp" id="u-role">
-            <option value="Admin">Admin</option>
-            <option value="Recruiter" selected>Recruiter</option>
-            <option value="Manager">Manager</option>
-            <option value="Finance">Finance</option>
-            <option value="Compliance">Compliance</option>
-            <option value="Viewer">Viewer</option>
-          </select>
-        </div>
-        <div class="f-grp">
-          <label class="f-lbl">Status</label>
-          <select class="f-inp" id="u-status">
-            <option value="Active">Active</option>
-            <option value="Inactive">Inactive</option>
-          </select>
-        </div>
-      </div>
-      <div class="f-grp">
-        <label class="f-lbl">Password <span class="req">*</span></label>
-        <input class="f-inp" type="password" id="u-password" placeholder="Min. 8 characters" autocomplete="new-password">
-      </div>
-      <div id="u-error" style="display:none;color:var(--red);font-size:12.5px;margin-top:8px;padding:8px 12px;background:var(--rbg);border-radius:7px;border:1px solid var(--red);"></div>
-    </div>
-    <div class="modal-foot">
-      <button class="btn btn-ghost" onclick="closeOverlay('overlay-user')">Cancel</button>
-      <button class="btn btn-p" onclick="submitCreateUser()">Create User</button>
-    </div>
-  </div>
-</div>
+
 
 <!-- Create / Edit User Modal -->
-<div class="overlay" id="overlay-user" onclick="closeOverlayIfBg(event,'overlay-user')" role="dialog" aria-modal="true">
-  <div class="modal modal-sm">
+<div class="overlay" id="overlay-create-user"
+     onclick="closeOverlayIfBg(event,'overlay-create-user')"
+     role="dialog" aria-modal="true" aria-label="Create user">
+  <div class="modal modal-md">
     <div class="modal-hdr">
-      <div><h2 id="user-modal-title">Create New User</h2><p>Add a team member to the system</p></div>
-      <button class="close-btn" onclick="closeOverlay('overlay-user')" aria-label="Close">✕</button>
+      <div>
+        <h2 id="user-modal-title">Create New User</h2>
+        <p>Add a team member with role-based access</p>
+      </div>
+      <button class="close-btn" onclick="closeOverlay('overlay-create-user')" aria-label="Close">✕</button>
     </div>
     <div class="modal-body">
-      <div class="f-grp">
-        <label class="f-lbl">Full Name <span class="req">*</span></label>
-        <input class="f-inp" type="text" id="u-name" placeholder="e.g. Maria Santos">
-      </div>
-      <div class="f-grp">
-        <label class="f-lbl">Email Address <span class="req">*</span></label>
-        <input class="f-inp" type="email" id="u-email" placeholder="maria@company.ph" autocomplete="off">
+      <div class="f-row">
+        <div class="f-grp">
+          <label class="f-lbl">Full Name <span class="req">*</span></label>
+          <input class="f-inp" type="text" id="u-name" placeholder="e.g. Maria Santos" autocomplete="off">
+        </div>
+        <div class="f-grp">
+          <label class="f-lbl">Email Address <span class="req">*</span></label>
+          <input class="f-inp" type="email" id="u-email" placeholder="user@company.com" autocomplete="off">
+        </div>
       </div>
       <div class="f-row">
         <div class="f-grp">
@@ -6298,69 +6422,18 @@ function deleteDocFromPreview() {
         </div>
       </div>
       <div class="f-grp" id="u-password-group">
-        <label class="f-lbl">Initial Password <span class="req">*</span></label>
-        <input class="f-inp" type="password" id="u-password" placeholder="Min. 8 characters" autocomplete="new-password">
+        <label class="f-lbl">Password <span class="req">*</span></label>
+        <input class="f-inp" type="password" id="u-password"
+               placeholder="Min. 8 characters" autocomplete="new-password">
       </div>
-      <div id="u-error" style="display:none;color:var(--red);font-size:12.5px;margin-top:8px;padding:8px 12px;background:var(--rbg);border-radius:7px;border:1px solid var(--red);"></div>
-    </div>
-    <div class="modal-foot">
-      <button class="btn btn-ghost" onclick="closeOverlay('overlay-user')">Cancel</button>
-      <button class="btn btn-p" onclick="submitUser()">Create User</button>
-    </div>
-  </div>
-</div>
-
-<!-- Create / Edit User Modal -->
-<div class="overlay" id="overlay-create-user" onclick="closeOverlayIfBg(event,'overlay-create-user')" role="dialog" aria-modal="true">
-  <div class="modal modal-md">
-    <div class="modal-hdr">
-      <div>
-        <h2 id="user-modal-title">Create New User</h2>
-        <p>Add a team member with role-based access</p>
+      <div id="u-error"
+           style="display:none;color:var(--red);font-size:12.5px;padding:9px 13px;
+                  background:var(--rbg);border-radius:7px;border:1px solid #fca5a5;margin-top:4px">
       </div>
-      <button class="close-btn" onclick="closeOverlay('overlay-create-user')" aria-label="Close">✕</button>
-    </div>
-    <div class="modal-body">
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Full Name <span class="req">*</span></label>
-          <input class="form-input" type="text" id="u-name" placeholder="e.g. Maria Santos">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Email Address <span class="req">*</span></label>
-          <input class="form-input" type="email" id="u-email" placeholder="user@company.com">
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Role <span class="req">*</span></label>
-          <select class="form-input" id="u-role">
-            <option>Admin</option>
-            <option>Recruiter</option>
-            <option>Manager</option>
-            <option>Compliance</option>
-            <option>Finance</option>
-            <option>Viewer</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Status</label>
-          <select class="form-input" id="u-status">
-            <option>Active</option>
-            <option>Inactive</option>
-          </select>
-        </div>
-      </div>
-      <div class="form-group">
-        <label class="form-label">Password <span class="req">*</span></label>
-        <input class="form-input" type="password" id="u-password" placeholder="Minimum 8 characters" autocomplete="new-password">
-        <div style="font-size:11.5px;color:var(--muted);margin-top:4px">Leave blank when editing to keep current password</div>
-      </div>
-      <div id="u-error" style="display:none;color:var(--red);font-size:12.5px;margin-top:8px;padding:8px 12px;background:var(--rbg);border-radius:7px;border:1px solid var(--red);"></div>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="closeOverlay('overlay-create-user')">Cancel</button>
-      <button class="btn btn-p" onclick="submitCreateUser()">Save User</button>
+      <button class="btn btn-p" id="submit-user-btn" onclick="submitUser()">Create User</button>
     </div>
   </div>
 </div>
