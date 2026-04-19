@@ -867,6 +867,44 @@ tr:hover td{background:var(--s2);}
 .refund-row:last-child{border-bottom:none;}
 .funds-preview{background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-top:6px;}
 .funds-preview-val{font-size:16px;font-weight:800;font-family:'IBM Plex Mono',monospace;}
+
+/* ── Document upload zone ─────────────────────────────── */
+.doc-upload-zone {
+  border: 2px dashed var(--border);
+  border-radius: 10px;
+  padding: 28px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .2s, background .2s;
+  background: var(--s2);
+  outline: none;
+  position: relative;
+}
+.doc-upload-zone:hover,
+.doc-upload-zone:focus {
+  border-color: var(--brand);
+  background: var(--brand-l);
+}
+.doc-upload-zone.drag-over {
+  border-color: var(--brand);
+  background: var(--brand-l);
+  transform: scale(1.01);
+}
+.doc-upload-zone.has-file {
+  border-color: var(--green);
+  border-style: solid;
+  background: var(--gbg);
+}
+
+/* ── Document Preview ─────────────────────────────────── */
+#doc-preview-modal { transition: none; }
+.doc-card { cursor:pointer; }
+.doc-card:hover .doc-preview-btn { opacity:1; }
+.doc-preview-btn {
+  opacity:0;
+  transition:opacity .15s;
+}
+@media (hover:none) { .doc-preview-btn { opacity:1; } }
 </style>
 </head>
 <body>
@@ -1873,42 +1911,89 @@ tr:hover td{background:var(--s2);}
 </div>
 
 <!-- Upload Document -->
-<div class="overlay" id="overlay-doc" onclick="closeOverlayIfBg(event,'overlay-doc')" role="dialog" aria-modal="true" aria-label="Upload document form">
+<div class="overlay" id="overlay-doc" onclick="closeOverlayIfBg(event,'overlay-doc')" role="dialog" aria-modal="true" aria-label="Upload document">
   <div class="modal modal-md">
     <div class="modal-hdr">
-      <div><h2>Upload Document</h2><p>Submit a document for review and verification.</p></div>
+      <div><h2>Upload Document</h2><p>Attach a document to an applicant's record.</p></div>
       <button class="close-btn" onclick="closeOverlay('overlay-doc')" aria-label="Close">✕</button>
     </div>
     <div class="modal-body">
-      <div class="form-group">
-        <label class="form-label">Document Name <span class="req">*</span></label>
-        <input type="text" class="form-input" id="d-name" placeholder="e.g. NBI Clearance">
+      <div class="f-grp">
+        <label class="f-lbl">Applicant <span class="req">*</span></label>
+        <select class="f-inp" id="d-applicant">
+          <option value="">— Select Applicant —</option>
+        </select>
       </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Document Type</label>
-          <select class="form-input" id="d-type">
-            <option>Government ID</option><option>Medical Certificate</option><option>Work Permit</option>
-            <option>Contract</option><option>Training Certificate</option><option>Other</option>
+      <div class="f-grp">
+        <label class="f-lbl">Document Name <span class="req">*</span></label>
+        <input type="text" class="f-inp" id="d-name" placeholder="e.g. NBI Clearance – Maria Santos">
+      </div>
+      <div class="f-row">
+        <div class="f-grp">
+          <label class="f-lbl">Document Type</label>
+          <select class="f-inp" id="d-type">
+            <option value="Government ID">Government ID</option>
+            <option value="Medical Report">Medical Report</option>
+            <option value="Medical Certificate">Medical Certificate</option>
+            <option value="Work Contract">Work Contract</option>
+            <option value="Work Permit">Work Permit</option>
+            <option value="Training Cert">Training Cert</option>
+            <option value="Visa Document">Visa Document</option>
+            <option value="OWWA Document">OWWA Document</option>
+            <option value="Other">Other</option>
           </select>
         </div>
-        <div class="form-group">
-          <label class="form-label">Applicant</label>
-          <input type="text" class="form-input" id="d-applicant" placeholder="Applicant name">
+        <div class="f-grp">
+          <label class="f-lbl">Status</label>
+          <select class="f-inp" id="d-status">
+            <option value="Pending">Pending Review</option>
+            <option value="Approved">Approved</option>
+            <option value="Rejected">Rejected</option>
+          </select>
         </div>
       </div>
-      <div class="form-group">
-        <label class="form-label">File Upload</label>
-        <div style="border:2px dashed var(--border);border-radius:8px;padding:24px;text-align:center;cursor:pointer;transition:.15s" onclick="toast('File picker coming soon','info')" role="button" tabindex="0" aria-label="Upload file area">
-          <div style="font-size:24px;margin-bottom:8px">📎</div>
-          <div style="font-size:13px;font-weight:700;color:var(--text2)">Click to upload or drag & drop</div>
-          <div style="font-size:11.5px;color:var(--muted);margin-top:4px">PDF, DOC, JPG up to 10MB</div>
+
+      <!-- File upload zone -->
+      <div class="f-grp">
+        <label class="f-lbl">File</label>
+        <div class="doc-upload-zone" id="doc-upload-zone"
+             onclick="document.getElementById('doc-file-input').click()"
+             ondragover="docDragOver(event)"
+             ondragleave="docDragLeave(event)"
+             ondrop="docDrop(event)"
+             role="button" tabindex="0"
+             onkeydown="if(event.key==='Enter'||event.key===' ')document.getElementById('doc-file-input').click()">
+          <input type="file" id="doc-file-input" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.xlsx"
+                 style="display:none" onchange="docFileSelected(this)">
+          <div id="doc-upload-icon" style="font-size:32px;margin-bottom:8px">📎</div>
+          <div id="doc-upload-label" style="font-size:13px;font-weight:700;color:var(--text2)">
+            Click to upload or drag &amp; drop
+          </div>
+          <div id="doc-upload-sub" style="font-size:11.5px;color:var(--muted);margin-top:4px">
+            PDF, DOC, DOCX, JPG, PNG, XLSX — max 10 MB
+          </div>
+          <div id="doc-upload-preview" style="display:none;margin-top:10px;padding:8px 12px;
+               background:var(--gbg);border-radius:7px;border:1px solid #86efac;
+               display:none;align-items:center;gap:8px">
+            <span id="doc-upload-filename" style="font-size:12.5px;font-weight:700;color:var(--green);flex:1;
+                  white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></span>
+            <span id="doc-upload-filesize" style="font-size:11px;color:var(--muted)"></span>
+            <button onclick="event.stopPropagation();clearDocFile()" style="background:none;border:none;
+                    cursor:pointer;color:var(--muted);font-size:16px;padding:0;line-height:1">✕</button>
+          </div>
         </div>
+        <div id="doc-upload-error" style="display:none;color:var(--red);font-size:12px;margin-top:5px"></div>
+      </div>
+
+      <div class="f-grp">
+        <label class="f-lbl">Notes (optional)</label>
+        <textarea class="f-inp" id="d-notes" rows="2" placeholder="Any notes about this document…"
+                  style="resize:vertical"></textarea>
       </div>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="closeOverlay('overlay-doc')">Cancel</button>
-      <button class="btn btn-p" onclick="saveDoc()">Upload Document</button>
+      <button class="btn btn-p" onclick="saveDoc()" id="save-doc-btn">Upload Document</button>
     </div>
   </div>
 </div>
@@ -2305,10 +2390,13 @@ function switchDrawerTab(tab, btn) {
         ${docs.map(d=>`<div class="doc-card">
           <div class="doc-icon" style="background:var(--brand-l);font-size:20px">📄</div>
           <div style="flex:1"><div style="font-size:13px;font-weight:700">${d.name}</div><div style="font-size:11px;color:var(--muted)">${d.type} · ${d.size} · ${d.date}</div></div>
-          <span class="pill ${d.status==='Approved'?'pill-green':d.status==='Pending'?'pill-amber':'pill-red'}">${d.status}</span>
+          <div style="display:flex;gap:5px;align-items:center">
+              <span class="pill ${d.status==='Approved'?'pill-green':d.status==='Pending'?'pill-amber':'pill-red'}">${d.status}</span>
+              <button class="btn btn-ghost btn-xs" onclick="previewDoc('${d.id}')" title="Preview">👁</button>
+            </div>
         </div>`).join('')}
       </div>
-    ` : `<div class="empty-state"><div class="empty-icon">📂</div><div class="empty-title">No Documents</div><div class="empty-sub">No documents uploaded for this applicant yet.</div><button class="btn btn-p btn-sm" onclick="openUploadDoc()">Upload Document</button></div>`;
+    ` : `<div class="empty-state"><div class="empty-icon">📂</div><div class="empty-title">No Documents</div><div class="empty-sub">No documents uploaded for this applicant yet.</div><button class="btn btn-p btn-sm" onclick="openUploadDoc(app&&app.name)">Upload Document</button></div>`;
   }
   if (tab === 'expenses') {
     const exps = DB.expenses.filter(e => e.applicant === app.name);
@@ -2799,7 +2887,7 @@ function renderDocs() {
   grid.innerHTML = docs.map(d => {
     const typeKey = d.type ? d.type.split(' ')[0] : 'Other';
     return `
-    <div class="doc-card">
+    <div class="doc-card" onclick="previewDoc('${d.id}')" style="cursor:pointer">
       <div class="doc-icon" style="background:${bgs[typeKey]||'var(--s2)'}">${icons[typeKey]||'📄'}</div>
       <div class="doc-info">
         <div class="doc-name">${d.name}</div>
@@ -2809,6 +2897,7 @@ function renderDocs() {
       <div class="doc-actions">
         ${pillHtml(d.status)}
         <div style="display:flex;gap:5px;margin-top:2px">
+          <button class="btn btn-s btn-xs doc-preview-btn" onclick="previewDoc('${d.id}')" title="Preview document">👁 Preview</button>
           ${d.status==='Pending'?`<button class="btn btn-sm" style="background:var(--gbg);color:var(--green);border:1px solid #86efac;font-size:11px" onclick="approveDoc('${d.id}')">✓ Approve</button>`:''}
           <button class="btn btn-ghost btn-xs" onclick="confirmDelete('document','${d.id}')" title="Delete">🗑</button>
         </div>
@@ -2821,25 +2910,216 @@ function approveDoc(id) {
   const d = DB.documents.find(x=>x.id===id);
   if (d) { d.status='Approved'; addAudit('UPDATE','Document',`Approved ${d.name}`); renderDocs(); toast(`${d.name} approved`,'success'); }
 }
-function openUploadDoc() {
-  document.getElementById('d-name').value = '';
-  document.getElementById('d-applicant').value = '';
+function openUploadDoc(preselectedApplicant) {
+  // Reset form
+  document.getElementById('d-name').value    = '';
+  document.getElementById('d-status').value  = 'Pending';
+  document.getElementById('d-notes') && (document.getElementById('d-notes').value = '');
+  clearDocFile();
+
+  // Populate applicant dropdown from DB
+  var sel = document.getElementById('d-applicant');
+  if (sel) {
+    sel.innerHTML = '<option value="">— Select Applicant —</option>' +
+      DB.applicants.map(function(a) {
+        return '<option value="' + a.name + '"' +
+          (a.name === preselectedApplicant ? ' selected' : '') +
+          '>' + a.name + ' (' + a.id + ' · ' + a.status + ')</option>';
+      }).join('');
+    // Auto-name the document when applicant is selected
+    sel.onchange = function() {
+      var nameEl = document.getElementById('d-name');
+      var typeEl = document.getElementById('d-type');
+      if (this.value && nameEl && !nameEl.value) {
+        nameEl.value = typeEl.value + ' - ' + this.value;
+      }
+    };
+  }
+
+  // Auto-fill name when type changes
+  var typeEl = document.getElementById('d-type');
+  if (typeEl) {
+    typeEl.onchange = function() {
+      var nameEl  = document.getElementById('d-name');
+      var appSel  = document.getElementById('d-applicant');
+      if (appSel && appSel.value && nameEl) {
+        nameEl.value = this.value + ' - ' + appSel.value;
+      }
+    };
+  }
+
   openOverlay('overlay-doc');
+  setTimeout(function(){ var s=document.getElementById('d-applicant'); if(s) s.focus(); }, 100);
+}
+
+// ── File upload helpers ───────────────────────────────────────────────
+var _docFile = null;
+
+function docFileSelected(input) {
+  if (!input.files || !input.files[0]) return;
+  _setDocFile(input.files[0]);
+}
+
+function docDragOver(e) {
+  e.preventDefault();
+  document.getElementById('doc-upload-zone').classList.add('drag-over');
+}
+
+function docDragLeave(e) {
+  document.getElementById('doc-upload-zone').classList.remove('drag-over');
+}
+
+function docDrop(e) {
+  e.preventDefault();
+  var zone = document.getElementById('doc-upload-zone');
+  zone.classList.remove('drag-over');
+  var files = e.dataTransfer ? e.dataTransfer.files : null;
+  if (files && files[0]) _setDocFile(files[0]);
+}
+
+function _setDocFile(file) {
+  var maxMB = 10;
+  var errEl = document.getElementById('doc-upload-error');
+  if (errEl) errEl.style.display = 'none';
+
+  // Validate type
+  var allowed = ['pdf','doc','docx','jpg','jpeg','png','xlsx'];
+  var ext = file.name.split('.').pop().toLowerCase();
+  if (!allowed.includes(ext)) {
+    if (errEl) { errEl.textContent = 'File type not allowed. Use PDF, DOC, DOCX, JPG, PNG or XLSX.'; errEl.style.display = 'block'; }
+    return;
+  }
+  // Validate size
+  if (file.size > maxMB * 1024 * 1024) {
+    if (errEl) { errEl.textContent = 'File is too large. Maximum size is ' + maxMB + ' MB.'; errEl.style.display = 'block'; }
+    return;
+  }
+
+  _docFile = file;
+  var zone  = document.getElementById('doc-upload-zone');
+  var icon  = document.getElementById('doc-upload-icon');
+  var lbl   = document.getElementById('doc-upload-label');
+  var sub   = document.getElementById('doc-upload-sub');
+  var prev  = document.getElementById('doc-upload-preview');
+  var fname = document.getElementById('doc-upload-filename');
+  var fsize = document.getElementById('doc-upload-filesize');
+
+  if (zone)  zone.classList.add('has-file');
+  if (icon)  icon.textContent = _docExtIcon(ext);
+  if (lbl)   lbl.textContent  = 'File selected';
+  if (sub)   sub.style.display = 'none';
+  if (prev)  { prev.style.display = 'flex'; }
+  if (fname) fname.textContent = file.name;
+  if (fsize) fsize.textContent = (file.size / 1024 < 1000
+    ? (file.size / 1024).toFixed(1) + ' KB'
+    : (file.size / 1048576).toFixed(2) + ' MB');
+
+  // Auto-fill doc name from filename if empty
+  var nameEl = document.getElementById('d-name');
+  if (nameEl && !nameEl.value) {
+    nameEl.value = file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
+  }
+
+  // Store base64 data URL for preview
+  var reader = new FileReader();
+  reader.onload = function(ev) {
+    _docFile._dataUrl  = ev.target.result;
+    _docFile._ext      = ext;
+    _docFile._mimeType = file.type || _mimeFromExt(ext);
+  };
+  reader.readAsDataURL(file);
+}
+
+function _mimeFromExt(ext) {
+  var m = {pdf:'application/pdf',jpg:'image/jpeg',jpeg:'image/jpeg',
+           png:'image/png',doc:'application/msword',
+           docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+           xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'};
+  return m[ext] || 'application/octet-stream';
+}
+
+function _docExtIcon(ext) {
+  var icons = {pdf:'📄',doc:'📝',docx:'📝',jpg:'🖼',jpeg:'🖼',png:'🖼',xlsx:'📊'};
+  return icons[ext] || '📎';
+}
+
+function clearDocFile() {
+  _docFile = null;
+  var zone  = document.getElementById('doc-upload-zone');
+  var icon  = document.getElementById('doc-upload-icon');
+  var lbl   = document.getElementById('doc-upload-label');
+  var sub   = document.getElementById('doc-upload-sub');
+  var prev  = document.getElementById('doc-upload-preview');
+  var fi    = document.getElementById('doc-file-input');
+  var errEl = document.getElementById('doc-upload-error');
+  if (zone)  zone.classList.remove('has-file');
+  if (icon)  icon.textContent = '📎';
+  if (lbl)   lbl.textContent  = 'Click to upload or drag & drop';
+  if (sub)   { sub.style.display = ''; sub.textContent = 'PDF, DOC, DOCX, JPG, PNG, XLSX — max 10 MB'; }
+  if (prev)  prev.style.display = 'none';
+  if (fi)    fi.value = '';
+  if (errEl) errEl.style.display = 'none';
 }
 function saveDoc() {
-  const name = document.getElementById('d-name').value.trim();
-  if (!name) { toast('Document name required','error'); return; }
-  const doc = {
-    id: genId('DOC'), name,
-    type: document.getElementById('d-type').value,
-    applicant: document.getElementById('d-applicant').value || 'Unknown',
-    status: 'Pending', date: new Date().toISOString().split('T')[0], size: '0 KB'
-  };
-  DB.documents.unshift(doc);
-  addAudit('CREATE','Document',`Uploaded ${name}`);
-  closeOverlay('overlay-doc');
-  renderDocs();
-  toast('Document uploaded successfully','success');
+  var appSel  = document.getElementById('d-applicant');
+  var nameEl  = document.getElementById('d-name');
+  var typeEl  = document.getElementById('d-type');
+  var statEl  = document.getElementById('d-status');
+  var notesEl = document.getElementById('d-notes');
+  var btn     = document.getElementById('save-doc-btn');
+  var errEl   = document.getElementById('doc-upload-error');
+  if (errEl) errEl.style.display = 'none';
+
+  var applicant = appSel ? appSel.value.trim() : '';
+  var name      = nameEl ? nameEl.value.trim() : '';
+
+  if (!applicant) { toast('Please select an applicant', 'error'); if(appSel) appSel.focus(); return; }
+  if (!name)      { toast('Document name is required',  'error'); if(nameEl) nameEl.focus(); return; }
+
+  // File size display
+  var sizeStr = '—';
+  if (_docFile) {
+    sizeStr = _docFile.size < 1024000
+      ? (_docFile.size / 1024).toFixed(1) + ' KB'
+      : (_docFile.size / 1048576).toFixed(2) + ' MB';
+  }
+
+  var btn = document.getElementById('save-doc-btn');
+  if (btn) { btn.textContent = _docFile ? 'Uploading…' : 'Saving…'; btn.disabled = true; }
+
+  // Simulate upload delay if file present
+  var delay = _docFile ? 800 : 0;
+  setTimeout(function() {
+    var doc = {
+      id:        genId('DOC'),
+      name:      name,
+      type:      typeEl ? typeEl.value : 'Other',
+      applicant: applicant,
+      status:    statEl ? statEl.value : 'Pending',
+      date:      new Date().toISOString().split('T')[0],
+      size:      sizeStr,
+      notes:     notesEl ? notesEl.value.trim() : '',
+      fileName:  _docFile ? _docFile.name : null,
+      dataUrl:   (_docFile && _docFile._dataUrl)  ? _docFile._dataUrl  : null,
+      mimeType:  (_docFile && _docFile._mimeType) ? _docFile._mimeType : null,
+      ext:       (_docFile && _docFile._ext)      ? _docFile._ext      : null,
+    };
+
+    DB.documents.unshift(doc);
+    addAudit('CREATE', 'Document', 'Uploaded ' + name + ' for ' + applicant);
+
+    if (btn) { btn.textContent = 'Upload Document'; btn.disabled = false; }
+    closeOverlay('overlay-doc');
+    clearDocFile();
+    renderDocs();
+
+    // Refresh drawer if applicant drawer is open for this applicant
+    if (currentDrawerApplicant && currentDrawerApplicant.name === applicant) {
+      switchDrawerTab('docs', null);
+    }
+
+    toast('Document uploaded — ' + name, 'success');
+  }, delay);
 }
 
 // ════════════════════════════════════════════════════════
@@ -5650,6 +5930,221 @@ function renderAgentSummaryInDrawer(app) {
   );
 }
 
+
+// ════════════════════════════════════════════════════════
+// DOCUMENT PREVIEW SYSTEM
+// ════════════════════════════════════════════════════════
+
+var _previewDocId    = null;
+var _previewDocList  = [];
+var _previewDocIndex = 0;
+var _previewBlobUrl  = null;
+
+var DOC_TYPE_ICONS = {
+  'Government': '🪪', 'Medical': '🏥', 'Work': '📋',
+  'Contract': '📝', 'Training': '🎓', 'Visa': '🛂',
+  'OWWA': '🏛', 'Other': '📎',
+};
+
+function previewDoc(docId) {
+  var doc = DB.documents.find(function(d) { return d.id === docId; });
+  if (!doc) return;
+
+  // Build nav list (current filter context)
+  var html = document.getElementById('page-documents');
+  _previewDocList  = DB.documents.filter(function(d) {
+    return docFilter === 'all' || d.status === docFilter;
+  });
+  _previewDocIndex = _previewDocList.findIndex(function(d) { return d.id === docId; });
+  _previewDocId    = docId;
+
+  _renderPreviewModal(doc);
+  openOverlay('overlay-doc-preview');
+}
+
+function _renderPreviewModal(doc) {
+  if (!doc) return;
+
+  // Header
+  var typeKey = doc.type ? doc.type.split(' ')[0] : 'Other';
+  var icon    = DOC_TYPE_ICONS[typeKey] || '📄';
+  document.getElementById('doc-preview-icon').textContent = icon;
+  document.getElementById('doc-preview-name').textContent = doc.name;
+  document.getElementById('doc-preview-meta').textContent =
+    doc.applicant + ' · ' + doc.type + ' · ' + doc.date + ' · ' + doc.size;
+
+  // Status pill + approve btn
+  var statPill = document.getElementById('doc-preview-status-pill');
+  if (statPill) statPill.innerHTML = pillHtml(doc.status);
+  var approveBtn = document.getElementById('doc-preview-approve-btn');
+  if (approveBtn) approveBtn.style.display = doc.status === 'Pending' ? '' : 'none';
+
+  // Nav label
+  var navLbl = document.getElementById('doc-preview-nav-label');
+  if (navLbl) navLbl.textContent = (_previewDocIndex + 1) + ' / ' + _previewDocList.length;
+
+  // Hide all preview panes, show loading
+  _showPreviewPane('loading');
+
+  // Revoke previous blob URL
+  if (_previewBlobUrl) { URL.revokeObjectURL(_previewBlobUrl); _previewBlobUrl = null; }
+
+  // Determine how to preview
+  if (doc.dataUrl) {
+    // File was uploaded in this session — we have the data URL
+    _loadPreviewFromDataUrl(doc);
+  } else if (doc.fileName) {
+    // Has filename but no data — show fallback with details
+    _showDocFallback(doc);
+  } else {
+    // Seeded doc — no file data, show details panel
+    _showDocFallback(doc);
+  }
+
+  // Download button visibility
+  var dlBtn = document.getElementById('doc-preview-download');
+  if (dlBtn) dlBtn.style.display = doc.dataUrl ? '' : 'none';
+}
+
+function _loadPreviewFromDataUrl(doc) {
+  var ext = doc.ext || (doc.fileName ? doc.fileName.split('.').pop().toLowerCase() : '');
+
+  if (['jpg','jpeg','png','gif','webp'].includes(ext)) {
+    // Image preview
+    var img = document.getElementById('doc-preview-img');
+    img.onload = function() { _showPreviewPane('image'); };
+    img.onerror = function() { _showDocFallback(doc); };
+    img.src = doc.dataUrl;
+
+  } else if (ext === 'pdf') {
+    // PDF preview via iframe
+    var iframe = document.getElementById('doc-preview-pdf');
+    iframe.onload = function() { _showPreviewPane('pdf'); };
+    // Convert base64 data URL to blob URL for iframe
+    try {
+      var base64 = doc.dataUrl.split(',')[1];
+      var binary  = atob(base64);
+      var bytes   = new Uint8Array(binary.length);
+      for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      var blob    = new Blob([bytes], {type: 'application/pdf'});
+      _previewBlobUrl = URL.createObjectURL(blob);
+      iframe.src = _previewBlobUrl;
+    } catch(e) {
+      // Fallback: try direct data URL
+      iframe.src = doc.dataUrl;
+    }
+    // Timeout fallback in case iframe doesn't fire onload
+    setTimeout(function() {
+      if (document.getElementById('doc-preview-loading').style.display !== 'none') {
+        _showPreviewPane('pdf');
+      }
+    }, 1500);
+
+  } else {
+    // DOC, DOCX, XLSX — can't render natively, show fallback with download
+    _showDocFallback(doc);
+  }
+}
+
+function _showPreviewPane(which) {
+  var panes = {
+    image:    document.getElementById('doc-preview-image-wrap'),
+    pdf:      document.getElementById('doc-preview-pdf'),
+    fallback: document.getElementById('doc-preview-fallback'),
+    loading:  document.getElementById('doc-preview-loading'),
+  };
+  Object.keys(panes).forEach(function(key) {
+    if (panes[key]) panes[key].style.display = (key === which) ? (key === 'pdf' ? 'block' : key === 'image' ? 'block' : 'flex') : 'none';
+  });
+  // Fix display for image wrapper
+  if (which === 'image' && panes.image) panes.image.style.display = 'block';
+  if (which === 'fallback' && panes.fallback) panes.fallback.style.display = 'flex';
+  if (which === 'fallback' && panes.fallback) panes.fallback.style.flexDirection = 'column';
+  if (which === 'fallback' && panes.fallback) panes.fallback.style.alignItems = 'center';
+}
+
+function _showDocFallback(doc) {
+  var ext     = doc.ext || (doc.fileName ? doc.fileName.split('.').pop().toLowerCase() : '');
+  var typeKey = doc.type ? doc.type.split(' ')[0] : 'Other';
+  var extIcons = {pdf:'📄',doc:'📝',docx:'📝',jpg:'🖼',jpeg:'🖼',png:'🖼',xlsx:'📊'};
+
+  var fallIcon  = document.getElementById('doc-preview-fallback-icon');
+  var fallName  = document.getElementById('doc-preview-fallback-name');
+  var fallInfo  = document.getElementById('doc-preview-fallback-info');
+  var fallDets  = document.getElementById('doc-preview-details');
+  var dlBtn     = document.getElementById('doc-preview-dl-btn');
+
+  if (fallIcon) fallIcon.textContent = extIcons[ext] || DOC_TYPE_ICONS[typeKey] || '📄';
+  if (fallName) fallName.textContent = doc.name;
+
+  var canPreview = doc.dataUrl && ['jpg','jpeg','png','pdf'].includes(ext);
+  if (fallInfo) fallInfo.textContent = canPreview
+    ? 'This file type cannot be previewed in the browser.'
+    : doc.dataUrl
+      ? 'Preview not available for .' + ext.toUpperCase() + ' files — click Download to open.'
+      : 'No file uploaded yet. This is a metadata record only.';
+
+  if (fallDets) {
+    fallDets.innerHTML = [
+      ['Applicant',  doc.applicant || '—'],
+      ['Type',       doc.type      || '—'],
+      ['Status',     doc.status    || '—'],
+      ['Date',       doc.date      || '—'],
+      ['Size',       doc.size      || '—'],
+      ['File',       doc.fileName  || 'No file attached'],
+      ['Notes',      doc.notes     || '—'],
+    ].map(function(row) {
+      return '<div><span style="color:#5a6a8a;display:inline-block;min-width:80px">' + row[0] + '</span>' +
+             '<span style="color:#c8d8f8;font-weight:600">' + row[1] + '</span></div>';
+    }).join('');
+  }
+
+  if (dlBtn) dlBtn.style.display = doc.dataUrl ? '' : 'none';
+  _showPreviewPane('fallback');
+}
+
+function navigateDocPreview(dir) {
+  if (!_previewDocList.length) return;
+  _previewDocIndex = (_previewDocIndex + dir + _previewDocList.length) % _previewDocList.length;
+  var doc = _previewDocList[_previewDocIndex];
+  if (!doc) return;
+  _previewDocId = doc.id;
+  _renderPreviewModal(doc);
+}
+
+function downloadDoc() {
+  var doc = DB.documents.find(function(d) { return d.id === _previewDocId; });
+  if (!doc || !doc.dataUrl) { toast('No file available to download', 'info'); return; }
+  var a = document.createElement('a');
+  a.href = doc.dataUrl;
+  a.download = doc.fileName || (doc.name + '.' + (doc.ext || 'pdf'));
+  a.click();
+  toast('Download started — ' + (doc.fileName || doc.name), 'success');
+}
+
+function approveDocFromPreview() {
+  if (!_previewDocId) return;
+  approveDoc(_previewDocId);
+  // Refresh the preview header status
+  var doc = DB.documents.find(function(d) { return d.id === _previewDocId; });
+  if (doc) {
+    var pill = document.getElementById('doc-preview-status-pill');
+    if (pill) pill.innerHTML = pillHtml(doc.status);
+    var btn = document.getElementById('doc-preview-approve-btn');
+    if (btn) btn.style.display = 'none';
+  }
+}
+
+function deleteDocFromPreview() {
+  var doc = DB.documents.find(function(d) { return d.id === _previewDocId; });
+  if (!doc) return;
+  closeOverlay('overlay-doc-preview');
+  // Small delay so overlay closes first
+  setTimeout(function() {
+    confirmDelete('document', _previewDocId);
+  }, 200);
+}
+
 </script>
 
 <!-- Change Password Modal -->
@@ -6256,5 +6751,78 @@ function renderAgentSummaryInDrawer(app) {
     </div>
   </div>
 </div>
+
+<!-- Document Preview Modal -->
+<div class="overlay" id="overlay-doc-preview"
+     onclick="closeOverlayIfBg(event,'overlay-doc-preview')"
+     role="dialog" aria-modal="true" aria-label="Document preview">
+  <div class="modal" id="doc-preview-modal" style="width:860px;max-width:calc(100vw - 32px);padding:0;overflow:hidden;border-radius:14px;">
+
+    <!-- Header -->
+    <div style="display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--border);background:var(--surface)">
+      <div id="doc-preview-icon" style="font-size:24px;flex-shrink:0">📄</div>
+      <div style="flex:1;min-width:0">
+        <div id="doc-preview-name" style="font-size:14px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+        <div id="doc-preview-meta" style="font-size:11.5px;color:var(--muted);margin-top:2px"></div>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <button class="btn btn-s btn-sm" id="doc-preview-download" onclick="downloadDoc()" style="display:none">⬇ Download</button>
+        <button class="btn btn-ghost btn-xs" style="background:var(--rbg);color:var(--red);border:1px solid #fca5a5"
+                id="doc-preview-approve-btn" onclick="approveDocFromPreview()">✓ Approve</button>
+        <button class="close-btn" onclick="closeOverlay('overlay-doc-preview')">✕</button>
+      </div>
+    </div>
+
+    <!-- Preview body -->
+    <div id="doc-preview-body" style="background:#1a1a2e;min-height:480px;max-height:72vh;overflow:auto;display:flex;align-items:center;justify-content:center;position:relative">
+
+      <!-- Image preview -->
+      <div id="doc-preview-image-wrap" style="display:none;width:100%;height:100%;overflow:auto;text-align:center;padding:16px">
+        <img id="doc-preview-img" src="" alt="Document preview"
+             style="max-width:100%;max-height:65vh;border-radius:6px;box-shadow:0 4px 24px rgba(0,0,0,.4);object-fit:contain">
+      </div>
+
+      <!-- PDF preview -->
+      <iframe id="doc-preview-pdf" src="" style="display:none;width:100%;height:70vh;border:none"></iframe>
+
+      <!-- No-preview fallback (DOC/DOCX/XLSX/etc) -->
+      <div id="doc-preview-fallback" style="display:none;text-align:center;padding:40px 24px;color:#aab4d4">
+        <div id="doc-preview-fallback-icon" style="font-size:64px;margin-bottom:16px">📄</div>
+        <div id="doc-preview-fallback-name" style="font-size:16px;font-weight:700;margin-bottom:8px;color:#e8eeff"></div>
+        <div id="doc-preview-fallback-info" style="font-size:13px;color:#7a8aaa;margin-bottom:24px"></div>
+        <div style="background:#2a2a4a;border-radius:10px;padding:16px 20px;display:inline-block;margin-bottom:20px;text-align:left;min-width:260px">
+          <div style="font-size:11px;color:#5a6a8a;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Document Details</div>
+          <div id="doc-preview-details" style="font-size:12.5px;line-height:1.8;color:#c8d8f8"></div>
+        </div>
+        <div>
+          <button class="btn btn-p" id="doc-preview-dl-btn" onclick="downloadDoc()">⬇ Download File</button>
+        </div>
+      </div>
+
+      <!-- Loading spinner -->
+      <div id="doc-preview-loading" style="text-align:center;color:#aab4d4">
+        <div style="font-size:32px;margin-bottom:12px;animation:spin 1s linear infinite">⟳</div>
+        <div style="font-size:13px">Loading preview…</div>
+      </div>
+    </div>
+
+    <!-- Footer bar -->
+    <div style="padding:10px 20px;border-top:1px solid var(--border);background:var(--surface);display:flex;align-items:center;justify-content:space-between;gap:12px">
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="btn btn-ghost btn-sm" id="doc-preview-prev" onclick="navigateDocPreview(-1)">← Prev</button>
+        <span id="doc-preview-nav-label" style="font-size:12px;color:var(--muted)"></span>
+        <button class="btn btn-ghost btn-sm" id="doc-preview-next" onclick="navigateDocPreview(1)">Next →</button>
+      </div>
+      <div style="display:flex;gap:6px">
+        <span id="doc-preview-status-pill"></span>
+        <button class="btn btn-danger btn-sm" onclick="deleteDocFromPreview()">🗑 Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
 </body>
 </html>
