@@ -973,6 +973,38 @@ tr:hover td{background:var(--s2);}
 }
 /* Sidebar position relative for expand button positioning */
 .sidebar { position: relative; }
+
+/* ── RBAC ─────────────────────────────────────────────── */
+[data-rbac-locked],
+button[disabled][data-rbac-locked] {
+  opacity: .4 !important;
+  cursor: not-allowed !important;
+  pointer-events: none;
+}
+.sb-item[data-rbac-hidden] { display:none !important; }
+#rbac-readonly-banner + #app { margin-top: 32px; }
+
+/* Login demo buttons */
+.demo-acc-btn {
+  background: rgba(255,255,255,.07);
+  border: 1px solid rgba(255,255,255,.1);
+  color: rgba(255,255,255,.6);
+  border-radius: 7px;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  transition: background .15s;
+}
+.demo-acc-btn:hover {
+  background: rgba(255,255,255,.14);
+  color: #fff;
+}
+
+.role-opt-active { background:rgba(255,255,255,.08) !important; }
+.role-opt-active span:first-child { box-shadow:0 0 0 2px rgba(255,255,255,.3); }
 </style>
 </head>
 <body>
@@ -994,6 +1026,18 @@ tr:hover td{background:var(--s2);}
       <input class="li" id="li-pass" type="password" placeholder="••••••••" autocomplete="current-password">
     </div>
     <button class="lb" id="li-btn">Sign In</button>
+          <div style="margin-top:16px;background:rgba(255,255,255,.05);border-radius:10px;padding:12px 14px;border:1px solid rgba(255,255,255,.08)">
+            <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,.4);letter-spacing:.08em;margin-bottom:8px">DEMO ACCOUNTS — click to fill</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px">
+              <button type="button" onclick="document.getElementById('li-email').value='maria@globalrecruits.ph';document.getElementById('li-pass').value='password123'" class="demo-acc-btn">👑 Admin</button>
+              <button type="button" onclick="document.getElementById('li-email').value='sarah@globalrecruits.ph';document.getElementById('li-pass').value='password123'" class="demo-acc-btn">🎯 Recruiter</button>
+              <button type="button" onclick="document.getElementById('li-email').value='ana@globalrecruits.ph';document.getElementById('li-pass').value='password123'" class="demo-acc-btn">📊 Manager</button>
+              <button type="button" onclick="document.getElementById('li-email').value='carlo@globalrecruits.ph';document.getElementById('li-pass').value='password123'" class="demo-acc-btn">🔍 Compliance</button>
+              <button type="button" onclick="document.getElementById('li-email').value='lisa@globalrecruits.ph';document.getElementById('li-pass').value='password123'" class="demo-acc-btn">💰 Finance</button>
+              <button type="button" onclick="document.getElementById('li-email').value='admin@rams.io';document.getElementById('li-pass').value='password123'" class="demo-acc-btn">🔑 Super Admin</button>
+            </div>
+            <div style="font-size:10px;color:rgba(255,255,255,.25);margin-top:8px;text-align:center">All accounts use password: password123</div>
+          </div>
     <hr class="ldiv">
     <label class="la">API URL <span style="font-weight:400;opacity:.7">(leave blank for demo mode)</span></label>
     <input class="lai" id="li-url" type="url" placeholder="https://your-api.railway.app">
@@ -1896,47 +1940,112 @@ tr:hover td{background:var(--s2);}
 </div>
 
 <!-- Add Expense -->
-<div class="overlay" id="overlay-expense" onclick="closeOverlayIfBg(event,'overlay-expense')" role="dialog" aria-modal="true" aria-label="Expense form">
+<div class="overlay" id="overlay-expense"
+     onclick="closeOverlayIfBg(event,'overlay-expense')"
+     role="dialog" aria-modal="true" aria-label="Record expense">
   <div class="modal modal-md">
     <div class="modal-hdr">
-      <div><h2>Record Expense</h2><p>Add a new expense or fee record.</p></div>
+      <div>
+        <h2 id="exp-modal-title">Record Expense</h2>
+        <p id="exp-modal-sub">Attach a cost directly to an applicant's record</p>
+      </div>
       <button class="close-btn" onclick="closeOverlay('overlay-expense')" aria-label="Close">✕</button>
     </div>
     <div class="modal-body">
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Description <span class="req">*</span></label>
-          <input type="text" class="form-input" id="e-desc" placeholder="e.g. POEA Processing Fee">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Amount (PHP) <span class="req">*</span></label>
-          <input type="number" class="form-input" id="e-amount" placeholder="0.00">
+
+      <!-- Applicant selector (connected to pool) -->
+      <div class="f-grp">
+        <label class="f-lbl">Applicant <span class="req">*</span></label>
+        <select class="f-inp" id="e-applicant" onchange="onExpenseApplicantChange()">
+          <option value="">— Select Applicant —</option>
+        </select>
+      </div>
+
+      <!-- Applicant info card (shown after selection) -->
+      <div id="e-applicant-info" style="display:none;background:var(--s2);border:1px solid var(--border);
+           border-radius:9px;padding:12px 14px;margin-bottom:4px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div id="e-app-avatar" style="width:34px;height:34px;border-radius:8px;background:var(--brand);
+               color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;
+               font-weight:800;flex-shrink:0"></div>
+          <div style="flex:1;min-width:0">
+            <div id="e-app-name"   style="font-size:13px;font-weight:800"></div>
+            <div id="e-app-detail" style="font-size:11.5px;color:var(--muted);margin-top:1px"></div>
+          </div>
+          <div style="text-align:right">
+            <div id="e-app-status-pill"></div>
+            <div id="e-app-total"  style="font-size:11px;color:var(--muted);margin-top:3px"></div>
+          </div>
         </div>
       </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Category</label>
-          <select class="form-input" id="e-category">
-            <option>Processing Fee</option><option>Medical Exam</option><option>Documentation</option>
-            <option>Training</option><option>Transportation</option><option>Other</option>
+
+      <div class="f-row">
+        <div class="f-grp">
+          <label class="f-lbl">Category <span class="req">*</span></label>
+          <select class="f-inp" id="e-category" onchange="onExpenseCategoryChange()">
+            <option value="Medical Exam">💊 Medical Exam</option>
+            <option value="Documentation">📄 Documentation</option>
+            <option value="Processing Fee">🏛 Processing Fee</option>
+            <option value="Training">🎓 Training</option>
+            <option value="Visa Fee">🛂 Visa Fee</option>
+            <option value="OWWA Fee">🪪 OWWA Fee</option>
+            <option value="Ticketing">✈ Ticketing</option>
+            <option value="Transportation">🚗 Transportation</option>
+            <option value="Accommodation">🏠 Accommodation</option>
+            <option value="Other">📎 Other</option>
           </select>
         </div>
-        <div class="form-group">
-          <label class="form-label">Applicant</label>
-          <input type="text" class="form-input" id="e-applicant" placeholder="Applicant name">
+        <div class="f-grp">
+          <label class="f-lbl">Amount (₱) <span class="req">*</span></label>
+          <input type="number" class="f-inp" id="e-amount" placeholder="0.00"
+                 min="0" step="0.01" oninput="updateExpenseTotal()">
         </div>
       </div>
-      <div class="form-group">
-        <label class="form-label">Date</label>
-        <input type="date" class="form-input" id="e-date">
+
+      <div class="f-grp">
+        <label class="f-lbl">Description <span class="req">*</span></label>
+        <input type="text" class="f-inp" id="e-desc"
+               placeholder="e.g. Medical exam at St. Luke's Medical Center">
       </div>
+
+      <div class="f-row">
+        <div class="f-grp">
+          <label class="f-lbl">Date <span class="req">*</span></label>
+          <input type="date" class="f-inp" id="e-date">
+        </div>
+        <div class="f-grp">
+          <label class="f-lbl">Status</label>
+          <select class="f-inp" id="e-status">
+            <option value="Paid">Paid</option>
+            <option value="Pending">Pending</option>
+            <option value="Agency">Agency (not yet charged)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="f-grp">
+        <label class="f-lbl">Receipt / Reference No.</label>
+        <input type="text" class="f-inp" id="e-ref" placeholder="e.g. OR-2026-04321 (optional)">
+      </div>
+
+      <!-- Running total preview -->
+      <div id="e-running-total" style="display:none;background:var(--brand-l);border:1px solid #BFCFFF;
+           border-radius:8px;padding:10px 14px;display:none;align-items:center;justify-content:space-between">
+        <span style="font-size:12px;color:var(--brand);font-weight:700">Total expenses for this applicant after saving:</span>
+        <span id="e-total-val" style="font-size:16px;font-weight:800;font-family:'IBM Plex Mono',monospace;color:var(--brand)">₱0</span>
+      </div>
+
+      <div id="e-error" style="display:none;color:var(--red);font-size:12.5px;
+           padding:9px 13px;background:var(--rbg);border-radius:7px;border:1px solid #fca5a5;margin-top:4px"></div>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="closeOverlay('overlay-expense')">Cancel</button>
-      <button class="btn btn-p" onclick="saveExpense()">Record Expense</button>
+      <button class="btn btn-p" id="save-expense-btn" onclick="saveExpense()">Record Expense</button>
     </div>
   </div>
 </div>
+
+
 
 <!-- Add Job -->
 <div class="overlay" id="overlay-job" onclick="closeOverlayIfBg(event,'overlay-job')" role="dialog" aria-modal="true" aria-label="Job order form">
@@ -2491,7 +2600,7 @@ function switchDrawerTab(tab, btn) {
           <div style="text-align:right"><div style="font-size:13px;font-weight:800;font-family:'IBM Plex Mono',monospace">₱${e.amount.toLocaleString()}</div><span class="pill ${e.status==='Paid'?'pill-green':'pill-amber'}">${e.status}</span></div>
         </div>`).join('')}
       </div>
-    ` : `<div class="empty-state"><div class="empty-icon">💸</div><div class="empty-title">No Expenses</div><div class="empty-sub">No expenses recorded for this applicant.</div><button class="btn btn-p btn-sm" onclick="openAddExpense()">Record Expense</button></div>`;
+    ` : `<div class="empty-state"><div class="empty-icon">💸</div><div class="empty-title">No Expenses</div><div class="empty-sub">No expenses recorded for this applicant.</div><button class="btn btn-p btn-sm" onclick="openAddExpense(app&&app.name)">Record Expense</button></div>`;
   }
   if (tab === 'agent') {
     panel.innerHTML = (typeof renderDrawerAgentPanel === 'function')
@@ -3391,25 +3500,201 @@ function renderAccounting() {
     </tr>`).join('');
 }
 
-function openAddExpense() {
-  document.getElementById('e-desc').value=''; document.getElementById('e-amount').value='';
-  document.getElementById('e-applicant').value=''; document.getElementById('e-date').valueAsDate=new Date();
+function openAddExpense(preselect) {
+  // Reset form
+  ['e-desc','e-amount','e-ref'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
+  var dt = document.getElementById('e-date');
+  if (dt) dt.valueAsDate = new Date();
+  var statEl = document.getElementById('e-status');
+  if (statEl) statEl.value = 'Paid';
+  var errEl = document.getElementById('e-error');
+  if (errEl) errEl.style.display = 'none';
+  var totalEl = document.getElementById('e-running-total');
+  if (totalEl) totalEl.style.display = 'none';
+  var infoEl = document.getElementById('e-applicant-info');
+  if (infoEl) infoEl.style.display = 'none';
+
+  // Populate applicant dropdown from DB.applicants
+  var sel = document.getElementById('e-applicant');
+  if (sel) {
+    sel.innerHTML = '<option value="">— Select Applicant —</option>' +
+      DB.applicants.map(function(a) {
+        var selected = (preselect && a.name === preselect) ? ' selected' : '';
+        return '<option value="' + a.name + '"' + selected + '>' +
+          a.name + ' (' + a.id + ' · ' + a.status + ')</option>';
+      }).join('');
+
+    // Fire change handler if preselected
+    if (preselect) {
+      setTimeout(onExpenseApplicantChange, 50);
+    }
+  }
+
   openOverlay('overlay-expense');
+  setTimeout(function(){ var s=document.getElementById('e-applicant'); if(s) s.focus(); }, 100);
+}
+
+// ── Applicant selected — show info card + running total ───────────────
+function onExpenseApplicantChange() {
+  var sel   = document.getElementById('e-applicant');
+  var name  = sel ? sel.value : '';
+  var info  = document.getElementById('e-applicant-info');
+  var total = document.getElementById('e-running-total');
+
+  if (!name) {
+    if (info)  info.style.display  = 'none';
+    if (total) total.style.display = 'none';
+    return;
+  }
+
+  var app = DB.applicants.find(function(a){ return a.name === name; });
+  if (!app) return;
+
+  // Fill info card
+  var initials = app.name.split(' ').map(function(w){ return w[0]; }).join('').toUpperCase().slice(0,2);
+  var avatar   = document.getElementById('e-app-avatar');
+  var appName  = document.getElementById('e-app-name');
+  var detail   = document.getElementById('e-app-detail');
+  var pill     = document.getElementById('e-app-status-pill');
+  var appTotal = document.getElementById('e-app-total');
+
+  if (avatar)   avatar.textContent   = initials;
+  if (appName)  appName.textContent  = app.name;
+  if (detail)   detail.textContent   = (app.job || 'No job') + ' · Agent: ' + (app.agent || '—');
+  if (pill)     pill.innerHTML       = pillHtml(app.status);
+
+  // Existing expense total for this applicant
+  var existingTotal = DB.expenses
+    .filter(function(e){ return e.applicant === app.name; })
+    .reduce(function(s,e){ return s + e.amount; }, 0);
+  if (appTotal) appTotal.textContent = '₱' + existingTotal.toLocaleString() + ' recorded so far';
+
+  if (info) info.style.display = 'flex';
+
+  // Show running total row
+  updateExpenseTotal();
+  if (total) total.style.display = 'flex';
+
+  // Auto-suggest description from category
+  onExpenseCategoryChange();
+}
+
+// ── Auto-suggest description when category changes ────────────────────
+function onExpenseCategoryChange() {
+  var cat   = document.getElementById('e-category');
+  var desc  = document.getElementById('e-desc');
+  var appSel = document.getElementById('e-applicant');
+  if (!cat || !desc || desc.value) return;  // don't overwrite existing
+  var appName = appSel ? appSel.value : '';
+  var suggestions = {
+    'Medical Exam':    'Medical examination' + (appName ? ' — ' + appName : ''),
+    'Documentation':   'Document processing' + (appName ? ' — ' + appName : ''),
+    'Processing Fee':  'POEA processing fee' + (appName ? ' — ' + appName : ''),
+    'Training':        'OFW skills training' + (appName ? ' — ' + appName : ''),
+    'Visa Fee':        'Visa application fee' + (appName ? ' — ' + appName : ''),
+    'OWWA Fee':        'OWWA membership fee' + (appName ? ' — ' + appName : ''),
+    'Ticketing':       'Airfare / ticketing' + (appName ? ' — ' + appName : ''),
+    'Transportation':  'Transportation expense',
+    'Accommodation':   'Accommodation cost',
+  };
+  if (suggestions[cat.value]) desc.value = suggestions[cat.value];
+}
+
+// ── Update running expense total preview ──────────────────────────────
+function updateExpenseTotal() {
+  var appSel  = document.getElementById('e-applicant');
+  var amtEl   = document.getElementById('e-amount');
+  var totalEl = document.getElementById('e-total-val');
+  if (!appSel || !totalEl) return;
+
+  var name = appSel.value;
+  if (!name) return;
+
+  var existing = DB.expenses
+    .filter(function(e){ return e.applicant === name; })
+    .reduce(function(s,e){ return s + e.amount; }, 0);
+  var newAmt   = parseFloat(amtEl ? amtEl.value : 0) || 0;
+  totalEl.textContent = '₱' + (existing + newAmt).toLocaleString();
 }
 function saveExpense() {
-  const desc = document.getElementById('e-desc').value.trim();
-  const amt = parseFloat(document.getElementById('e-amount').value);
-  if (!desc || isNaN(amt)) { toast('Description and amount required','error'); return; }
-  const exp = {
-    id: genId('EXP'), date: document.getElementById('e-date').value,
-    desc, applicant: document.getElementById('e-applicant').value || 'General',
-    category: document.getElementById('e-category').value, amount: amt, status: 'Pending'
+  var appName = (document.getElementById('e-applicant').value || '').trim();
+  var desc    = (document.getElementById('e-desc').value     || '').trim();
+  var amt     = parseFloat(document.getElementById('e-amount').value) || 0;
+  var errEl   = document.getElementById('e-error');
+  var btn     = document.getElementById('save-expense-btn');
+  if (errEl) errEl.style.display = 'none';
+
+  if (!appName) {
+    if (errEl) { errEl.textContent = 'Please select an applicant.'; errEl.style.display = 'block'; }
+    return;
+  }
+  if (!desc) {
+    if (errEl) { errEl.textContent = 'Description is required.'; errEl.style.display = 'block'; }
+    return;
+  }
+  if (!amt || amt <= 0) {
+    if (errEl) { errEl.textContent = 'Amount must be greater than zero.'; errEl.style.display = 'block'; }
+    return;
+  }
+
+  var app = DB.applicants.find(function(a){ return a.name === appName; });
+
+  var exp = {
+    id:          genId('EXP'),
+    date:        document.getElementById('e-date').value || new Date().toISOString().split('T')[0],
+    desc:        desc,
+    applicant:   appName,
+    applicantId: app ? app.id : null,
+    category:    document.getElementById('e-category').value,
+    amount:      amt,
+    status:      document.getElementById('e-status').value || 'Paid',
+    ref:         (document.getElementById('e-ref') ? document.getElementById('e-ref').value.trim() : '') || null,
+    postedBy:    (function(){ try{ return JSON.parse(localStorage.getItem('rams_user')||'{}').name||'Admin'; }catch(e){ return 'Admin'; } })(),
   };
+
   DB.expenses.unshift(exp);
-  addAudit('CREATE','Expense',`Recorded ${desc}: ₱${amt.toLocaleString()}`);
-  closeOverlay('overlay-expense');
-  renderAccounting();
-  toast('Expense recorded','success');
+
+  // Auto-trigger accounting if applicant status warrants it
+  if (app) {
+    var agent = DB.agents.find(function(a){ return a.name === app.agent; });
+    if (agent) {
+      var autoCharge = ['Backout','Repatriated'].indexOf(app.status) !== -1;
+      if (autoCharge) {
+        exp.status = 'Charged';
+        agent.totalExpenses = (agent.totalExpenses || 0) + amt;
+        if (typeof addLedgerEntry === 'function') {
+          addLedgerEntry(agent.id, 'expense',
+            'Auto-charged: ' + exp.category + ' — ' + appName + ' (' + app.status + ')',
+            -amt, app.id);
+        }
+        addAudit('CREATE', 'Expense',
+          'Auto-charged ₱' + amt.toLocaleString() + ' to agent ' + agent.name +
+          ' (' + appName + ' is ' + app.status + ')');
+      }
+    }
+  }
+
+  addAudit('CREATE', 'Expense',
+    'Recorded ' + exp.category + ': ₱' + amt.toLocaleString() + ' for ' + appName);
+
+  if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
+
+  setTimeout(function() {
+    if (btn) { btn.textContent = 'Record Expense'; btn.disabled = false; }
+    closeOverlay('overlay-expense');
+
+    // Refresh drawer if open and showing this applicant's expenses
+    if (currentDrawerApplicant && currentDrawerApplicant.name === appName) {
+      switchDrawerTab('expenses', null);
+    }
+
+    // Refresh current view
+    if (currentPage === 'accounting') renderAccounting();
+    if (typeof renderExpensesTab === 'function' && currentAccTab === 'expenses') renderExpensesTab();
+
+    toast('Expense recorded — ₱' + amt.toLocaleString() + ' for ' + appName,
+          exp.status === 'Charged' ? 'info' : 'success');
+  }, 300);
 }
 
 // ════════════════════════════════════════════════════════
@@ -3711,16 +3996,20 @@ function renderRoles() {
   const matrix = document.getElementById('rbac-matrix');
   const roleNames = ROLES_CONFIG.map(r=>r.name);
 
+  var currentRole = typeof getCurrentRole === 'function' ? getCurrentRole() : 'Admin';
+
   matrix.innerHTML = '<thead><tr>'
     + '<th style="text-align:left;min-width:180px">Permission</th>'
-    + roleNames.map((r,ri)=>`<th style="text-align:center;min-width:90px">
-        <div style="font-size:12px;font-weight:700">${r}</div>
+    + roleNames.map((r,ri)=>`<th style="text-align:center;min-width:90px;${r===currentRole?'background:var(--brand-l);border-bottom:2px solid var(--brand)':''}">
+        <div style="font-size:12px;font-weight:700;color:${r===currentRole?'var(--brand)':'inherit'}">
+          ${r}${r===currentRole?' <span style="font-size:9px;opacity:.7">(you)</span>':''}
+        </div>
       </th>`).join('')
     + '</tr></thead><tbody>'
     + PERMISSIONS.map(([perm,...vals], pi)=>`<tr>
         <td style="font-size:12.5px;font-weight:600;color:var(--text2)">${perm}</td>
         ${vals.map((v,ri)=>`
-          <td style="text-align:center">
+          <td style="text-align:center;${roleNames[ri]===currentRole?'background:rgba(20,71,230,.04)':''}">
             <button class="perm-toggle ${v?'perm-on':'perm-off'}"
                     onclick="togglePermission(${pi},${ri})"
                     title="${v?'Revoke':'Grant'} ${perm} for ${roleNames[ri]}"
@@ -3735,20 +4024,27 @@ function renderRoles() {
 
 function togglePermission(permIdx, roleIdx) {
   PERMISSIONS[permIdx][roleIdx + 1] = !PERMISSIONS[permIdx][roleIdx + 1];
-  var val = PERMISSIONS[permIdx][roleIdx + 1];
-  // Update just this button without full re-render (performance)
+  var val      = PERMISSIONS[permIdx][roleIdx + 1];
+  var permName = PERMISSIONS[permIdx][0];
+  var roleName = ROLES_CONFIG[roleIdx] ? ROLES_CONFIG[roleIdx].name : '';
+
+  // 1. Update the matrix cell visually
   var matrix = document.getElementById('rbac-matrix');
-  var rows = matrix.querySelectorAll('tbody tr');
+  var rows = matrix ? matrix.querySelectorAll('tbody tr') : [];
   if (rows[permIdx]) {
     var btns = rows[permIdx].querySelectorAll('.perm-toggle');
     if (btns[roleIdx]) {
       btns[roleIdx].textContent = val ? '✓' : '✕';
-      btns[roleIdx].className = 'perm-toggle ' + (val ? 'perm-on' : 'perm-off');
-      btns[roleIdx].setAttribute('aria-pressed', val);
-      btns[roleIdx].title = (val ? 'Revoke ' : 'Grant ') + PERMISSIONS[permIdx][0] + ' for ' + ROLES_CONFIG[roleIdx].name;
+      btns[roleIdx].className   = 'perm-toggle ' + (val ? 'perm-on' : 'perm-off');
+      btns[roleIdx].setAttribute('aria-pressed', String(val));
+      btns[roleIdx].title = (val ? 'Revoke ' : 'Grant ') + permName + ' for ' + roleName;
     }
   }
-  // Mark as unsaved
+
+  // 2. Apply permission change live to current session
+  _applyPermissionLive(permName, roleName, val);
+
+  // 3. Mark Save button as dirty
   var saveBtn = document.querySelector('[onclick="savePermissions()"]');
   if (saveBtn && !saveBtn.dataset.dirty) {
     saveBtn.dataset.dirty = '1';
@@ -3758,12 +4054,49 @@ function togglePermission(permIdx, roleIdx) {
   }
 }
 
+// ── Live permission enforcement after each toggle ─────────────────────
+function _applyPermissionLive(permName, changedRole, newVal) {
+  var currentRole = getCurrentRole();
+
+  // A. If the changed role affects the current user → re-gate everything
+  if (changedRole === currentRole || changedRole === 'Admin') {
+    // Re-apply sidebar visibility (page permissions may have changed)
+    var pages = _getRolePages(currentRole);
+    document.querySelectorAll('.sb-item[data-page]').forEach(function(item) {
+      var page = item.getAttribute('data-page');
+      item.style.display = (pages.indexOf(page) !== -1) ? '' : 'none';
+    });
+
+    // Re-gate all action buttons
+    _gateButtons();
+
+    // If current page is no longer accessible → redirect
+    if (!canAccessPage(currentPage)) {
+      var firstAllowed = pages[0] || 'dashboard';
+      toast('Access to "' + currentPage + '" was revoked — redirecting', 'info');
+      setTimeout(function(){ _origNav(firstAllowed); }, 400);
+    }
+
+    // Show feedback toast
+    var action = newVal ? 'granted' : 'revoked';
+    toast('"' + permName + '" ' + action + ' for ' + changedRole + ' — applied live', newVal ? 'success' : 'info');
+  } else {
+    // Different role changed — just show audit feedback
+    var action = newVal ? 'granted' : 'revoked';
+    toast('"' + permName + '" ' + action + ' for ' + changedRole, 'info');
+  }
+}
+
 var _permissionsOriginal = null;
 
 function savePermissions() {
-  _permissionsOriginal = PERMISSIONS.map(row => row.slice());
-  addAudit('UPDATE', 'Roles', 'Permission matrix updated');
-  toast('Permissions saved', 'success');
+  _permissionsOriginal = PERMISSIONS.map(function(row){ return row.slice(); });
+  addAudit('UPDATE', 'Roles', 'Permission matrix saved — ' + ROLES_CONFIG.length + ' roles updated');
+
+  // Full RBAC re-application for current user
+  applyRBAC();
+
+  toast('Permissions saved and applied', 'success');
   var saveBtn = document.querySelector('[onclick="savePermissions()"]');
   if (saveBtn) {
     saveBtn.removeAttribute('data-dirty');
@@ -3781,7 +4114,9 @@ function resetPermissions() {
     });
   }
   renderRoles();
-  toast('Permissions reset', 'info');
+  // Re-apply RBAC so current session reflects the reset
+  applyRBAC();
+  toast('Permissions reset and re-applied', 'info');
   var saveBtn = document.querySelector('[onclick="savePermissions()"]');
   if (saveBtn) {
     saveBtn.removeAttribute('data-dirty');
@@ -3877,7 +4212,7 @@ function _doLogin() {
       localStorage.removeItem('rams_api_url');
       _showApp({name:'Admin User',email:email,role:'admin'});
     } else {
-      errEl.textContent='Demo credentials: admin@rams.io / password123';
+      errEl.textContent='Demo: admin@rams.io / password123 (Admin) — or any user email from Settings with password123';
       errEl.style.display='block';
     }
     return;
@@ -4729,13 +5064,17 @@ function renderExpensesTab(search) {
     var agent = app ? DB.agents.find(function(a){ return a.name===app.agent; }) : null;
     return '<tr>'+
       '<td style="font-size:11.5px;font-family:\'IBM Plex Mono\',monospace;color:var(--muted)">'+e.date+'</td>'+
-      '<td style="font-weight:600">'+(e.applicant||'—')+'</td>'+
+      '<td>'+
+        '<div style="font-size:12.5px;font-weight:700">'+(e.applicant||'—')+'</div>'+
+        (app?'<div style="font-size:11px;color:var(--muted);">'+app.id+' · '+pillHtml(app.status)+'</div>':'')+
+      '</td>'+
       '<td style="font-size:12.5px;color:var(--text2)">'+(agent?agent.name:'—')+'</td>'+
       '<td>'+pillHtml(e.category,'category')+'</td>'+
-      '<td style="font-size:12.5px;max-width:160px">'+e.desc+'</td>'+
+      '<td style="font-size:12.5px;max-width:160px">'+e.desc+(e.ref?'<div style="font-size:10.5px;color:var(--dim)">Ref: '+e.ref+'</div>':'')+'</td>'+
       '<td style="font-weight:800;font-family:\'IBM Plex Mono\',monospace;text-align:right">₱'+e.amount.toLocaleString()+'</td>'+
       '<td>'+pillHtml(e.status)+'</td>'+
       '<td style="text-align:right;white-space:nowrap">'+
+        (app?'<button class="btn btn-ghost btn-xs" onclick="openDrawer(\''+app.id+'\')" title="View applicant">👤</button> ':'')+
         (agent?'<button class="btn btn-sm" style="font-size:11px;background:var(--rbg);color:var(--red);border:1px solid #fca5a5" onclick="chargeExpenseToAgent(\''+e.id+'\',\''+agent.id+'\')">Charge Agent</button> ':'')+
         '<button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="confirmDelete(\'expense\',\''+e.id+'\')">🗑</button>'+
       '</td>'+
@@ -4994,85 +5333,166 @@ function chargeExpenseToAgent(expenseId, agentId) {
 }
 
 function onApplicantStatusChange(applicantId, newStatus, oldStatus) {
-  var app = DB.applicants.find(function(a){ return a.id===applicantId; });
+  if (!newStatus || newStatus === oldStatus) return;
+
+  var app = DB.applicants.find(function(a){ return a.id === applicantId; });
   if (!app) return;
-  // Look up agent by agentId first, fallback to name match
-  var agent = (app.agentId ? DB.agents.find(function(a){ return a.id===app.agentId; }) : null)
-           || DB.agents.find(function(a){ return a.name===app.agent; });
-  if (!agent) return;
-  if (!agent) return;
 
-  var appExpenses = DB.expenses.filter(function(e){ return e.applicant===app.name && e.status!=='Charged'; });
-  var totalExp    = appExpenses.reduce(function(s,e){ return s+e.amount; }, 0);
+  // Resolve agent — try agentId first, then name match
+  var agent = (app.agentId ? DB.agents.find(function(a){ return a.id === app.agentId; }) : null)
+           || DB.agents.find(function(a){ return a.name === app.agent; });
 
-  // Unfit → charge medical expenses
-  if (newStatus === 'Backout' && oldStatus !== 'Backout') {
-    var medExp = appExpenses.filter(function(e){ return e.category==='Medical'; });
-    var medTotal = medExp.reduce(function(s,e){ return s+e.amount; }, 0);
-    if (medTotal > 0) {
-      medExp.forEach(function(e){ e.status='Charged'; });
-      agent.totalExpenses += medTotal;
-      addLedgerEntry(agent.id, 'expense', 'Auto-charge: Medical expenses — '+app.name+' (Backout)', -medTotal, applicantId);
-      toast('₱'+medTotal.toLocaleString()+' medical expenses charged to '+agent.name+' (backout)','info');
+  // ── Trigger statuses ─────────────────────────────────────────────
+  var CHARGE_ALL_STATUSES = ['Backout', 'Repatriated', 'Rejected'];
+  var shouldChargeAll = CHARGE_ALL_STATUSES.indexOf(newStatus) !== -1;
+
+  // ── 1. AUTO-CHARGE ALL EXPENSES to agent ─────────────────────────
+  if (shouldChargeAll && agent) {
+    // Find every uncharged expense for this applicant
+    var uncharged = DB.expenses.filter(function(e) {
+      return (e.applicant === app.name || e.applicantId === applicantId)
+          && e.status !== 'Charged';
+    });
+
+    if (uncharged.length > 0) {
+      var grandTotal = 0;
+
+      // Mark each expense as Charged and post individual ledger entries
+      uncharged.forEach(function(e) {
+        e.status      = 'Charged';
+        e.chargedDate = new Date().toISOString().split('T')[0];
+        e.chargedTo   = agent.id;
+        grandTotal   += e.amount;
+
+        // One ledger entry per expense for full traceability
+        addLedgerEntry(
+          agent.id,
+          'expense',
+          e.category + ' — ' + app.name + ' (' + newStatus + '): ' + e.desc,
+          -e.amount,
+          applicantId
+        );
+      });
+
+      // Update agent totals
+      agent.totalExpenses = (agent.totalExpenses || 0) + grandTotal;
+
+      addAudit(
+        'UPDATE', 'Agent',
+        newStatus + ': ₱' + grandTotal.toLocaleString() + ' (' + uncharged.length +
+        ' expense' + (uncharged.length !== 1 ? 's' : '') + ') auto-charged to ' +
+        agent.name + ' for ' + app.name
+      );
+
+      toast(
+        '₱' + grandTotal.toLocaleString() + ' (' + uncharged.length + ' expenses) ' +
+        'auto-charged to ' + agent.name + ' — ' + app.name + ' ' + newStatus,
+        'info'
+      );
+    } else {
+      toast('No uncharged expenses found for ' + app.name + ' — nothing charged to agent', 'info');
+    }
+
+    // Track backouts on agent record
+    if (newStatus === 'Backout') {
+      agent.backouts = (agent.backouts || 0) + 1;
+    }
+    if (newStatus === 'Repatriated') {
+      agent.repatriations = (agent.repatriations || 0) + 1;
+    }
+  } else if (shouldChargeAll && !agent) {
+    // No agent assigned — still mark expenses as Agency-absorbed
+    var unchargedNoAgent = DB.expenses.filter(function(e) {
+      return (e.applicant === app.name || e.applicantId === applicantId)
+          && e.status !== 'Charged';
+    });
+    if (unchargedNoAgent.length > 0) {
+      unchargedNoAgent.forEach(function(e) { e.status = 'Agency'; });
+      addAudit('UPDATE', 'Expense',
+        newStatus + ': expenses absorbed by agency (no agent) — ' + app.name);
+      toast('No agent assigned — ' + unchargedNoAgent.length + ' expense(s) marked as Agency', 'info');
     }
   }
 
-  // Medically Unfit → charge all medical expenses
-  if (app.medical === 'Unfit' && newStatus !== oldStatus) {
-    var unfitExp = appExpenses.filter(function(e){ return e.category==='Medical'; });
-    var unfitTotal = unfitExp.reduce(function(s,e){ return s+e.amount; }, 0);
-    if (unfitTotal > 0) {
-      unfitExp.forEach(function(e){ e.status='Charged'; });
-      agent.totalExpenses += unfitTotal;
-      addLedgerEntry(agent.id, 'expense', 'Auto-charge: Medical exam — '+app.name+' (Medically Unfit)', -unfitTotal, applicantId);
-      toast('Medical expenses auto-charged to '+agent.name,'info');
+  // ── 2. REVERSE OPEN COMMISSION if Repatriated or Rejected ────────
+  if ((newStatus === 'Repatriated' || newStatus === 'Rejected') && agent) {
+    var openComm = DB.commissions.find(function(c) {
+      return (c.applicantId === applicantId || c.applicantName === app.name)
+          && (c.status === 'In Guarantee' || c.status === 'Released');
+    });
+    if (openComm) {
+      var prevStatus    = openComm.status;
+      openComm.status   = 'Reversed';
+      openComm.reversedDate = new Date().toISOString().split('T')[0];
+      openComm.reversedReason = newStatus;
+
+      // Debit agent balance if commission was already released
+      if (prevStatus === 'Released') {
+        addLedgerEntry(
+          agent.id, 'reversal',
+          'Commission reversed — ' + app.name + ' (' + newStatus + ')',
+          -openComm.amount, applicantId
+        );
+        agent.totalCommission = Math.max(0, (agent.totalCommission || 0) - openComm.amount);
+      } else {
+        // Still in guarantee — just cancel it
+        addLedgerEntry(
+          agent.id, 'reversal',
+          'Commission cancelled — ' + app.name + ' (' + newStatus + ')',
+          0, applicantId
+        );
+      }
+
+      addAudit('UPDATE', 'Commission',
+        'Commission of ₱' + openComm.amount.toLocaleString() + ' reversed for ' +
+        app.name + ' (' + newStatus + ')');
+      toast('Commission of ₱' + openComm.amount.toLocaleString() + ' reversed for ' + agent.name, 'info');
     }
   }
 
-  // Deployed → create commission record
+  // ── 3. DEPLOYED → create commission record ───────────────────────
   if (newStatus === 'Deployed' && oldStatus !== 'Deployed') {
-    var country = app.job ? app.job.split('·').pop().trim() : 'Philippines';
-    var rule    = DB.countryRules.find(function(r){ return r.country===country; }) ||
-                  DB.countryRules.find(function(r){ return r.active; });
-    var commission = rule ? rule.commissionAmt : (agent.commissionAmt || 15000);
-    var gEnd    = new Date();
-    if (rule) gEnd.setMonth(gEnd.getMonth() + rule.guaranteePeriod);
-    else       gEnd.setMonth(gEnd.getMonth() + 6);
+    var country = app.job ? app.job.split('·').pop().trim() : '';
+    var rule    = DB.countryRules.find(function(r) { return r.country === country && r.active; })
+               || DB.countryRules.find(function(r) { return r.active; });
+    var commAmt = rule ? rule.commissionAmt : (agent ? (agent.commissionAmt || 15000) : 15000);
+
+    var gEnd = new Date();
+    gEnd.setMonth(gEnd.getMonth() + (rule ? rule.guaranteePeriod : 6));
 
     DB.commissions.push({
-      id: 'COM-'+String(DB.commissions.length+1).padStart(3,'0'),
-      agentId: agent.id,
-      applicantId: applicantId,
+      id:            'COM-' + String(DB.commissions.length + 1).padStart(3, '0'),
+      agentId:       agent ? agent.id : null,
+      applicantId:   applicantId,
       applicantName: app.name,
-      country: country,
-      amount: commission,
-      status: 'In Guarantee',
-      deployDate: new Date().toISOString().split('T')[0],
-      guaranteeEnd: gEnd.toISOString().split('T')[0],
-      releaseDate: null,
+      country:       country || 'Philippines',
+      amount:        commAmt,
+      status:        'In Guarantee',
+      deployDate:    new Date().toISOString().split('T')[0],
+      guaranteeEnd:  gEnd.toISOString().split('T')[0],
+      releaseDate:   null,
     });
-    agent.totalDeployed++;
-    addAudit('CREATE','Commission','Commission created: ₱'+commission.toLocaleString()+' for '+app.name+' (In Guarantee)');
-    toast('Commission of ₱'+commission.toLocaleString()+' created for '+agent.name+' (in guarantee)','success');
+
+    if (agent) {
+      agent.totalDeployed = (agent.totalDeployed || 0) + 1;
+    }
+
+    addAudit('CREATE', 'Commission',
+      'Commission ₱' + commAmt.toLocaleString() + ' created for ' + app.name +
+      ' (In Guarantee — ' + (rule ? rule.guaranteePeriod : 6) + ' months)');
+    toast('Commission ₱' + commAmt.toLocaleString() + ' created for ' +
+      (agent ? agent.name : 'unassigned') + ' — in guarantee', 'success');
   }
 
-  // Repatriated → charge all expenses + reverse commission
-  if (newStatus === 'Repatriated') {
-    if (totalExp > 0) {
-      appExpenses.forEach(function(e){ e.status='Charged'; });
-      agent.totalExpenses += totalExp;
-      addLedgerEntry(agent.id, 'expense', 'Auto-charge: Full expenses — '+app.name+' (Repatriated)', -totalExp, applicantId);
-    }
-    var openComm = DB.commissions.find(function(c){ return c.applicantId===applicantId && c.status==='In Guarantee'; });
-    if (openComm) {
-      openComm.status = 'Reversed';
-      addLedgerEntry(agent.id, 'reversal', 'Commission reversed — '+app.name+' repatriated within guarantee', -openComm.amount, applicantId);
-    }
-    agent.repatriations++;
-    toast('Expenses charged + commission reversed for '+agent.name+' (repatriation)','info');
-    addAudit('UPDATE','Agent','Repatriation processed for '+app.name+' — agent: '+agent.name);
+  // ── 4. MEDICALLY UNFIT extra charge (on any status change) ───────
+  if (app.medical === 'Unfit' && shouldChargeAll && agent) {
+    // Already handled above in the bulk charge — no duplicate needed
+    // Just log it specifically for compliance
+    addAudit('UPDATE', 'Medical',
+      'Medically unfit applicant ' + app.name + ' — expenses charged to agent ' + agent.name);
   }
 }
+
 
 // ── AGENT CRUD ────────────────────────────────────────────────────────
 function openAddAgent() {
@@ -6307,6 +6727,461 @@ function deleteDocFromPreview() {
   setTimeout(function() {
     confirmDelete('document', _previewDocId);
   }, 200);
+}
+
+
+
+// ╔══════════════════════════════════════════════════════════════════════╗
+// ║                    RBAC ENFORCEMENT ENGINE                          ║
+// ╚══════════════════════════════════════════════════════════════════════╝
+
+// ── Role index map (matches PERMISSIONS column order) ─────────────────
+var ROLE_INDEX = {
+  'Admin':0, 'admin':0,
+  'Recruiter':1, 'recruiter':1,
+  'Manager':2, 'manager':2,
+  'Compliance':3, 'compliance':3,
+  'Finance':4, 'finance':4,
+  'Viewer':5, 'viewer':5,
+};
+
+// ── Page → permission map (used to derive sidebar visibility from PERMISSIONS) ──
+var PAGE_PERM_MAP = {
+  'dashboard':    'View Dashboard',
+  'pipeline':     'View All Applicants',
+  'applicants':   'View All Applicants',
+  'documents':    'View All Applicants',
+  'jobs':         'Manage Job Orders',
+  'analytics':    'View Analytics',
+  'accounting':   'View Accounting',
+  'audit':        'View Audit Log',
+  'chat':         'Send Chat Messages',
+  'integrations': 'Manage Integrations',
+  'roles':        'Manage Roles',
+  'settings':     'System Settings',
+};
+
+// ── Derive allowed pages for a role from the live PERMISSIONS matrix ──
+function _getRolePages(role) {
+  var ri = ROLE_INDEX[role];
+  if (ri === undefined) ri = 5;
+  var allowed = [];
+  Object.keys(PAGE_PERM_MAP).forEach(function(page) {
+    var permName = PAGE_PERM_MAP[page];
+    var row = PERMISSIONS.find(function(p){ return p[0] === permName; });
+    if (row && row[ri + 1] === true) allowed.push(page);
+  });
+  // Admin always gets everything regardless
+  if (role === 'Admin') {
+    Object.keys(PAGE_PERM_MAP).forEach(function(page){
+      if (allowed.indexOf(page) === -1) allowed.push(page);
+    });
+  }
+  return allowed;
+}
+
+// ── Legacy compat — ROLE_PAGES kept as a getter that uses live PERMISSIONS ──
+var ROLE_PAGES = new Proxy({}, {
+  get: function(_, role) { return _getRolePages(role); }
+});
+
+// ── Core helpers ───────────────────────────────────────────────────────
+function getCurrentUser() {
+  try {
+    var u = JSON.parse(localStorage.getItem('rams_user') || 'null');
+    return u;
+  } catch(e) { return null; }
+}
+
+function getCurrentRole() {
+  var u = getCurrentUser();
+  if (!u) return 'Viewer';
+  // Normalize role string (backend may return lowercase)
+  var r = u.role || 'Viewer';
+  r = r.charAt(0).toUpperCase() + r.slice(1).toLowerCase();
+  // Map known aliases
+  var aliases = { Admin:'Admin', Recruiter:'Recruiter', Manager:'Manager',
+                  Compliance:'Compliance', Finance:'Finance', Viewer:'Viewer',
+                  administrator:'Admin' };
+  return aliases[r] || aliases[u.role] || 'Viewer';
+}
+
+function hasPermission(permName) {
+  var role  = getCurrentRole();
+  var ri    = ROLE_INDEX[role];
+  if (ri === undefined) ri = 5; // Viewer fallback
+  var row   = PERMISSIONS.find(function(p){ return p[0] === permName; });
+  if (!row) return false;
+  return row[ri + 1] === true;
+}
+
+function canAccessPage(page) {
+  var role  = getCurrentRole();
+  var pages = _getRolePages(role);
+  return pages.indexOf(page) !== -1;
+}
+
+// ── Demo mode — allow switching roles for testing ─────────────────────
+var _demoRoleOverride = null;
+function setDemoRole(role) {
+  _demoRoleOverride = role;
+  var u = getCurrentUser();
+  if (u) {
+    u.role = role;
+    localStorage.setItem('rams_user', JSON.stringify(u));
+  }
+  // Close the dropdown
+  var dd = document.getElementById('role-dropdown');
+  if (dd) dd.classList.remove('open');
+
+  applyRBAC();
+  _syncRoleLabel();
+  _addRoleSwitcher(); // Re-render dropdown to update active checkmark
+  nav('dashboard');
+  toast('Role switched to ' + role + ' — RBAC applied', 'success');
+}
+
+// ── Apply RBAC after login ─────────────────────────────────────────────
+function applyRBAC() {
+  var role  = getCurrentRole();
+  var pages = ROLE_PAGES[role] || ROLE_PAGES['Viewer'];
+
+  // 1. Sidebar: hide nav items the role can't access
+  document.querySelectorAll('.sb-item[data-page]').forEach(function(item) {
+    var page = item.getAttribute('data-page');
+    var allowed = pages.indexOf(page) !== -1;
+    item.style.display = allowed ? '' : 'none';
+  });
+
+  // 2. Show role badge in sidebar
+  var roleEl = document.getElementById('sb-urole');
+  if (roleEl) {
+    var roleColors = { Admin:'#16A34A', Recruiter:'#1447E6', Manager:'#7C3AED',
+                       Compliance:'#D97706', Finance:'#0891B2', Viewer:'#8FA0BE' };
+    roleEl.innerHTML = '<span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:9px;font-weight:800;background:' +
+      (roleColors[role]||'#8FA0BE') + '22;color:' + (roleColors[role]||'#8FA0BE') + '">' + role.toUpperCase() + '</span>';
+  }
+
+  // 3. Gate action buttons throughout the app
+  _gateButtons();
+  // 4. Sync role label in sidebar
+  _syncRoleLabel();
+}
+
+// ── Button gating ──────────────────────────────────────────────────────
+function _gateButtons() {
+  // Each entry: [selector, permissionName, tooltipWhenDenied]
+  var gates = [
+    // Applicants
+    ['[onclick*="openAddApplicant"]',     'Create Applicants',    'Your role cannot create applicants'],
+    ['[onclick*="editApplicant"]',        'Edit Applicants',      'Your role cannot edit applicants'],
+    ['[onclick*="confirmDelete"][onclick*="applicant"]', 'Delete Applicants', 'Your role cannot delete applicants'],
+    ['[onclick*="exportData"]',           'Export Applicant Data','Your role cannot export data'],
+    // Jobs
+    ['[onclick*="openAddJob"]',           'Manage Job Orders',    'Your role cannot manage job orders'],
+    ['[onclick*="editJob"]',              'Manage Job Orders',    'Your role cannot manage job orders'],
+    // Documents
+    ['[onclick*="openUploadDoc"]',        'Upload Documents',     'Your role cannot upload documents'],
+    ['[onclick*="approveDoc"]',           'Approve Documents',    'Your role cannot approve documents'],
+    ['[onclick*="approveDocFromPreview"]','Approve Documents',    'Your role cannot approve documents'],
+    // Accounting
+    ['[onclick*="openAddExpense"]',       'Manage Expenses',      'Your role cannot manage expenses'],
+    ['[onclick*="openOfficeExpense"]',    'Manage Accounting',    'Your role cannot manage accounting'],
+    ['[onclick*="openAddFunds"]',         'Manage Accounting',    'Your role cannot manage accounting'],
+    ['[onclick*="openManualAdjustment"]', 'Manage Accounting',    'Your role cannot manage accounting'],
+    ['[onclick*="saveCommissionRates"]',  'Manage Accounting',    'Your role cannot manage accounting'],
+    ['[onclick*="releaseCommission"]',    'Manage Accounting',    'Your role cannot manage accounting'],
+    ['[onclick*="reverseCommission"]',    'Manage Accounting',    'Your role cannot manage accounting'],
+    ['[onclick*="openOfficeAdjustment"]', 'Manage Accounting',    'Your role cannot manage accounting'],
+    // Users
+    ['[onclick*="openCreateUser"]',       'Manage Users',         'Your role cannot create users'],
+    ['[onclick*="openEditUser"]',         'Manage Users',         'Your role cannot manage users'],
+    ['[onclick*="deleteUser"]',           'Manage Users',         'Your role cannot manage users'],
+    // Roles
+    ['[onclick*="openAddRole"]',          'Manage Roles',         'Your role cannot manage roles'],
+    ['[onclick*="editRole"]',             'Manage Roles',         'Your role cannot manage roles'],
+    ['[onclick*="deleteRole"]',           'Manage Roles',         'Your role cannot manage roles'],
+    ['[onclick*="togglePermission"]',     'Manage Roles',         'Your role cannot edit permissions'],
+    ['[onclick*="savePermissions"]',      'Manage Roles',         'Your role cannot save permissions'],
+    // Integrations
+    ['[onclick*="toggleInteg"]',          'Manage Integrations',  'Your role cannot manage integrations'],
+    ['[onclick*="connectInteg"]',         'Manage Integrations',  'Your role cannot manage integrations'],
+    // Agents
+    ['[onclick*="openAddAgent"]',         'Manage Accounting',    'Your role cannot manage agents'],
+    ['[onclick*="openEditAgent"]',        'Manage Accounting',    'Your role cannot manage agents'],
+    ['[onclick*="deleteAgent"]',          'Manage Accounting',    'Your role cannot manage agents'],
+    ['[onclick*="chargeExpenseToAgent"]', 'Manage Accounting',    'Your role cannot charge expenses'],
+    ['[onclick*="addLedgerEntry"]',       'Manage Accounting',    'Your role cannot edit ledger'],
+    ['[onclick*="submitAdjustment"]',     'Manage Accounting',    'Your role cannot post adjustments'],
+  ];
+
+  gates.forEach(function(gate) {
+    var sel  = gate[0];
+    var perm = gate[1];
+    var tip  = gate[2];
+    var allowed = hasPermission(perm);
+    try {
+      document.querySelectorAll(sel).forEach(function(btn) {
+        if (!allowed) {
+          btn.disabled = true;
+          btn.style.opacity = '0.4';
+          btn.style.cursor  = 'not-allowed';
+          btn.title = tip;
+          btn.setAttribute('data-rbac-locked', '1');
+        } else {
+          // Re-enable if previously locked
+          if (btn.getAttribute('data-rbac-locked')) {
+            btn.disabled = false;
+            btn.style.opacity = '';
+            btn.style.cursor  = '';
+            btn.title = '';
+            btn.removeAttribute('data-rbac-locked');
+          }
+        }
+      });
+    } catch(e) {}
+  });
+}
+
+// ── Patch nav() to block unauthorized page access ─────────────────────
+var _origNav = nav;
+nav = function(page) {
+  if (!canAccessPage(page)) {
+    toast('Access denied — your role (' + getCurrentRole() + ') cannot view this page', 'error');
+    // Redirect to first allowed page
+    var role     = getCurrentRole();
+    var allowed  = ROLE_PAGES[role] || ['dashboard'];
+    _origNav(allowed[0]);
+    return;
+  }
+  _origNav(page);
+  // Re-apply button gates after each navigation (new content may be rendered)
+  setTimeout(_gateButtons, 80);
+};
+
+// ── Permission-check wrapper for action functions ─────────────────────
+function _requirePerm(perm, fn) {
+  if (!hasPermission(perm)) {
+    toast('Permission denied — requires: ' + perm, 'error');
+    return false;
+  }
+  if (typeof fn === 'function') fn();
+  return true;
+}
+
+// ── Patch _showApp to apply RBAC on login ─────────────────────────────
+var _origShowApp = _showApp;
+_showApp = function(user) {
+  _origShowApp(user);
+  setTimeout(applyRBAC, 50);  // slight delay so DOM is ready
+};
+
+// ── Demo login — add role switcher ────────────────────────────────────
+// Patch _doLogin to support any user from DB.users in demo mode
+var _origDoLogin = _doLogin;
+_doLogin = function() {
+  var email = (document.getElementById('li-email').value || '').trim();
+  var pass  = (document.getElementById('li-pass').value  || '');
+  var apiUrl = (document.getElementById('li-url').value  || '').trim();
+  var errEl = document.getElementById('le');
+
+  // Demo mode — match any DB user by email (password: password123)
+  if (!apiUrl) {
+    if (pass === 'password123') {
+      // Try to find user in DB by email
+      var dbUser = DB.users.find(function(u){ return u.email.toLowerCase() === email.toLowerCase(); });
+      if (dbUser) {
+        var sessionUser = { name: dbUser.name, email: dbUser.email, role: dbUser.role };
+        localStorage.setItem('rams_token', 'demo');
+        localStorage.setItem('rams_user', JSON.stringify(sessionUser));
+        localStorage.removeItem('rams_api_url');
+        _origShowApp(sessionUser);
+        setTimeout(applyRBAC, 50);
+        return;
+      }
+      // Fallback: admin@rams.io
+      if (email === 'admin@rams.io') {
+        var adminUser = { name:'Admin User', email:email, role:'Admin' };
+        localStorage.setItem('rams_token','demo');
+        localStorage.setItem('rams_user',JSON.stringify(adminUser));
+        localStorage.removeItem('rams_api_url');
+        _origShowApp(adminUser);
+        setTimeout(applyRBAC, 50);
+        return;
+      }
+    }
+    errEl.textContent = 'Demo: use any email from Settings → Users, password: password123. Or admin@rams.io / password123';
+    errEl.style.display = 'block';
+    return;
+  }
+  // Live mode — use original
+  _origDoLogin();
+};
+
+// ── Patch renderApplicants — hide action buttons based on role ─────────
+var _origRenderApplicants = renderApplicants;
+renderApplicants = function() {
+  _origRenderApplicants();
+  setTimeout(_gateButtons, 50);
+};
+
+// ── Patch renderDocs ──────────────────────────────────────────────────
+var _origRenderDocs = renderDocs;
+renderDocs = function() {
+  _origRenderDocs();
+  setTimeout(_gateButtons, 50);
+};
+
+// ── Patch renderJobs ──────────────────────────────────────────────────
+var _origRenderJobs = renderJobs;
+renderJobs = function() {
+  _origRenderJobs();
+  setTimeout(_gateButtons, 50);
+};
+
+// ── Patch renderAccounting / renderOffice ─────────────────────────────
+var _origRenderAccounting = renderAccounting;
+renderAccounting = function() {
+  _origRenderAccounting();
+  setTimeout(_gateButtons, 50);
+};
+
+// ── Patch renderSettings — hide sections not allowed ─────────────────
+var _origRenderSettings = renderSettings;
+renderSettings = function() {
+  _origRenderSettings();
+  // Hide Users section from non-admins
+  if (!hasPermission('Manage Users')) {
+    var usersTab = document.querySelector('[onclick*="switchSettings"][onclick*="users"]');
+    if (usersTab) usersTab.style.display = 'none';
+  }
+  setTimeout(_gateButtons, 50);
+};
+
+// ── Patch renderRoles — hide edit controls from non-admins ────────────
+var _origRenderRoles = renderRoles;
+renderRoles = function() {
+  _origRenderRoles();
+  setTimeout(_gateButtons, 80);
+};
+
+// ── Viewer read-only banner ────────────────────────────────────────────
+function _showReadOnlyBanner() {
+  var role = getCurrentRole();
+  if (role === 'Viewer') {
+    var existing = document.getElementById('rbac-readonly-banner');
+    if (!existing) {
+      var banner = document.createElement('div');
+      banner.id = 'rbac-readonly-banner';
+      banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;' +
+        'background:var(--amber);color:#fff;text-align:center;padding:6px 16px;' +
+        'font-size:12px;font-weight:700;letter-spacing:.03em';
+      banner.textContent = '👁 Read-Only Mode — Your role (Viewer) can view data but cannot make changes.';
+      document.body.prepend(banner);
+    }
+  }
+}
+
+// ── Role switcher in sidebar footer (demo/dev only) ───────────────────
+function _addRoleSwitcher() {
+  // Populate the existing role-dropdown in the sidebar footer
+  var dropdown = document.getElementById('role-dropdown');
+  if (!dropdown) return;
+
+  var roleColors = {
+    Admin:'#16A34A', Recruiter:'#1447E6', Manager:'#7C3AED',
+    Compliance:'#D97706', Finance:'#0891B2', Viewer:'#8FA0BE'
+  };
+  var roleIcons = {
+    Admin:'👑', Recruiter:'🎯', Manager:'📊',
+    Compliance:'🔍', Finance:'💰', Viewer:'👁'
+  };
+  var current = getCurrentRole();
+
+  dropdown.innerHTML = ['Admin','Recruiter','Manager','Compliance','Finance','Viewer'].map(function(r) {
+    var isActive = r === current;
+    return '<div class="role-opt' + (isActive ? ' role-opt-active' : '') + '" onclick="setDemoRole(\'' + r + '\')" title="Switch to ' + r + '">' +
+      '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + roleColors[r] + ';flex-shrink:0"></span>' +
+      '<span>' + roleIcons[r] + ' ' + r + '</span>' +
+      (isActive ? '<span style="margin-left:auto;font-size:11px;color:' + roleColors[r] + '">✓</span>' : '') +
+      '</div>';
+  }).join('');
+
+  // Update the label button to show current role + color dot
+  _syncRoleLabel();
+}
+
+function _syncRoleLabel() {
+  var current = getCurrentRole();
+  var roleColors = {
+    Admin:'#16A34A', Recruiter:'#1447E6', Manager:'#7C3AED',
+    Compliance:'#D97706', Finance:'#0891B2', Viewer:'#8FA0BE'
+  };
+  var dot   = document.getElementById('role-dot');
+  var label = document.getElementById('role-label');
+  if (dot)   dot.style.background = roleColors[current] || '#8FA0BE';
+  if (label) label.textContent     = current;
+}
+
+// ── Init on page load if already logged in ─────────────────────────────
+(function _rbacInit() {
+  var token = localStorage.getItem('rams_token');
+  if (token) {
+    setTimeout(function() {
+      applyRBAC();
+      _showReadOnlyBanner();
+      _addRoleSwitcher();
+    }, 120);
+  }
+})();
+
+
+// Close role-dropdown when clicking outside
+document.addEventListener('click', function(e) {
+  var switcher = document.querySelector('.role-switcher');
+  if (switcher && !switcher.contains(e.target)) {
+    var dd = document.getElementById('role-dropdown');
+    if (dd) dd.classList.remove('open');
+  }
+});
+
+
+// ── Quick status change (callable from anywhere) ─────────────────────
+function changeApplicantStatus(applicantId, newStatus) {
+  var app = DB.applicants.find(function(a){ return a.id === applicantId; });
+  if (!app) { toast('Applicant not found', 'error'); return; }
+  var oldStatus = app.status;
+  if (oldStatus === newStatus) return;
+
+  var CHARGE_STATUSES = ['Backout', 'Repatriated', 'Rejected'];
+  var needsConfirm = CHARGE_STATUSES.indexOf(newStatus) !== -1;
+
+  if (needsConfirm) {
+    var agent  = DB.agents.find(function(a){ return a.name === app.agent; });
+    var exps   = DB.expenses.filter(function(e){
+      return (e.applicant === app.name || e.applicantId === applicantId) && e.status !== 'Charged';
+    });
+    var total  = exps.reduce(function(s,e){ return s + e.amount; }, 0);
+    var msg    = 'Change ' + app.name + ' to ' + newStatus + '?';
+    if (total > 0 && agent) {
+      msg += '\n\n₱' + total.toLocaleString() + ' (' + exps.length + ' expense' +
+             (exps.length !== 1 ? 's' : '') + ') will be auto-charged to ' + agent.name + '.';
+    } else if (total > 0) {
+      msg += '\n\n₱' + total.toLocaleString() + ' in expenses will be marked as Agency-absorbed (no agent assigned).';
+    }
+    if (!confirm(msg)) return;
+  }
+
+  app.status = newStatus;
+  addAudit('UPDATE', 'Applicant', app.name + ' status changed: ' + oldStatus + ' → ' + newStatus);
+  onApplicantStatusChange(applicantId, newStatus, oldStatus);
+
+  // Refresh visible pages
+  if (currentPage === 'applicants') renderApplicants();
+  if (currentPage === 'pipeline')   renderKanban();
+  if (currentPage === 'dashboard')  renderDashboard();
+  if (currentPage === 'accounting') renderAccounting();
+  if (typeof renderExpensesTab === 'function' && currentAccTab === 'expenses') renderExpensesTab();
 }
 
 </script>
