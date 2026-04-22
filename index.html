@@ -1425,6 +1425,7 @@ button[disabled][data-rbac-locked] {
     </div>
     <div class="pg-hdr-r" id="acc-hdr-actions">
       <button class="btn btn-s btn-sm" onclick="exportAccountingReport()">⬇ Export</button>
+      <button class="btn btn-ghost btn-sm" style="color:var(--red);border:1px solid var(--red)" onclick="resetAllExpenses()">↺ Reset</button>
       <button class="btn btn-p btn-sm" onclick="openAddExpense()">+ Record Expense</button>
     </div>
   </div>
@@ -4798,8 +4799,8 @@ function switchAccTab(tab, el) {
     if (tab === 'agents')      hdra.innerHTML = '<button class="btn btn-p btn-sm" onclick="openAddAgent()">+ Add Agent</button>';
     else if (tab === 'ledger') hdra.innerHTML = '<button class="btn btn-s btn-sm" onclick="exportLedger()">⬇ Export Ledger</button><button class="btn btn-p btn-sm" onclick="openManualAdjustment()">+ Adjustment</button>';
     else if (tab === 'rules')  hdra.innerHTML = '<button class="btn btn-p btn-sm" onclick="openAddCountryRule()">+ Add Country</button>';
-    else if (tab === 'office') hdra.innerHTML = '<button class="btn btn-s btn-sm" onclick="exportOfficeLedger()">⬇ Export</button><button class="btn btn-s btn-sm" onclick="openAddFunds(\"PHP\")">+ Add Funds</button><button class="btn btn-p btn-sm" onclick="openOfficeExpense(\"PHP\")">− Expense</button>';
-    else hdra.innerHTML = '<button class="btn btn-s btn-sm" onclick="exportAccountingReport()">⬇ Export</button><button class="btn btn-p btn-sm" onclick="openAddExpense()">+ Record Expense</button>';
+    else if (tab === 'office') hdra.innerHTML = '<button class="btn btn-ghost btn-sm" style="color:var(--red);border:1px solid var(--red)" onclick="resetOfficeLedger()">↺ Reset</button><button class="btn btn-s btn-sm" onclick="exportOfficeLedger()">⬇ Export</button><button class="btn btn-s btn-sm" onclick="openAddFunds(\"PHP\")">+ Add Funds</button><button class="btn btn-p btn-sm" onclick="openOfficeExpense(\"PHP\")">− Expense</button>';
+    else hdra.innerHTML = '<button class="btn btn-s btn-sm" onclick="exportAccountingReport()">⬇ Export</button><button class="btn btn-ghost btn-sm" style="color:var(--red);border:1px solid var(--red)" onclick="resetAllExpenses()">↺ Reset</button><button class="btn btn-p btn-sm" onclick="openAddExpense()">+ Record Expense</button>';
   }
 
   if (tab === 'overview')     renderAccOverview();
@@ -5147,8 +5148,8 @@ function renderCommissions() {
     var inGuarantee= DB.commissions.filter(function(c){ return c.status==='In Guarantee'; }).reduce(function(s,c){ return s+c.amount; }, 0);
     var reversed   = DB.commissions.filter(function(c){ return c.status==='Reversed'; }).reduce(function(s,c){ return s+c.amount; }, 0);
     kpisEl.innerHTML = [
-      { label:'Released',     val:'₱'+released.toLocaleString(),    icon:'✅', bg:'var(--gbg)',  c:'var(--green)' },
-      { label:'In Guarantee', val:'₱'+inGuarantee.toLocaleString(), icon:'⏳', bg:'var(--abg)',  c:'var(--amber)' },
+      { label:'Released',     val:'₱'+released.toLocaleString()+'<div style="font-size:10px;color:var(--muted);font-weight:400">$'+Math.round(released/56).toLocaleString()+' USD</div>', icon:'✅', bg:'var(--gbg)',  c:'var(--green)' },
+      { label:'In Guarantee', val:'₱'+inGuarantee.toLocaleString()+'<div style="font-size:10px;color:var(--muted);font-weight:400">$'+Math.round(inGuarantee/56).toLocaleString()+' USD</div>', icon:'⏳', bg:'var(--abg)',  c:'var(--amber)' },
       { label:'Reversed',     val:'₱'+reversed.toLocaleString(),    icon:'↩',  bg:'var(--rbg)',  c:'var(--red)'   },
       { label:'Total',        val:DB.commissions.length+' records',  icon:'🏆', bg:'var(--pbg)', c:'var(--purple)'},
     ].map(function(s){ return '<div class="stat-card"><div class="stat-top"><div class="stat-icon" style="background:'+s.bg+';color:'+s.c+'">'+s.icon+'</div></div><div class="stat-val">'+s.val+'</div><div class="stat-lbl">'+s.label+'</div></div>'; }).join('');
@@ -5161,7 +5162,7 @@ function renderCommissions() {
       return '<div class="comm-row">'+
         '<div class="comm-country">'+r.flag+' '+r.country+'</div>'+
         '<div style="display:flex;align-items:center;gap:8px">'+
-          '<span style="font-size:12px;color:var(--muted);font-weight:700">₱</span>'+
+          '<span style="font-size:12px;color:var(--muted);font-weight:700">₱ / $USD</span>'+
           '<input class="comm-inp" type="number" min="0" step="500" value="'+r.commissionAmt+'" id="crate-'+r.id+'" title="Commission amount PHP" style="width:90px">'+
           '<input class="comm-inp" type="number" min="0" max="100" step="1" value="'+r.withholdPct+'" id="cwith-'+r.id+'" title="Withhold during guarantee %" style="width:60px">'+
           '<span style="font-size:11px;color:var(--dim)">%&nbsp;held</span>'+
@@ -5186,7 +5187,7 @@ function renderCommissions() {
             (daysLeft>0?daysLeft+' days left':'Expired')+'</div>'+
         '</div>'+
         '<div style="text-align:right">'+
-          '<div style="font-size:13px;font-weight:800;font-family:\'IBM Plex Mono\',monospace">₱'+c.amount.toLocaleString()+'</div>'+
+          '<div style="font-size:13px;font-weight:800;font-family:\'IBM Plex Mono\',monospace">₱'+c.amount.toLocaleString()+'</div>'+          '<div style="font-size:11px;color:var(--muted)">≈ $'+Math.round(c.amount/56).toLocaleString()+' USD</div>'+
           '<button class="btn btn-sm" style="font-size:11px;margin-top:4px;background:var(--gbg);color:var(--green);border:1px solid #86efac" onclick="releaseCommission(\''+c.id+'\')">Release</button>'+
         '</div>'+
       '</div>';
@@ -5203,7 +5204,7 @@ function renderCommissions() {
         '<td style="font-weight:600">'+(agent?agent.name:'—')+'</td>'+
         '<td>'+c.applicantName+'</td>'+
         '<td style="font-size:12.5px">'+c.country+'</td>'+
-        '<td style="text-align:right;font-weight:800;font-family:\'IBM Plex Mono\',monospace">₱'+c.amount.toLocaleString()+'</td>'+
+        '<td style="text-align:right;font-weight:800;font-family:\'IBM Plex Mono\',monospace">₱'+c.amount.toLocaleString()+'<div style="font-size:10px;color:var(--muted);font-weight:400">≈ $'+Math.round(c.amount/56).toLocaleString()+' USD</div></td>'+
         '<td>'+pillHtml(c.status)+'</td>'+
         '<td style="text-align:right;white-space:nowrap">'+
           (c.status==='In Guarantee'?'<button class="btn btn-sm" style="font-size:11px;background:var(--gbg);color:var(--green);border:1px solid #86efac" onclick="releaseCommission(\''+c.id+'\')">Release</button> ':'')+
@@ -5773,39 +5774,8 @@ DB.officeFunds = {
   lowThresholdUSD: 500,
 };
 
-DB.officeLedger = [
-  { id:'OL-001', type:'allocation', currency:'PHP', amount:200000, balance:200000, desc:'Initial office fund allocation Q1',        ref:'ALLOC-001', category:null,             date:'2026-01-05', postedBy:'Admin', ts:'2026-01-05T08:00:00' },
-  { id:'OL-002', type:'allocation', currency:'USD', amount:5000,   balance:5000,   desc:'USD petty cash fund — head office',        ref:'ALLOC-002', category:null,             date:'2026-01-05', postedBy:'Admin', ts:'2026-01-05T08:05:00' },
-  { id:'OL-003', type:'expense',    currency:'PHP', amount:-8500,  balance:191500, desc:'Office rent — January 2026',               ref:'OR-2026-01', category:'Rent',           date:'2026-01-06', postedBy:'Accounting', ts:'2026-01-06T09:00:00' },
-  { id:'OL-004', type:'expense',    currency:'PHP', amount:-3200,  balance:188300, desc:'Office supplies — printer paper, ink',     ref:'OR-2026-02', category:'Office Supplies', date:'2026-01-10', postedBy:'Accounting', ts:'2026-01-10T10:30:00' },
-  { id:'OL-005', type:'expense',    currency:'PHP', amount:-5800,  balance:182500, desc:'Electricity bill — January 2026',          ref:'MERALCO-JAN', category:'Utilities',     date:'2026-01-15', postedBy:'Accounting', ts:'2026-01-15T14:00:00' },
-  { id:'OL-006', type:'refund',     currency:'PHP', amount:2000,   balance:184500, desc:'Refund from Juan Reyes — overpayment',     ref:'RF-001',     category:null,             date:'2026-01-20', postedBy:'Accounting', ts:'2026-01-20T11:00:00' },
-  { id:'OL-007', type:'expense',    currency:'PHP', amount:-1800,  balance:182700, desc:'Transportation — POEA submissions',        ref:'OR-2026-03', category:'Transportation', date:'2026-01-22', postedBy:'Accounting', ts:'2026-01-22T09:00:00' },
-  { id:'OL-008', type:'expense',    currency:'USD', amount:-320,   balance:4680,   desc:'Online subscription — job posting portal', ref:'SUB-2026-01', category:'Communication', date:'2026-01-25', postedBy:'Accounting', ts:'2026-01-25T10:00:00' },
-  { id:'OL-009', type:'allocation', currency:'PHP', amount:100000, balance:282700, desc:'Additional allocation — Q1 top-up',        ref:'ALLOC-003',  category:null,             date:'2026-02-01', postedBy:'Admin', ts:'2026-02-01T08:00:00' },
-  { id:'OL-010', type:'expense',    currency:'PHP', amount:-8500,  balance:274200, desc:'Office rent — February 2026',              ref:'OR-2026-04', category:'Rent',           date:'2026-02-05', postedBy:'Accounting', ts:'2026-02-05T09:00:00' },
-  { id:'OL-011', type:'expense',    currency:'PHP', amount:-4200,  balance:270000, desc:'Staff meals — client visit',               ref:'OR-2026-05', category:'Meals',          date:'2026-02-10', postedBy:'Accounting', ts:'2026-02-10T13:00:00' },
-  { id:'OL-012', type:'expense',    currency:'USD', amount:-180,   balance:4500,   desc:'Translation service fee',                  ref:'OR-2026-06', category:'Printing',       date:'2026-02-12', postedBy:'Accounting', ts:'2026-02-12T11:00:00' },
-  { id:'OL-013', type:'refund',     currency:'PHP', amount:5000,   balance:275000, desc:'Supplier credit note — ABC Printing',      ref:'RF-002',     category:null,             date:'2026-02-15', postedBy:'Accounting', ts:'2026-02-15T14:00:00' },
-  { id:'OL-014', type:'expense',    currency:'PHP', amount:-6200,  balance:268800, desc:'Internet bill — 6 months advance',         ref:'OR-2026-07', category:'Utilities',      date:'2026-02-20', postedBy:'Accounting', ts:'2026-02-20T10:00:00' },
-  { id:'OL-015', type:'expense',    currency:'PHP', amount:-2400,  balance:266400, desc:'Printing — applicant documents batch',     ref:'OR-2026-08', category:'Printing',       date:'2026-03-02', postedBy:'Accounting', ts:'2026-03-02T09:00:00' },
-  { id:'OL-016', type:'expense',    currency:'PHP', amount:-8500,  balance:257900, desc:'Office rent — March 2026',                 ref:'OR-2026-09', category:'Rent',           date:'2026-03-05', postedBy:'Accounting', ts:'2026-03-05T09:00:00' },
-  { id:'OL-017', type:'expense',    currency:'USD', amount:-500,   balance:4000,   desc:'Embassy coordination fee',                 ref:'OR-2026-10', category:'Bank Charges',   date:'2026-03-10', postedBy:'Accounting', ts:'2026-03-10T10:00:00' },
-  { id:'OL-018', type:'refund',     currency:'USD', amount:200,    balance:4200,   desc:'Refund from applicant — cancelled medical',ref:'RF-003',     category:null,             date:'2026-03-15', postedBy:'Accounting', ts:'2026-03-15T11:00:00' },
-  { id:'OL-019', type:'expense',    currency:'PHP', amount:-3800,  balance:254100, desc:'Staff overtime allowance — March',         ref:'OR-2026-11', category:'Staff Expense',  date:'2026-03-20', postedBy:'Accounting', ts:'2026-03-20T17:00:00' },
-  { id:'OL-020', type:'adjustment', currency:'PHP', amount:-800,   balance:253300, desc:'Adjustment — cash count discrepancy Q1',   ref:'ADJ-001',    category:null,             date:'2026-03-31', postedBy:'Admin', ts:'2026-03-31T18:00:00' },
-  { id:'OL-021', type:'expense',    currency:'PHP', amount:-8500,  balance:244800, desc:'Office rent — April 2026',                 ref:'OR-2026-12', category:'Rent',           date:'2026-04-02', postedBy:'Accounting', ts:'2026-04-02T09:00:00' },
-  { id:'OL-022', type:'expense',    currency:'PHP', amount:-2600,  balance:242200, desc:'Office supplies — toners and folders',     ref:'OR-2026-13', category:'Office Supplies', date:'2026-04-05', postedBy:'Accounting', ts:'2026-04-05T10:00:00' },
-  { id:'OL-023', type:'expense',    currency:'PHP', amount:-4800,  balance:237400, desc:'Electricity bill — April 2026',            ref:'OR-2026-14', category:'Utilities',      date:'2026-04-10', postedBy:'Accounting', ts:'2026-04-10T14:00:00' },
-  { id:'OL-024', type:'allocation', currency:'PHP', amount:50000,  balance:287400, desc:'Additional fund release — April top-up',   ref:'ALLOC-004',  category:null,             date:'2026-04-12', postedBy:'Admin', ts:'2026-04-12T08:00:00' },
-  { id:'OL-025', type:'expense',    currency:'PHP', amount:-2400,  balance:285000, desc:'Transportation — embassy & POEA runs',     ref:'OR-2026-15', category:'Transportation', date:'2026-04-14', postedBy:'Accounting', ts:'2026-04-14T09:00:00' },
-];
-
-DB.officeRefunds = [
-  { id:'RF-001', sourceType:'Agent',     sourceName:'Juan Reyes',    reason:'Overpayment',     currency:'PHP', amount:2000, date:'2026-01-20', notes:'Excess from cash advance' },
-  { id:'RF-002', sourceType:'Supplier',  sourceName:'ABC Printing',  reason:'Supplier Credit', currency:'PHP', amount:5000, date:'2026-02-15', notes:'Credit note for returned items' },
-  { id:'RF-003', sourceType:'Applicant', sourceName:'Ana Reyes',     reason:'Cancellation',    currency:'USD', amount:200,  date:'2026-03-15', notes:'Cancelled medical appointment' },
-];
+DB.officeLedger = [];
+DB.officeRefunds = [];
 Object.defineProperty(DB,'officeExpenses',{get:function(){return DB.officeLedger.filter(function(e){return e.type==='expense';});},configurable:true});
 
 
@@ -7264,6 +7234,30 @@ function saveViewerScope() {
     if (currentPage === 'pipeline') renderKanban();
     if (currentPage === 'dashboard') renderDashboard();
   }
+}
+
+
+// ── Reset all expenses ────────────────────────────────────────────────
+function resetAllExpenses() {
+  if (!confirm('Clear ALL expense records? This cannot be undone.')) return;
+  DB.expenses = [];
+  filteredApps = [...getScopedApplicants()];
+  autosave('expenses');
+  addAudit('DELETE', 'Expenses', 'All expense records cleared by admin');
+  renderAccounting();
+  if (typeof renderExpensesTab === 'function') renderExpensesTab();
+  toast('All expenses cleared', 'success');
+}
+
+// ── Reset office ledger ───────────────────────────────────────────────
+function resetOfficeLedger() {
+  if (!confirm('Clear ALL office ledger entries? This cannot be undone.')) return;
+  DB.officeLedger = [];
+  DB.officeRefunds = [];
+  autosave('officeLedger');
+  addAudit('DELETE', 'Office Ledger', 'Office ledger cleared by admin');
+  if (typeof renderOfficeFunds === 'function') renderOfficeFunds();
+  toast('Office ledger cleared', 'success');
 }
 
 </script>
