@@ -7222,19 +7222,27 @@ function openViewerScope(userEmail, userName) {
   var assigned = viewerScopes[_scopingUserEmail] || [];
   var list = document.getElementById('vs-job-list');
   if (DB.jobs.length === 0) {
-    list.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">No job orders in the system yet.</div>';
+    list.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">No job orders yet.</div>';
   } else {
     list.innerHTML = DB.jobs.map(function(j) {
       var checked = assigned.indexOf(j.id) !== -1;
       var pct = j.slots > 0 ? Math.round((j.filled / j.slots) * 100) : 0;
-      return '<label style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:8px;background:var(--s2);border:1px solid var(--border);cursor:pointer;transition:.15s" onmouseover="this.style.background='var(--brand-l)'" onmouseout="this.style.background='var(--s2)'">' +
-        '<input type="checkbox" data-job-id="' + j.id + '" ' + (checked ? 'checked' : '') + ' style="width:16px;height:16px;accent-color:var(--brand);flex-shrink:0">' +
-        '<div style="flex:1;min-width:0">' +
-          '<div style="font-size:13px;font-weight:700">' + j.title + ' <span style="font-size:11px;font-weight:400;color:var(--muted)">· ' + j.country + '</span></div>' +
-          '<div style="font-size:11.5px;color:var(--muted)">' + j.employer + ' · ' + j.filled + '/' + j.slots + ' slots · <span style="color:' + (j.status==='Open'?'var(--green)':'var(--muted)') + '">' + j.status + '</span></div>' +
-        '</div>' +
-        '<div style="font-size:11px;font-weight:700;color:var(--brand);white-space:nowrap">' + pct + '%</div>' +
-      '</label>';
+      var statusColor = j.status === 'Open' ? 'var(--green)' : 'var(--muted)';
+      return [
+        '<label style="display:flex;align-items:center;gap:12px;padding:10px 12px;',
+        'border-radius:8px;background:var(--s2);border:1px solid var(--border);cursor:pointer">',
+        '<input type="checkbox" data-job-id="', j.id, '" ', (checked ? 'checked' : ''),
+        ' style="width:16px;height:16px;accent-color:var(--brand);flex-shrink:0">',
+        '<div style="flex:1;min-width:0">',
+          '<div style="font-size:13px;font-weight:700">', j.title,
+          ' <span style="font-size:11px;color:var(--muted)">· ', j.country, '</span></div>',
+          '<div style="font-size:11.5px;color:var(--muted)">', j.employer,
+          ' · ', j.filled, '/', j.slots, ' slots',
+          ' · <span style="color:', statusColor, '">', j.status, '</span></div>',
+        '</div>',
+        '<div style="font-size:11px;font-weight:700;color:var(--brand)">', pct, '%</div>',
+        '</label>'
+      ].join('');
     }).join('');
   }
   openOverlay('overlay-viewer-scope');
