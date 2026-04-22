@@ -2279,6 +2279,189 @@ function fromDbRole(role) {
 }
 
 // ════════════════════════════════════════════════════════
+// 🌐  API SYNC LAYER — PostgreSQL ↔ Frontend
+// ════════════════════════════════════════════════════════
+
+// Central fetch wrapper — attaches auth token, handles errors
+async function apiFetch(path, opts) {
+  opts = opts || {};
+  var token = window._ramsSessionToken || '';
+  var headers = Object.assign({ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, opts.headers || {});
+  try {
+    var res = await fetch(RAILWAY_URL + '/api' + path, Object.assign({}, opts, { headers: headers }));
+    var data = await res.json();
+    if (!res.ok) throw new Error(data.error || ('API error ' + res.status));
+    return { ok: true, data: data };
+  } catch(e) {
+    console.warn('[API]', path, e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+// Convert backend applicant row → frontend DB.applicants shape
+function mapApplicant(row) {
+  return {
+    id:       row.id,
+    name:     (row.first_name || '') + ' ' + (row.last_name || ''),
+    status:   row.status || 'Applied',
+    agent:    row.agent_name || '',
+    contact:  row.phone || '',
+    email:    row.email || '',
+    job:      (row.position || '') + (row.destination ? ' · ' + row.destination : ''),
+    medical:  row.medical_status || 'Pending',
+    date:     (row.created_at || '').slice(0, 10),
+    notes:    row.notes || '',
+    _dbId:    row.id,
+  };
+}
+
+// Convert backend job row → frontend DB.jobs shape
+function mapJob(row) {
+  return {
+    id:       row.id,
+    title:    row.title || '',
+    employer: row.employer || '',
+    country:  row.destination || '',
+    slots:    row.slots || 0,
+    filled:   row.filled || 0,
+    salary:   row.salary_min ? '₱' + Number(row.salary_min).toLocaleString() + '/mo' : '',
+    status:   row.status || 'Open',
+    deadline: row.deadline ? row.deadline.slice(0, 10) : '',
+    _dbId:    row.id,
+  };
+}
+
+// Convert backend expense row → frontend DB.expenses shape
+function mapExpense(row) {
+  return {
+    id:        row.id,
+    date:      (row.expense_date || row.created_at || '').slice(0, 10),
+    desc:      row.description || '',
+    applicant: '',
+    category:  row.category || '',
+    amount:    parseFloat(row.amount) || 0,
+    status:    row.status || 'Pending',
+    _dbId:     row.id,
+  };
+}
+
+// Convert backend user row → frontend DB.users shape
+function mapUser(row) {
+  return {
+    id:     row.id,
+    name:   row.name || '',
+    role:   fromDbRole(row.role),
+    email:  row.email || '',
+    status: row.is_active ? 'Active' : 'Inactive',
+    last:   row.last_seen ? new Date(row.last_seen).toLocaleDateString() : 'Never',
+    _dbId:  row.id,
+  };
+}
+
+// ── BOOT SYNC — load all data from API on login ───────────────────────
+async function syncAllFromAPI() {
+  var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
+  if (!isLive) return; // demo mode — use local DB only
+
+  var _toast = function(msg) { if (typeof toast === 'function') toast(msg, 'info'); };
+
+  // Load in parallel
+  var [apps, jobs, expenses, users, audit] = await Promise.all([
+    apiFetch('/applicants?limit=200'),
+    apiFetch('/jobs?limit=200'),
+    apiFetch('/expenses?limit=200'),
+    apiFetch('/users'),
+    apiFetch('/audit?limit=100'),
+  ]);
+
+  if (apps.ok)     { DB.applicants = (apps.data.data || apps.data).map(mapApplicant); filteredApps = [...getScopedApplicants()]; }
+  if (jobs.ok)     { DB.jobs       = jobs.data.map(mapJob); }
+  if (expenses.ok) { DB.expenses   = expenses.data.map(mapExpense); }
+  if (users.ok)    { DB.users      = users.data.map(mapUser); }
+  if (audit.ok)    { DB.auditLog   = audit.data.map(function(r){ return { id:r.id, action:r.action, entity:r.entity||'', detail:r.detail||'', user:r.user_name||'System', time:new Date(r.created_at).toLocaleString(), type:(r.action||'').toLowerCase() }; }); }
+
+  // Re-render current page with fresh data
+  if (typeof renderDashboard === 'function')   renderDashboard();
+  if (typeof renderApplicants === 'function' && currentPage === 'applicants') renderApplicants();
+  if (typeof renderJobs === 'function' && currentPage === 'jobs') renderJobs();
+  if (typeof renderExpensesTab === 'function' && currentPage === 'accounting') renderExpensesTab();
+}
+
+// ── APPLICANTS API ────────────────────────────────────────────────────
+async function apiCreateApplicant(data) {
+  var nameParts = (data.name || '').trim().split(' ');
+  var payload = {
+    first_name:     nameParts[0] || data.name,
+    last_name:      nameParts.slice(1).join(' ') || '.',
+    email:          data.email,
+    phone:          data.contact,
+    status:         data.status,
+    position:       (data.job || '').split('·')[0].trim(),
+    destination:    (data.job || '').split('·')[1] ? (data.job || '').split('·')[1].trim() : '',
+    medical_status: data.medical,
+    notes:          data.notes,
+  };
+  var r = await apiFetch('/applicants', { method: 'POST', body: JSON.stringify(payload) });
+  if (r.ok) { data._dbId = r.data.id; data.id = r.data.id; }
+  return r;
+}
+
+async function apiUpdateApplicant(data) {
+  var dbId = data._dbId || data.id;
+  if (!dbId || window._ramsSessionToken === 'demo') return { ok: true };
+  var nameParts = (data.name || '').trim().split(' ');
+  var payload = {
+    first_name:     nameParts[0] || data.name,
+    last_name:      nameParts.slice(1).join(' ') || '.',
+    email:          data.email,
+    phone:          data.contact,
+    status:         data.status,
+    position:       (data.job || '').split('·')[0].trim(),
+    destination:    (data.job || '').split('·')[1] ? (data.job || '').split('·')[1].trim() : '',
+    medical_status: data.medical,
+    notes:          data.notes,
+  };
+  return await apiFetch('/applicants/' + dbId, { method: 'PATCH', body: JSON.stringify(payload) });
+}
+
+async function apiDeleteApplicant(dbId) {
+  if (!dbId || window._ramsSessionToken === 'demo') return { ok: true };
+  return await apiFetch('/applicants/' + dbId, { method: 'DELETE' });
+}
+
+// ── JOBS API ──────────────────────────────────────────────────────────
+async function apiCreateJob(data) {
+  var payload = { title: data.title, employer: data.employer, destination: data.country, slots: data.slots, status: data.status, deadline: data.deadline };
+  var r = await apiFetch('/jobs', { method: 'POST', body: JSON.stringify(payload) });
+  if (r.ok) { data._dbId = r.data.id; data.id = r.data.id; }
+  return r;
+}
+
+async function apiDeleteJob(dbId) {
+  if (!dbId || window._ramsSessionToken === 'demo') return { ok: true };
+  return await apiFetch('/jobs/' + dbId, { method: 'DELETE' });
+}
+
+async function apiUpdateJob(data) {
+  var dbId = data._dbId || data.id;
+  if (!dbId || window._ramsSessionToken === 'demo') return { ok: true };
+  return await apiFetch('/jobs/' + dbId, { method: 'PATCH', body: JSON.stringify({ title: data.title, employer: data.employer, destination: data.country, slots: data.slots, filled: data.filled, status: data.status, deadline: data.deadline }) });
+}
+
+// ── EXPENSES API ──────────────────────────────────────────────────────
+async function apiCreateExpense(data) {
+  var payload = { description: data.desc, amount: data.amount, category: data.category, status: data.status, expense_date: data.date };
+  var r = await apiFetch('/expenses', { method: 'POST', body: JSON.stringify(payload) });
+  if (r.ok) { data._dbId = r.data.id; data.id = r.data.id; }
+  return r;
+}
+
+async function apiDeleteExpense(dbId) {
+  if (!dbId || window._ramsSessionToken === 'demo') return { ok: true };
+  return await apiFetch('/expenses/' + dbId, { method: 'DELETE' });
+}
+
+// ════════════════════════════════════════════════════════
 // DATA
 // ════════════════════════════════════════════════════════
 const DB = {
@@ -3146,10 +3329,12 @@ function saveApplicant() {
     const idx = DB.applicants.findIndex(a => a.id === editId);
     DB.applicants[idx] = data;
     addAudit('UPDATE', 'Applicant', `Updated ${name}`);
+    apiUpdateApplicant(data).then(r => { if (!r.ok) toast('Local saved; sync failed: '+r.error,'error'); });
     toast('Applicant updated', 'success');
   } else {
     DB.applicants.unshift(data);
     addAudit('CREATE', 'Applicant', `Created ${data.id}: ${name}`);
+    apiCreateApplicant(data).then(r => { if (!r.ok) toast('Local saved; sync failed: '+r.error,'error'); });
     toast('Applicant registered', 'success');
   }
   filteredApps = [...getScopedApplicants()];
@@ -3493,6 +3678,7 @@ function saveJob() {
   };
   DB.jobs.unshift(job);
   addAudit('CREATE','Job Order',`Created ${job.id}: ${title}`);
+  apiCreateJob(job).then(function(r){ if(!r.ok) toast('Job saved locally; sync failed: '+r.error,'error'); });
   closeOverlay('overlay-job');
   renderJobs();
   toast('Job order created','success');
@@ -3748,6 +3934,7 @@ function saveExpense() {
   };
 
   DB.expenses.unshift(exp);
+  apiCreateExpense(exp).then(function(r){ if(!r.ok) toast('Expense saved locally; sync failed: '+r.error,'error'); });
 
   // Auto-trigger accounting if applicant status warrants it
   if (app) {
@@ -6998,10 +7185,9 @@ function _requirePerm(perm, fn) {
   return true;
 }
 
-// ── Patch _showApp to apply RBAC on login ─────────────────────────────
+// ── Patch _showApp to apply RBAC on login + sync from API ────────────
 var _origShowApp = _showApp;
 _showApp = function(user) {
-  // Cache user in memory so getCurrentUser() works synchronously
   window._ramsSessionUser = user;
   _origShowApp(user);
   setTimeout(function() {
@@ -7009,6 +7195,13 @@ _showApp = function(user) {
     _showReadOnlyBanner();
     _addRoleSwitcher();
   }, 80);
+  // Sync all data from PostgreSQL after login
+  setTimeout(function() {
+    syncAllFromAPI().then(function() {
+      if (typeof renderDashboard === 'function') renderDashboard();
+      if (typeof renderNotifications === 'function') renderNotifications();
+    });
+  }, 200);
 };
 
 // ── Demo login — add role switcher ────────────────────────────────────
