@@ -2254,6 +2254,29 @@ const RAILWAY_URL = 'https://rams-backend-production-399f.up.railway.app';
 const DEMO_EMAIL  = 'admin@rams.io';
 const DEMO_PASS   = 'password123';
 
+// Map frontend role labels → backend DB role values
+function toDbRole(role) {
+  var map = {
+    'Admin':'admin', 'admin':'admin', 'super_admin':'super_admin',
+    'Recruiter':'agent', 'recruiter':'agent', 'agent':'agent',
+    'Manager':'manager', 'manager':'manager',
+    'Compliance':'viewer', 'compliance':'viewer',
+    'Finance':'finance', 'finance':'finance',
+    'Viewer':'viewer', 'viewer':'viewer',
+  };
+  return map[role] || 'agent';
+}
+
+// Map backend DB role → frontend display label
+function fromDbRole(role) {
+  var map = {
+    'super_admin':'Admin', 'admin':'Admin',
+    'agent':'Recruiter', 'manager':'Manager',
+    'finance':'Finance', 'viewer':'Viewer',
+  };
+  return map[role] || role;
+}
+
 // ════════════════════════════════════════════════════════
 // DATA
 // ════════════════════════════════════════════════════════
@@ -4562,7 +4585,7 @@ function submitCreateUser() {
       'Content-Type': 'application/json',
       'Authorization': 'Bearer ' + token,
     },
-    body: JSON.stringify({ name: name, email: email, password: password, role: role.toLowerCase() }),
+    body: JSON.stringify({ name: name, email: email, password: password, role: toDbRole(role) }),
   }).then(function(res) {
     return res.json().then(function(d) { return { ok: res.ok, data: d }; });
   }).then(function(r) {
@@ -4686,7 +4709,7 @@ function submitUser() {
       fetch(apiUrl.replace(/\/+$/, '') + '/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-        body: JSON.stringify({ name: name, email: email, password: pass, role: role.toLowerCase() }),
+        body: JSON.stringify({ name: name, email: email, password: pass, role: toDbRole(role) }),
       }).then(function(r){ return r.json(); }).then(function(d){
         if (d.error) toast('Backend: ' + d.error, 'error');
         else toast('User created on server', 'success');
@@ -6829,14 +6852,17 @@ function getCurrentUser() {
 function getCurrentRole() {
   var u = getCurrentUser();
   if (!u) return 'Viewer';
-  // Normalize role string (backend may return lowercase)
-  var r = u.role || 'Viewer';
-  r = r.charAt(0).toUpperCase() + r.slice(1).toLowerCase();
-  // Map known aliases
-  var aliases = { Admin:'Admin', Recruiter:'Recruiter', Manager:'Manager',
-                  Compliance:'Compliance', Finance:'Finance', Viewer:'Viewer',
-                  administrator:'Admin' };
-  return aliases[r] || aliases[u.role] || 'Viewer';
+  var r = u.role || 'viewer';
+  // Map DB roles → display roles used throughout the UI
+  var dbToDisplay = {
+    'super_admin':'Admin', 'admin':'Admin',
+    'agent':'Recruiter', 'manager':'Manager',
+    'finance':'Finance', 'viewer':'Viewer',
+    // Already display format:
+    'Admin':'Admin', 'Recruiter':'Recruiter', 'Manager':'Manager',
+    'Compliance':'Compliance', 'Finance':'Finance', 'Viewer':'Viewer',
+  };
+  return dbToDisplay[r] || dbToDisplay[r.charAt(0).toUpperCase()+r.slice(1).toLowerCase()] || 'Viewer';
 }
 
 function hasPermission(permName) {
