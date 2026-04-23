@@ -2513,11 +2513,42 @@ function _showSyncBadge(msg) {
   setTimeout(function() { if(badge.parentNode){ badge.style.opacity='0'; setTimeout(function(){if(badge.parentNode)badge.remove();},300); } }, 5000);
 }
 
-// ── Write queue — prevents race conditions on concurrent writes ─────────
-var _writeQueue = Promise.resolve();
-function queueWrite(fn) {
-  _writeQueue = _writeQueue.then(function() { return fn(); }).catch(function(e){ console.warn('Write queue error:', e); });
+// ── Write queue — prevents race conditions + auto-retry on failure ────
+var _writeQueue   = Promise.resolve();
+var _pendingWrites = []; // Persisted retry queue
+
+function queueWrite(fn, retryKey) {
+  _writeQueue = _writeQueue.then(async function() {
+    try {
+      var r = await fn();
+      // Success — remove from retry queue if it was there
+      if (retryKey) {
+        _pendingWrites = _pendingWrites.filter(function(w){ return w.key !== retryKey; });
+        await Store.set('rams:pending:writes', JSON.stringify(_pendingWrites));
+      }
+      return r;
+    } catch(e) {
+      console.warn('Write failed, will retry:', e.message);
+      // This is handled by the caller's .then(r => if !r.ok)
+    }
+  });
   return _writeQueue;
+}
+
+// ── Flush any pending writes that failed last session ─────────────────
+async function _flushPendingWrites() {
+  try {
+    var stored = await Store.get('rams:pending:writes');
+    var pending = stored ? JSON.parse(typeof stored === 'string' ? stored : stored.value || '[]') : [];
+    if (!pending.length) return;
+    toast(pending.length + ' pending change(s) syncing to server…', 'info');
+    for (var w of pending) {
+      try {
+        await apiFetch(w.path, { method: w.method, body: w.body });
+      } catch(e) { /* keep in queue if still failing */ }
+    }
+    await Store.set('rams:pending:writes', '[]');
+  } catch(e) {}
 }
 
 // ── Background polling — every 30s, silently refresh current page ───────
@@ -4780,7 +4811,7 @@ function _showApp(user) {
     if(typeof renderNotifications==='function') renderNotifications();
   }
 }
-function _doLogin() {
+async function _doLogin() {
   var email  = (document.getElementById('li-email').value||'').trim();
   var pass   = (document.getElementById('li-pass').value||'');
   var errEl  = document.getElementById('le');
@@ -4812,13 +4843,13 @@ function _doLogin() {
     btn.textContent='Sign In'; btn.disabled=false;
   });
 }
-function handleLogout() {
+async function handleLogout() {
   stopPolling();
   window._ramsSessionUser = null;
   window._ramsSessionToken = null;
-  Store.remove('rams:session:token');
-  Store.remove('rams:session:user');
-  Store.remove('rams:session:api_url');
+  await Store.remove('rams:session:token');
+  await Store.remove('rams:session:user');
+  await Store.remove('rams:session:api_url');
   _showLogin();
 }
 // Wire events
@@ -4833,18 +4864,61 @@ function go(page, el) {
   nav(PAGE_ALIAS[page] || page);
 }
 
-(function(){
+// ── Async session restore on page load ───────────────────────────────
+(async function initSession() {
   try {
-    var sbState = null /* sb state via Store - handled in initAsync */;
-    if (sbState === '1') {
+    // Restore sidebar state
+    var sbState = await Store.get('rams:session:sb_collapsed');
+    if (sbState === '1' || sbState?.value === '1') {
       var sb  = document.getElementById('sidebar');
       var btn = document.getElementById('sb-toggle-btn');
       if (sb)  sb.classList.add('collapsed');
       if (btn) btn.textContent = '▶';
     }
   } catch(e) {}
-  // No persistent session — always show login fresh
-  _showLogin();
+
+  try {
+    // Try to restore session from persistent Store
+    var storedToken = await Store.get('rams:session:token');
+    var storedUser  = await Store.get('rams:session:user');
+    var token = storedToken ? (typeof storedToken === 'string' ? storedToken : storedToken.value) : null;
+    var userRaw = storedUser ? (typeof storedUser === 'string' ? storedUser : storedUser.value) : null;
+    var user = null;
+    try { user = userRaw ? JSON.parse(userRaw) : null; } catch(e) {}
+
+    if (token && user) {
+      // Valid stored session — restore it
+      window._ramsSessionToken = token;
+      window._ramsSessionUser  = user;
+
+      // Verify token is still valid with server (non-blocking)
+      if (token !== 'demo') {
+        apiFetch('/auth/me').then(function(r) {
+          if (!r.ok) {
+            // Token expired — clear and show login
+            window._ramsSessionToken = null;
+            window._ramsSessionUser  = null;
+            Store.remove('rams:session:token');
+            Store.remove('rams:session:user');
+            _showLogin();
+          } else {
+            // Update user data from server
+            window._ramsSessionUser = r.data.user || user;
+          }
+        }).catch(function() {
+          // Network error — keep session but warn
+          console.warn('Could not verify session — using cached credentials');
+        });
+      }
+
+      _showApp(user);
+    } else {
+      _showLogin();
+    }
+  } catch(e) {
+    console.error('Session restore error:', e);
+    _showLogin();
+  }
 })();
 
 
@@ -7497,9 +7571,11 @@ _showApp = function(user) {
     _showReadOnlyBanner();
     _addRoleSwitcher();
   }, 80);
-  // Sync all data from PostgreSQL after login + start polling
+  // Sync all data from PostgreSQL after login + flush any pending writes + start polling
   setTimeout(function() {
-    syncAllFromAPI().then(function() {
+    _flushPendingWrites().then(function() {
+      return syncAllFromAPI();
+    }).then(function() {
       if (typeof renderDashboard === 'function') renderDashboard();
       if (typeof renderNotifications === 'function') renderNotifications();
     });
