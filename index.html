@@ -1918,19 +1918,46 @@ button[disabled][data-rbac-locked] {
       </div>
       <div class="form-row">
         <div class="form-group">
+          <label class="form-label">Gender</label>
+          <select class="form-input" id="a-gender">
+            <option value="">— Select —</option>
+            <option>Male</option><option>Female</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Passport Number</label>
+          <input type="text" class="form-input" id="a-passport" placeholder="e.g. P1234567A" style="font-family:'IBM Plex Mono',monospace;letter-spacing:.05em">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Destination Country</label>
+          <select class="form-input" id="a-destination">
+            <option value="">— Select Country —</option>
+            <option>Saudi Arabia</option><option>UAE</option><option>Qatar</option>
+            <option>Kuwait</option><option>Bahrain</option><option>Oman</option>
+            <option>Hong Kong</option><option>Singapore</option><option>Japan</option>
+            <option>South Korea</option><option>Germany</option><option>Canada</option>
+            <option>United Kingdom</option><option>Australia</option><option>Italy</option>
+            <option>Other</option>
+          </select>
+        </div>
+        <div class="form-group">
           <label class="form-label">Job Applied For</label>
           <input type="text" class="form-input" id="a-job" placeholder="Domestic Helper, Caregiver…">
         </div>
+      </div>
+      <div class="form-row">
         <div class="form-group">
           <label class="form-label">Medical Status</label>
           <select class="form-input" id="a-medical">
             <option>Pending</option><option>Passed</option><option>Failed</option>
           </select>
         </div>
-      </div>
-      <div class="form-group">
-        <label class="form-label">Notes</label>
-        <textarea class="form-input" id="a-notes" rows="2" placeholder="Any additional notes…" style="resize:vertical"></textarea>
+        <div class="form-group">
+          <label class="form-label">Notes</label>
+          <textarea class="form-input" id="a-notes" rows="2" placeholder="Any additional notes…" style="resize:vertical"></textarea>
+        </div>
       </div>
     </div>
     <div class="modal-foot">
@@ -2397,9 +2424,10 @@ async function apiCreateApplicant(data) {
     phone:          data.contact,
     status:         data.status,
     position:       (data.job || '').split('·')[0].trim(),
-    destination:    (data.job || '').split('·')[1] ? (data.job || '').split('·')[1].trim() : '',
+    destination:    data.destination || ((data.job || '').split('·')[1] ? (data.job || '').split('·')[1].trim() : ''),
     medical_status: data.medical,
     notes:          data.notes,
+    nationality:    data.gender || '',
   };
   var r = await apiFetch('/applicants', { method: 'POST', body: JSON.stringify(payload) });
   if (r.ok) { data._dbId = r.data.id; data.id = r.data.id; }
@@ -2871,11 +2899,16 @@ function switchDrawerTab(tab, btn) {
     var _infoFields = _isViewer
       ? [['Status',pillHtml(app.status)],['Medical',pillHtml(app.medical,'medical')],
          ['Position',`<span style="font-size:13px">${(app.job||'').split('·')[0]||'—'}</span>`],
-         ['Destination',`<span style="font-size:13px">${(app.job||'').split('·')[1]||'—'}</span>`]]
+         ['Destination',app.destination || ((app.job||'').split('·')[1]||'—').trim()],
+         ['Gender',app.gender||'—'],
+         ['Passport',`<span style="font-family:'IBM Plex Mono',monospace;font-size:12px">${app.passport||'—'}</span>`]]
       : [['Status',pillHtml(app.status)],['Medical',pillHtml(app.medical,'medical')],
          ['Agent',`<span style="font-weight:700">${app.agent||'Unassigned'}</span>`],
          ['Applied',`<span style="font-family:'IBM Plex Mono',monospace;font-size:12px">${app.date}</span>`],
-         ['Contact',app.contact],['Email',app.email]];
+         ['Contact',app.contact],['Email',app.email],
+         ['Gender',app.gender||'—'],
+         ['Passport',`<span style="font-family:'IBM Plex Mono',monospace;font-size:12px">${app.passport||'—'}</span>`],
+         ['Destination',app.destination||'—']];
     panel.innerHTML = `
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
         ${_infoFields.map(([k,v])=>`<div style="padding:10px;background:var(--s2);border:1px solid var(--border);border-radius:8px"><div style="font-size:10.5px;color:var(--muted);font-weight:700;margin-bottom:4px">${k}</div><div style="font-size:13px">${v}</div></div>`).join('')}
@@ -2896,19 +2929,21 @@ function switchDrawerTab(tab, btn) {
     `;
   }
   if (tab === 'docs') {
+    var _isViewerDoc = (typeof getCurrentRole === 'function') && getCurrentRole() === 'Viewer';
     const docs = DB.documents.filter(d => d.applicant === app.name);
     panel.innerHTML = docs.length ? `
       <div style="display:flex;flex-direction:column;gap:8px">
         ${docs.map(d=>`<div class="doc-card">
           <div class="doc-icon" style="background:var(--brand-l);font-size:20px">📄</div>
-          <div style="flex:1"><div style="font-size:13px;font-weight:700">${d.name}</div><div style="font-size:11px;color:var(--muted)">${d.type} · ${d.size} · ${d.date}</div></div>
+          <div style="flex:1"><div style="font-size:13px;font-weight:700">${d.name}</div><div style="font-size:11px;color:var(--muted)">${d.type} · ${d.size||''} · ${d.date}</div></div>
           <div style="display:flex;gap:5px;align-items:center">
               <span class="pill ${d.status==='Approved'?'pill-green':d.status==='Pending'?'pill-amber':'pill-red'}">${d.status}</span>
-              <button class="btn btn-ghost btn-xs" onclick="previewDoc('${d.id}')" title="Preview">👁</button>
+              <button class="btn btn-ghost btn-xs" onclick="previewDoc('${d.id}')" title="Preview">👁 Preview</button>
+              ${_isViewerDoc ? '' : `<button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="confirmDelete('document','${d.id}')">🗑</button>`}
             </div>
         </div>`).join('')}
       </div>
-    ` : `<div class="empty-state"><div class="empty-icon">📂</div><div class="empty-title">No Documents</div><div class="empty-sub">No documents uploaded for this applicant yet.</div><button class="btn btn-p btn-sm" onclick="openUploadDoc(app&&app.name)">Upload Document</button></div>`;
+    ` : `<div class="empty-state"><div class="empty-icon">📂</div><div class="empty-title">No Documents</div><div class="empty-sub">No documents uploaded for this applicant yet.</div>${_isViewerDoc ? '' : `<button class="btn btn-p btn-sm" onclick="openUploadDoc(app&&app.name)">Upload Document</button>`}</div>`;
   }
   if (tab === 'expenses') {
     const exps = DB.expenses.filter(e => e.applicant === app.name);
@@ -3306,6 +3341,9 @@ function openAddApplicant() {
   document.getElementById('a-job').value = '';
   document.getElementById('a-medical').value = 'Pending';
   document.getElementById('a-notes').value = '';
+  document.getElementById('a-gender').value = '';
+  document.getElementById('a-passport').value = '';
+  document.getElementById('a-destination').value = '';
   document.getElementById('a-name').dataset.editId = '';
   openOverlay('overlay-applicant');
 }
@@ -3323,6 +3361,9 @@ function editApplicant(id) {
   document.getElementById('a-job').value = a.job;
   document.getElementById('a-medical').value = a.medical;
   document.getElementById('a-notes').value = a.notes;
+  document.getElementById('a-gender').value = a.gender || '';
+  document.getElementById('a-passport').value = a.passport || '';
+  document.getElementById('a-destination').value = a.destination || '';
   document.getElementById('a-name').dataset.editId = id;
   openOverlay('overlay-applicant');
 }
@@ -3341,6 +3382,9 @@ function saveApplicant() {
     medical: document.getElementById('a-medical').value,
     date: editId ? DB.applicants.find(a=>a.id===editId).date : new Date().toISOString().split('T')[0],
     notes: document.getElementById('a-notes').value,
+    gender: document.getElementById('a-gender').value,
+    passport: document.getElementById('a-passport').value.trim().toUpperCase(),
+    destination: document.getElementById('a-destination').value,
   };
   if (editId) {
     const idx = DB.applicants.findIndex(a => a.id === editId);
@@ -3417,7 +3461,7 @@ function renderDocs() {
         ${pillHtml(d.status)}
         <div style="display:flex;gap:5px;margin-top:2px">
           <button class="btn btn-s btn-xs doc-preview-btn" onclick="previewDoc('${d.id}')" title="Preview document">👁 Preview</button>
-          ${d.status==='Pending'?`<button class="btn btn-sm" style="background:var(--gbg);color:var(--green);border:1px solid #86efac;font-size:11px" onclick="approveDoc('${d.id}')">✓ Approve</button>`:''}
+          ${(d.status==='Pending' && (typeof getCurrentRole !== 'function' || getCurrentRole() !== 'Viewer'))?`<button class="btn btn-sm" style="background:var(--gbg);color:var(--green);border:1px solid #86efac;font-size:11px" onclick="approveDoc('${d.id}')">✓ Approve</button>`:''}
           <button class="btn btn-ghost btn-xs" onclick="confirmDelete('document','${d.id}')" title="Delete">🗑</button>
         </div>
       </div>
