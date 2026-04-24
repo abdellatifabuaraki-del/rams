@@ -6356,6 +6356,32 @@ function onApplicantStatusChange(applicantId, newStatus, oldStatus) {
   }
 
   // ── 2. REVERSE OPEN COMMISSION if Repatriated or Rejected ────────
+  // ── Release slot if reverting from Deployed (NOT on Repatriated — slot stays consumed) ──
+  if (oldStatus === 'Deployed' && newStatus !== 'Deployed' && newStatus !== 'Repatriated') {
+    var _relJob = app._jobOrderId
+      ? DB.jobs.find(function(j){ return j.id === app._jobOrderId || j._dbId === app._jobOrderId; })
+      : null;
+    if (!_relJob && app.job) {
+      var _relTitle = app.job.split('·')[0].trim().toLowerCase();
+      _relJob = DB.jobs.find(function(j){ return j.title.toLowerCase() === _relTitle; });
+    }
+    if (_relJob && _relJob.filled > 0) {
+      _relJob.filled = Math.max(0, (_relJob.filled || 0) - 1);
+      // Re-open job if it was Filled
+      if (_relJob.status === 'Filled' && _relJob.filled < _relJob.slots) {
+        _relJob.status = 'Open';
+        addAudit('UPDATE', 'Job Order', _relJob.title + ' re-opened — slot released by ' + app.name);
+      } else {
+        addAudit('UPDATE', 'Job Order', _relJob.title + ': slot released by ' + app.name + ' (' + _relJob.filled + '/' + _relJob.slots + ')');
+      }
+      autosave('jobs');
+      if (isUUID(_relJob._dbId || _relJob.id) && window._ramsSessionToken !== 'demo') {
+        apiUpdateJob(_relJob).catch(function(){});
+      }
+      if (currentPage === 'jobs') renderJobs();
+    }
+  }
+
   if ((newStatus === 'Repatriated' || newStatus === 'Rejected') && agent) {
     var openComm = DB.commissions.find(function(c) {
       return (c.applicantId === applicantId || c.applicantName === app.name)
@@ -6416,6 +6442,42 @@ function onApplicantStatusChange(applicantId, newStatus, oldStatus) {
 
     if (agent) {
       agent.totalDeployed = (agent.totalDeployed || 0) + 1;
+    }
+
+    // ── Consume one slot from linked job order ────────────────────────
+    var linkedJob = app._jobOrderId
+      ? DB.jobs.find(function(j){ return j.id === app._jobOrderId || j._dbId === app._jobOrderId; })
+      : null;
+
+    // Fallback: match by job title if no _jobOrderId
+    if (!linkedJob && app.job) {
+      var jobTitle = app.job.split('·')[0].trim().toLowerCase();
+      linkedJob = DB.jobs.find(function(j){
+        return j.title.toLowerCase() === jobTitle && j.status === 'Open';
+      });
+    }
+
+    if (linkedJob) {
+      linkedJob.filled = (linkedJob.filled || 0) + 1;
+      // Auto-set to Filled if all slots consumed
+      if (linkedJob.filled >= linkedJob.slots) {
+        linkedJob.status = 'Filled';
+        toast('Job order "' + linkedJob.title + '" is now fully filled!', 'info');
+        addAudit('UPDATE', 'Job Order', linkedJob.title + ' → Filled (' + linkedJob.slots + '/' + linkedJob.slots + ' slots)');
+      } else {
+        var remaining = linkedJob.slots - linkedJob.filled;
+        toast(remaining + ' slot' + (remaining !== 1 ? 's' : '') + ' remaining in "' + linkedJob.title + '"', 'info');
+        addAudit('UPDATE', 'Job Order', linkedJob.title + ': slot consumed by ' + app.name + ' (' + linkedJob.filled + '/' + linkedJob.slots + ')');
+      }
+      autosave('jobs');
+      // Sync job slot change to server
+      if (isUUID(linkedJob._dbId || linkedJob.id) && window._ramsSessionToken !== 'demo') {
+        apiUpdateJob(linkedJob).then(function(r){
+          if (!r.ok) console.warn('Job slot sync failed:', r.error);
+        });
+      }
+      // Re-render jobs if on that page
+      if (currentPage === 'jobs') renderJobs();
     }
 
     addAudit('CREATE', 'Commission',
