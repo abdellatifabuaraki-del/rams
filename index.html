@@ -1352,8 +1352,9 @@ button[disabled][data-rbac-locked] {
         <table id="job-table" style="width:100%;border-collapse:collapse" role="grid" aria-label="Job orders table">
           <thead>
             <tr>
-              <th>Job ID</th><th>Position</th><th>Employer / Country</th>
-              <th>Slots</th><th>Filled</th><th>Salary</th><th>Status</th><th>Deadline</th>
+              <th>ID</th><th>Position</th><th>Country</th>
+              <th style="text-align:center">Slots</th><th style="text-align:center">Filled</th>
+              <th>Salary</th><th>Status</th><th>Deadline</th>
               <th style="text-align:right">Actions</th>
             </tr>
           </thead>
@@ -2071,61 +2072,56 @@ button[disabled][data-rbac-locked] {
 
 <!-- Add Job -->
 <div class="overlay" id="overlay-job" onclick="closeOverlayIfBg(event,'overlay-job')" role="dialog" aria-modal="true" aria-label="Job order form">
-  <div class="modal modal-md">
+  <div class="modal" style="max-width:640px;max-height:88vh;overflow-y:auto">
     <div class="modal-hdr">
       <div>
         <h2 id="j-modal-title">New Job Order</h2>
-        <p id="j-modal-sub">Create a new job placement opportunity.</p>
+        <p id="j-modal-sub">One employer — multiple positions with individual slots.</p>
       </div>
       <button class="close-btn" onclick="closeOverlay('overlay-job')" aria-label="Close">✕</button>
     </div>
     <div class="modal-body">
       <input type="hidden" id="j-edit-id" value="">
       <input type="hidden" id="j-edit-dbid" value="">
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Position Title <span class="req">*</span></label>
-          <input type="text" class="form-input" id="j-title" placeholder="e.g. Domestic Helper">
+
+      <!-- Employer Info -->
+      <div style="background:var(--s2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:18px">
+        <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.07em;margin-bottom:10px">EMPLOYER DETAILS</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Employer Name <span class="req">*</span></label>
+            <input type="text" class="form-input" id="j-employer" placeholder="e.g. Al-Rashid Medical Center">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Country / Destination <span class="req">*</span></label>
+            <input type="text" class="form-input" id="j-country" placeholder="e.g. Saudi Arabia">
+          </div>
         </div>
-        <div class="form-group">
-          <label class="form-label">Employer</label>
-          <input type="text" class="form-input" id="j-employer" placeholder="Company/Family name">
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Country / Destination</label>
-          <input type="text" class="form-input" id="j-country" placeholder="e.g. Saudi Arabia">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Total Slots</label>
-          <input type="number" class="form-input" id="j-slots" placeholder="10" min="1">
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Filled Slots</label>
-          <input type="number" class="form-input" id="j-filled" placeholder="0" min="0">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Status</label>
-          <select class="form-input" id="j-status">
-            <option value="Open">Open</option>
-            <option value="Filled">Filled</option>
-            <option value="Closed">Closed</option>
-            <option value="On Hold">On Hold</option>
-          </select>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Application Deadline</label>
+            <input type="date" class="form-input" id="j-deadline">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Status</label>
+            <select class="form-input" id="j-status">
+              <option value="Open">Open</option>
+              <option value="Filled">Filled</option>
+              <option value="Closed">Closed</option>
+              <option value="On Hold">On Hold</option>
+            </select>
+          </div>
         </div>
       </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Salary</label>
-          <input type="text" class="form-input" id="j-salary" placeholder="e.g. SAR 1,800/mo">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Application Deadline</label>
-          <input type="date" class="form-input" id="j-deadline">
-        </div>
+
+      <!-- Positions List -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.07em">POSITIONS</div>
+        <button class="btn btn-s btn-sm" type="button" onclick="addJobPosition()">+ Add Position</button>
+      </div>
+      <div id="j-positions-list" style="display:flex;flex-direction:column;gap:10px"></div>
+      <div id="j-positions-empty" style="display:none;padding:12px;text-align:center;color:var(--muted);font-size:13px;background:var(--s2);border-radius:8px;border:1px dashed var(--border)">
+        Click "+ Add Position" to add a position for this employer.
       </div>
     </div>
     <div class="modal-foot">
@@ -4202,127 +4198,266 @@ function renderJobs() {
   const sf = document.getElementById('job-status-filter').value;
   const filtered = sf ? jobs.filter(j=>j.status===sf) : jobs;
   const tbody = document.getElementById('job-tbody');
-  tbody.innerHTML = filtered.length ? filtered.map(j=>`
-    <tr>
-      <td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--muted)">${j.id}</td>
-      <td style="font-weight:700">${j.title}</td>
-      <td><div style="font-size:12.5px">${j.employer}</div><div style="font-size:11px;color:var(--muted)">${j.country}</div></td>
-      <td style="text-align:center;font-family:'IBM Plex Mono',monospace">${j.slots}</td>
-      <td style="text-align:center">
-        <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;margin-bottom:3px">${j.filled}/${j.slots}</div>
-        <div class="prog-bar" style="width:60px"><div class="prog-fill" style="background:var(--brand);width:${j.slots?j.filled/j.slots*100:0}%"></div></div>
+  // Group by employer + country
+  var employerGroups = {};
+  filtered.forEach(function(j) {
+    var key = (j.employer||'') + '||' + (j.country||'');
+    if (!employerGroups[key]) employerGroups[key] = { employer: j.employer, country: j.country, deadline: j.deadline, status: j.status, positions: [] };
+    employerGroups[key].positions.push(j);
+  });
+  var groupKeys = Object.keys(employerGroups);
+
+  tbody.innerHTML = groupKeys.length ? groupKeys.map(function(key) {
+    var grp = employerGroups[key];
+    var totalSlots  = grp.positions.reduce(function(s,p){ return s + (p.slots||0); }, 0);
+    var totalFilled = grp.positions.reduce(function(s,p){ return s + (p.filled||0); }, 0);
+    var pct = totalSlots ? Math.round(totalFilled/totalSlots*100) : 0;
+    var rows = '';
+    // Employer header row
+    rows += `<tr style="background:var(--brand-l)">
+      <td colspan="2" style="font-weight:800;font-size:13px;padding:10px 12px">
+        <div>${grp.employer}</div>
+        <div style="font-size:11px;color:var(--muted);font-weight:400">${grp.country} · Deadline: ${grp.deadline||'TBD'}</div>
       </td>
-      <td style="font-size:12px;font-family:'IBM Plex Mono',monospace">${j.salary}</td>
-      <td>${pillHtml(j.status)}</td>
-      <td style="font-size:11.5px;font-family:'IBM Plex Mono',monospace;color:var(--muted)">${j.deadline}</td>
-      <td style="text-align:right;display:flex;gap:5px;justify-content:flex-end;align-items:center">
-        <button class="btn btn-ghost btn-xs" onclick="openEditJob('${j.id}')" style="color:var(--brand)">Edit</button>
-        <button class="btn btn-ghost btn-xs" onclick="confirmDelete('job','${j.id}')" style="color:var(--red)">Delete</button>
+      <td colspan="3" style="padding:10px 12px">
+        <div style="font-size:12px;font-family:'IBM Plex Mono',monospace;margin-bottom:4px">${totalFilled}/${totalSlots} slots · ${pct}% filled</div>
+        <div class="prog-bar" style="width:120px"><div class="prog-fill" style="background:var(--brand);width:${pct}%"></div></div>
       </td>
-    </tr>
-  `).join('') : `<tr><td colspan="9"><div class="empty-state"><div class="empty-icon">💼</div><div class="empty-title">No job orders found</div></div></td></tr>`;
+      <td colspan="2" style="padding:10px 12px">${pillHtml(grp.status)}</td>
+      <td colspan="2" style="text-align:right;padding:10px 12px">
+        <button class="btn btn-ghost btn-xs" onclick="openEditJob('${grp.positions[0].id}')" style="color:var(--brand)">✏ Edit</button>
+      </td>
+    </tr>`;
+    // Position rows
+    grp.positions.forEach(function(j) {
+      var pPct = j.slots ? Math.round(j.filled/j.slots*100) : 0;
+      rows += `<tr>
+        <td style="padding-left:24px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted)">${j.id}</td>
+        <td style="padding-left:24px;font-size:13px;font-weight:600">↳ ${j.title}</td>
+        <td style="font-size:12px;color:var(--muted)"><span style="font-size:10px">Employer hidden — see above</span></td>
+        <td style="text-align:center;font-family:'IBM Plex Mono',monospace">${j.slots}</td>
+        <td style="text-align:center">
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;margin-bottom:3px">${j.filled}/${j.slots}</div>
+          <div class="prog-bar" style="width:60px"><div class="prog-fill" style="background:var(--brand);width:${pPct}%"></div></div>
+        </td>
+        <td style="font-size:12px;font-family:'IBM Plex Mono',monospace">${j.salary||'TBD'}</td>
+        <td>${pillHtml(j.status)}</td>
+        <td style="font-size:11.5px;font-family:'IBM Plex Mono',monospace;color:var(--muted)">${j.deadline||'TBD'}</td>
+        <td style="text-align:right">
+          <button class="btn btn-ghost btn-xs" onclick="confirmDelete('job','${j.id}')" style="color:var(--red)" title="Delete this position">✕</button>
+        </td>
+      </tr>`;
+    });
+    return rows;
+  }).join('') : `<tr><td colspan="9"><div class="empty-state"><div class="empty-icon">💼</div><div class="empty-title">No job orders found</div></div></td></tr>`;
   document.getElementById('sb-job-count').textContent = DB.jobs.filter(j=>j.status==='Open').length;
 }
+// ── Position row counter ─────────────────────────────────────────────
+var _posRowIdx = 0;
+
+function _renderPositionRow(pos) {
+  _posRowIdx++;
+  var idx = _posRowIdx;
+  var div = document.createElement('div');
+  div.id = 'pos-row-' + idx;
+  div.style.cssText = 'background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;position:relative';
+  div.innerHTML = `
+    <button type="button" onclick="removePositionRow(${idx})" style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;line-height:1" title="Remove">✕</button>
+    <div class="form-row" style="margin-bottom:8px">
+      <div class="form-group">
+        <label class="form-label">Position Title <span class="req">*</span></label>
+        <input type="text" class="form-input pos-title" data-row="${idx}" placeholder="e.g. Domestic Helper" value="${pos ? pos.title : ''}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Salary</label>
+        <input type="text" class="form-input pos-salary" data-row="${idx}" placeholder="e.g. SAR 1,800/mo" value="${pos ? pos.salary||'' : ''}">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Total Slots</label>
+        <input type="number" class="form-input pos-slots" data-row="${idx}" placeholder="10" min="1" value="${pos ? pos.slots||1 : ''}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Filled Slots</label>
+        <input type="number" class="form-input pos-filled" data-row="${idx}" placeholder="0" min="0" value="${pos ? pos.filled||0 : '0'}">
+      </div>
+    </div>`;
+  return div;
+}
+
+function addJobPosition(pos) {
+  var list  = document.getElementById('j-positions-list');
+  var empty = document.getElementById('j-positions-empty');
+  list.appendChild(_renderPositionRow(pos || null));
+  if (empty) empty.style.display = 'none';
+}
+
+function removePositionRow(idx) {
+  var row = document.getElementById('pos-row-' + idx);
+  if (row) row.remove();
+  var list  = document.getElementById('j-positions-list');
+  var empty = document.getElementById('j-positions-empty');
+  if (empty) empty.style.display = list.children.length === 0 ? 'block' : 'none';
+}
+
+function _getPositionsFromModal() {
+  var rows = document.querySelectorAll('#j-positions-list > div[id^="pos-row-"]');
+  var positions = [];
+  rows.forEach(function(row) {
+    var title  = (row.querySelector('.pos-title')  || {}).value || '';
+    var salary = (row.querySelector('.pos-salary') || {}).value || '';
+    var slots  = parseInt((row.querySelector('.pos-slots')  || {}).value) || 1;
+    var filled = parseInt((row.querySelector('.pos-filled') || {}).value) || 0;
+    if (title.trim()) positions.push({ title: title.trim(), salary, slots, filled });
+  });
+  return positions;
+}
+
+function _resetJobModal() {
+  document.getElementById('j-edit-id').value   = '';
+  document.getElementById('j-edit-dbid').value  = '';
+  document.getElementById('j-employer').value   = '';
+  document.getElementById('j-country').value    = '';
+  document.getElementById('j-deadline').value   = '';
+  document.getElementById('j-status').value     = 'Open';
+  document.getElementById('j-positions-list').innerHTML = '';
+  document.getElementById('j-positions-empty').style.display = 'block';
+  _posRowIdx = 0;
+}
+
 function openAddJob() {
-  // Reset to create mode
-  document.getElementById('j-edit-id').value = '';
-  document.getElementById('j-edit-dbid').value = '';
-  document.getElementById('j-modal-title').textContent = 'New Job Order';
-  document.getElementById('j-modal-sub').textContent = 'Create a new job placement opportunity.';
-  document.getElementById('j-submit-btn').textContent = 'Create Job Order';
-  document.getElementById('j-title').value = '';
-  document.getElementById('j-employer').value = '';
-  document.getElementById('j-country').value = '';
-  document.getElementById('j-slots').value = '';
-  document.getElementById('j-filled').value = '0';
-  document.getElementById('j-salary').value = '';
-  document.getElementById('j-deadline').value = '';
-  document.getElementById('j-status').value = 'Open';
+  _resetJobModal();
+  document.getElementById('j-modal-title').textContent  = 'New Job Order';
+  document.getElementById('j-modal-sub').textContent    = 'One employer — multiple positions with individual slots.';
+  document.getElementById('j-submit-btn').textContent   = 'Create Job Order';
+  // Start with one empty position row
+  addJobPosition();
   openOverlay('overlay-job');
 }
 
 function openEditJob(jobId) {
+  // Find the employer group — all jobs with same employer+country
   var job = DB.jobs.find(function(j){ return j.id === jobId; });
   if (!job) return;
-  // Switch to edit mode
-  document.getElementById('j-edit-id').value   = job.id;
-  document.getElementById('j-edit-dbid').value  = job._dbId || job.id;
-  document.getElementById('j-modal-title').textContent = 'Edit Job Order';
-  document.getElementById('j-modal-sub').textContent   = 'Update job order details.';
-  document.getElementById('j-submit-btn').textContent  = 'Save Changes';
-  document.getElementById('j-title').value    = job.title    || '';
-  document.getElementById('j-employer').value = job.employer || '';
-  document.getElementById('j-country').value  = job.country  || '';
-  document.getElementById('j-slots').value    = job.slots    || 1;
-  document.getElementById('j-filled').value   = job.filled   || 0;
-  document.getElementById('j-salary').value   = job.salary   || '';
-  document.getElementById('j-deadline').value = (job.deadline && job.deadline !== 'TBD') ? job.deadline : '';
-  document.getElementById('j-status').value   = job.status   || 'Open';
+
+  _resetJobModal();
+  document.getElementById('j-modal-title').textContent  = 'Edit Job Order';
+  document.getElementById('j-modal-sub').textContent    = 'Update employer details and positions.';
+  document.getElementById('j-submit-btn').textContent   = 'Save Changes';
+  document.getElementById('j-edit-id').value            = job.id;
+  document.getElementById('j-edit-dbid').value          = job._dbId || job.id;
+  document.getElementById('j-employer').value           = job.employer || '';
+  document.getElementById('j-country').value            = job.country  || '';
+  document.getElementById('j-deadline').value           = (job.deadline && job.deadline !== 'TBD') ? job.deadline : '';
+  document.getElementById('j-status').value             = job.status   || 'Open';
+
+  // Load all positions for this employer (same employer + country)
+  var siblings = DB.jobs.filter(function(j){
+    return j.employer === job.employer && j.country === job.country;
+  });
+  siblings.forEach(function(j) {
+    addJobPosition({ title: j.title, salary: j.salary, slots: j.slots, filled: j.filled });
+  });
+  if (siblings.length === 0) addJobPosition();
+
   openOverlay('overlay-job');
 }
 
 function saveJob() {
-  var title = document.getElementById('j-title').value.trim();
-  if (!title) { toast('Position title is required', 'error'); return; }
-
+  var employer = document.getElementById('j-employer').value.trim();
+  var country  = document.getElementById('j-country').value.trim();
+  var deadline = document.getElementById('j-deadline').value || 'TBD';
+  var status   = document.getElementById('j-status').value || 'Open';
   var editId   = document.getElementById('j-edit-id').value;
   var editDbId = document.getElementById('j-edit-dbid').value;
 
-  var slots  = parseInt(document.getElementById('j-slots').value)  || 1;
-  var filled = parseInt(document.getElementById('j-filled').value) || 0;
-  if (filled > slots) { toast('Filled slots cannot exceed total slots', 'error'); return; }
+  if (!employer) { toast('Employer name is required', 'error'); return; }
+  if (!country)  { toast('Destination country is required', 'error'); return; }
 
-  var jobData = {
-    title:    title,
-    employer: document.getElementById('j-employer').value.trim() || 'Unnamed Employer',
-    country:  document.getElementById('j-country').value.trim()  || 'Unknown',
-    slots:    slots,
-    filled:   filled,
-    salary:   document.getElementById('j-salary').value.trim()   || 'TBD',
-    status:   document.getElementById('j-status').value          || 'Open',
-    deadline: document.getElementById('j-deadline').value        || 'TBD',
-  };
+  var positions = _getPositionsFromModal();
+  if (positions.length === 0) { toast('Add at least one position', 'error'); return; }
+
+  // Validate each position
+  for (var p of positions) {
+    if (p.filled > p.slots) {
+      toast('Filled slots cannot exceed total slots for "' + p.title + '"', 'error');
+      return;
+    }
+  }
 
   if (editId) {
-    // ── EDIT MODE ───────────────────────────────────────────────────
-    var idx = DB.jobs.findIndex(function(j){ return j.id === editId; });
-    if (idx === -1) { toast('Job order not found', 'error'); return; }
+    // ── EDIT MODE — update/replace all positions for this employer ────
+    var existingJob = DB.jobs.find(function(j){ return j.id === editId; });
+    if (!existingJob) { toast('Job order not found', 'error'); return; }
 
-    Object.assign(DB.jobs[idx], jobData);
-    DB.jobs[idx]._dbId = editDbId || DB.jobs[idx]._dbId;
+    var oldEmployer = existingJob.employer;
+    var oldCountry  = existingJob.country;
 
-    addAudit('UPDATE', 'Job Order', 'Updated job: ' + title);
-    autosave('jobs');
+    // Remove all old positions for this employer group
+    var toRemove = DB.jobs.filter(function(j){
+      return j.employer === oldEmployer && j.country === oldCountry;
+    });
+    var removedDbIds = toRemove.map(function(j){ return j._dbId || j.id; }).filter(isUUID);
+    DB.jobs = DB.jobs.filter(function(j){
+      return !(j.employer === oldEmployer && j.country === oldCountry);
+    });
 
-    var jobToSync = DB.jobs[idx];
-    if (isUUID(editDbId)) {
-      apiUpdateJob(jobToSync).then(function(r){
-        if (!r.ok) toast('Saved locally; sync failed: ' + r.error, 'error');
-        else toast('Job order updated ✓', 'success');
+    // Add new positions
+    positions.forEach(function(pos) {
+      var newJob = {
+        id:       genId('JOB'),
+        employer: employer,
+        country:  country,
+        deadline: deadline,
+        status:   status,
+        title:    pos.title,
+        slots:    pos.slots,
+        filled:   pos.filled,
+        salary:   pos.salary || 'TBD',
+      };
+      DB.jobs.unshift(newJob);
+      // Create or update on server
+      apiCreateJob(newJob).then(function(r){
+        if (r.ok) { newJob._dbId = r.data.id; autosave('jobs'); }
+        else console.warn('Job position sync failed:', r.error);
       });
-    } else {
-      // No UUID yet — try creating on server instead
-      apiCreateJob(jobToSync).then(function(r){
-        if (r.ok) { jobToSync._dbId = r.data.id; autosave('jobs'); toast('Job order synced ✓', 'success'); }
-        else toast('Saved locally; sync failed: ' + r.error, 'error');
-      });
-    }
+    });
+
+    // Delete removed positions from server
+    removedDbIds.forEach(function(dbId){
+      apiDeleteJob(dbId).catch(function(){});
+    });
+
+    addAudit('UPDATE', 'Job Order', employer + ' (' + country + ') — ' + positions.length + ' position(s) updated');
     toast('Job order updated', 'success');
 
   } else {
-    // ── CREATE MODE ─────────────────────────────────────────────────
-    var newJob = Object.assign({ id: genId('JOB'), filled: filled }, jobData);
-    DB.jobs.unshift(newJob);
-    addAudit('CREATE', 'Job Order', 'Created job: ' + title);
-    autosave('jobs');
-
-    apiCreateJob(newJob).then(function(r){
-      if (!r.ok) toast('Job saved locally; sync failed: ' + r.error, 'error');
-      else toast('Job order created on server ✓', 'success');
+    // ── CREATE MODE — create one DB.jobs entry per position ───────────
+    positions.forEach(function(pos) {
+      var newJob = {
+        id:       genId('JOB'),
+        employer: employer,
+        country:  country,
+        deadline: deadline,
+        status:   status,
+        title:    pos.title,
+        slots:    pos.slots,
+        filled:   pos.filled,
+        salary:   pos.salary || 'TBD',
+      };
+      DB.jobs.unshift(newJob);
+      apiCreateJob(newJob).then(function(r){
+        if (r.ok) { newJob._dbId = r.data.id; autosave('jobs'); }
+        else toast('Position "' + pos.title + '" saved locally; sync failed: ' + r.error, 'error');
+      });
     });
-    toast('Job order created', 'success');
+
+    addAudit('CREATE', 'Job Order', employer + ' (' + country + ') — ' + positions.length + ' position(s) created');
+    toast(positions.length + ' position(s) created for ' + employer, 'success');
   }
 
+  autosave('jobs');
   closeOverlay('overlay-job');
   renderJobs();
 }
@@ -8468,10 +8603,10 @@ function _populateJobOrderSelect(selectedId) {
     openJobs.forEach(function(j) {
       var opt = document.createElement('option');
       opt.value = j.id;
-      var slots = j.slots > 0 ? ' (' + (j.slots - (j.filled||0)) + ' slots left)' : '';
-      var flag  = j.country ? ' · ' + j.country : '';
-      opt.text  = j.title + flag + slots;
-      if (j.filled >= j.slots) { opt.text += ' [FULL]'; opt.style.color = 'var(--muted)'; }
+      var slotsLeft = j.slots - (j.filled||0);
+      var isFull = j.filled >= j.slots;
+      opt.text  = j.title + ' @ ' + (j.employer||'') + ' · ' + (j.country||'') + ' (' + (isFull ? 'FULL' : slotsLeft + ' left') + ')';
+      if (isFull) { opt.style.color = 'var(--muted)'; }
       if (j.id === selectedId) opt.selected = true;
       sel.appendChild(opt);
     });
@@ -8511,13 +8646,13 @@ function _onJobOrderSelect() {
     var slotsLeft = (job.slots || 0) - (job.filled || 0);
     var statusColor = job.status === 'Open' ? 'var(--green)' : 'var(--muted)';
     info.innerHTML =
-      '<strong>' + job.title + '</strong> · ' + (job.employer || '') +
-      '<br>' + (job.country || '') +
+      '<strong>' + job.title + '</strong>' +
+      '<br><span style="font-size:11px;color:var(--muted)">' + (job.employer||'') + ' · ' + (job.country||'') + '</span>' +
+      '<br>' + (job.salary || 'Salary TBD') +
       ' · <span style="color:' + statusColor + ';font-weight:700">' + job.status + '</span>' +
-      ' · ' + (job.salary || '') +
-      ' · <span style="color:' + (slotsLeft > 0 ? 'var(--green)' : 'var(--red)') + '">' +
-        (slotsLeft > 0 ? slotsLeft + ' slots available' : 'No slots left') + '</span>' +
-      ' · Deadline: ' + (job.deadline || '—');
+      ' · <span style="color:' + (slotsLeft > 0 ? 'var(--green)' : 'var(--red)') + ';font-weight:700">' +
+        (slotsLeft > 0 ? slotsLeft + ' slots left' : 'FULL') + '</span>' +
+      '<br><span style="font-size:11px;color:var(--muted)">Deadline: ' + (job.deadline || '—') + '</span>';
     info.style.display = 'block';
   }
 }
