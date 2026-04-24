@@ -1890,10 +1890,10 @@ button[disabled][data-rbac-locked] {
         </div>
         <div class="form-group">
           <label class="form-label">Assigned Agent <span class="req">*</span></label>
-          <select class="form-input" id="a-agent">
-            <option>Sarah Tan</option><option>Mike Reyes</option><option>Ana Santos</option>
-            <option>Carlo Bautista</option><option>Lisa Gomez</option>
+          <select class="form-input" id="a-agent" onchange="_onAgentSelectChange()">
+            <option value="">-- Select Agent --</option>
           </select>
+          <input type="hidden" id="a-agent-uuid" value="">
         </div>
       </div>
       <div class="form-row">
@@ -1933,9 +1933,10 @@ button[disabled][data-rbac-locked] {
         </div>
         <div class="form-group">
           <label class="form-label">Job Order</label>
-          <select class="form-input" id="a-job-order" onchange="_onJobOrderSelect()">
+          <select class="form-input" id="a-job-order" onchange="_onJobOrderSelect(); document.getElementById('a-job-order-id').value=this.value;">
             <option value="">— Select Job Order —</option>
           </select>
+          <input type="hidden" id="a-job-order-id" value="">
           <input type="text" class="form-input" id="a-job" placeholder="Or type manually…" style="margin-top:6px;font-size:12px">
           <div id="a-job-info" style="display:none;margin-top:6px;padding:8px 10px;background:var(--brand-l);border:1px solid var(--brand);border-radius:7px;font-size:12px;color:var(--brand)"></div>
         </div>
@@ -2326,7 +2327,7 @@ function mapApplicant(row) {
     id:          row.id,
     name:        (row.first_name || '') + ' ' + (row.last_name || ''),
     status:      row.status || 'Applied',
-    agent:       row.agent_name || '',
+    agent:       row.agent_name != null ? row.agent_name : undefined,
     _agentId:    row.agent_uuid  || row.agent_id || '',
     contact:     row.phone || '',
     email:       row.email || '',
@@ -2474,9 +2475,16 @@ async function fetchApplicants() {
     // Preserve agent, jobOrderId, passport, gender from local if server returns empty
     fresh.forEach(function(a) {
       var local = DB.applicants.find(function(x){ return x.id === a.id || x._dbId === a.id; });
-      if (!a.agent && _savedAgents[a.id]) a.agent = _savedAgents[a.id];
+      // Only restore from saved assignments if agent still exists in DB.agents
+      var _savedName = _savedAgents[a.id];
+      if (!a.agent && _savedName) {
+        var _stillExists = DB.agents.find(function(ag){ return ag.name === _savedName; });
+        if (_stillExists) a.agent = _savedName;
+      }
       if (local) {
-        if (!a.agent       && local.agent)       a.agent       = local.agent;
+        // Only restore agent if server returned UNDEFINED agent_name (not explicitly empty)
+        // If server returned '' it means agent was intentionally cleared (e.g. agent deleted)
+        if (a.agent === undefined && local.agent) a.agent      = local.agent;
         if (!a._agentDbId  && local._agentDbId)  a._agentDbId  = local._agentDbId;
         if (!a._jobOrderId && local._jobOrderId) a._jobOrderId = local._jobOrderId;
         if (!a.passport    && local.passport)    a.passport    = local.passport;
@@ -3685,7 +3693,10 @@ function openAddApplicant() {
   document.getElementById('a-destination').value = '';
   document.getElementById('a-job').value = '';
   document.getElementById('a-name').dataset.editId = '';
+  _populateAgentSelect('a-agent', '', '');
   _populateJobOrderSelect('');
+  var _auuid = document.getElementById('a-agent-uuid'); if(_auuid) _auuid.value = '';
+  var _joid  = document.getElementById('a-job-order-id'); if(_joid) _joid.value = '';
   openOverlay('overlay-applicant');
 }
 function editApplicant(id) {
@@ -3696,7 +3707,7 @@ function editApplicant(id) {
   document.getElementById('a-name').value = a.name;
   document.getElementById('a-id').value = a._dbId || a.id;
   document.getElementById('a-status').value = a.status;
-  _populateAgentSelect('a-agent', a.agent);
+  _populateAgentSelect('a-agent', a.agent, a._agentDbId || '');
   document.getElementById('a-contact').value = a.contact;
   document.getElementById('a-email').value = a.email;
   document.getElementById('a-job').value = a.job;
@@ -3706,6 +3717,7 @@ function editApplicant(id) {
   document.getElementById('a-passport').value = a.passport || '';
   document.getElementById('a-destination').value = a.destination || '';
   _populateJobOrderSelect(a._jobOrderId || '');
+  var _joid = document.getElementById('a-job-order-id'); if(_joid) _joid.value = a._jobOrderId || '';
   document.getElementById('a-job').value = a.job || '';
   document.getElementById('a-name').dataset.editId = id;
   openOverlay('overlay-applicant');
@@ -3719,16 +3731,12 @@ function saveApplicant() {
     id: editId || genId('APP'), name,
     status: document.getElementById('a-status').value,
     agent: document.getElementById('a-agent').value,
-    _agentDbId: (function(){
-      var sel = document.getElementById('a-agent');
-      var agentName = sel ? sel.value : '';
-      var found = DB.agents.find(function(a){ return a.name === agentName; });
-      return found ? (found._dbId || found.id) : '';
-    })(),
+    _agentDbId: (document.getElementById('a-agent-uuid') ? document.getElementById('a-agent-uuid').value : '') ||
+                (function(){ var ag = DB.agents.find(function(a){ return a.name === document.getElementById('a-agent').value; }); return ag ? (ag._dbId||ag.id||'') : ''; })(),
     contact: document.getElementById('a-contact').value || '+63 900 000 0000',
     email: document.getElementById('a-email').value || 'no-email@example.com',
     job: document.getElementById('a-job').value || 'Not specified',
-    _jobOrderId: document.getElementById('a-job-order').value || '',
+    _jobOrderId: (document.getElementById('a-job-order-id') ? document.getElementById('a-job-order-id').value : '') || document.getElementById('a-job-order').value || '',
     medical: document.getElementById('a-medical').value,
     date: editId ? DB.applicants.find(a=>a.id===editId).date : new Date().toISOString().split('T')[0],
     notes: document.getElementById('a-notes').value,
@@ -6356,15 +6364,46 @@ function deleteAgent(idx) {
   var a = DB.agents[idx];
   if (!a) return;
   if (!confirm('Remove agent "'+a.name+'"? This cannot be undone.')) return;
-  var dbId = a._dbId || a.id;
-  DB.agents.splice(idx,1);
-  addAudit('DELETE','Agent','Removed agent: '+a.name);
+  var dbId   = a._dbId || a.id;
+  var agName = a.name;
+
+  // Remove from agents list
+  DB.agents.splice(idx, 1);
   autosave('agents');
-  apiDeleteAgent(dbId).then(function(r){
-    if (!r.ok) toast('Agent removed locally; sync failed: '+r.error,'error');
+
+  // Clear this agent from ALL applicants immediately
+  DB.applicants.forEach(function(ap) {
+    if (ap.agent === agName) {
+      ap.agent      = '';
+      ap._agentDbId = '';
+    }
   });
-  toast('Agent removed','success');
+  filteredApps = [...getScopedApplicants()];
+  autosave('applicants');
+
+  // Clear from persistent agent assignment store
+  if (window._agentAssignments) {
+    Object.keys(window._agentAssignments).forEach(function(aid) {
+      if (window._agentAssignments[aid] === agName) {
+        delete window._agentAssignments[aid];
+      }
+    });
+    Store.set('rams:applicant:agents', JSON.stringify(window._agentAssignments));
+  }
+
+  // Delete from server — server FK ON DELETE SET NULL handles applicants.agent_id
+  apiDeleteAgent(dbId).then(function(r) {
+    if (!r.ok) toast('Agent removed locally; server sync failed: '+r.error, 'error');
+    else {
+      // Re-fetch applicants so server-nulled agent_id is reflected
+      fetchApplicants().catch(function(){});
+    }
+  });
+
+  addAudit('DELETE', 'Agent', 'Removed agent: ' + agName);
+  toast('Agent removed', 'success');
   renderAgentGrid();
+  if (currentPage === 'applicants') renderApplicants();
 }
 
 // ── MANUAL ADJUSTMENT ────────────────────────────────────────────────
@@ -7099,22 +7138,31 @@ function submitFunds() {
 
 
 // ── Agent select helper ───────────────────────────────────────────────
-function _populateAgentSelect(selectId, selectedValue) {
+function _onAgentSelectChange() {
+  var sel = document.getElementById('a-agent');
+  var uuidInput = document.getElementById('a-agent-uuid');
+  if (!sel || !uuidInput) return;
+  var agentName = sel.value;
+  var found = DB.agents.find(function(ag){ return ag.name === agentName; });
+  uuidInput.value = found ? (found._dbId || found.id || '') : '';
+}
+
+function _populateAgentSelect(selectId, selectedName, selectedUuid) {
   var sel = document.getElementById(selectId);
+  var uuidInput = document.getElementById('a-agent-uuid');
   if (!sel) return;
 
-  // Only show agents from DB.agents (not system users)
   var activeAgents = DB.agents.filter(function(a){ return a.status === 'Active'; });
 
   if (activeAgents.length === 0) {
-    sel.innerHTML = '<option value="">-- No agents in system (add via Accounting → Agents) --</option>';
-    // Still allow the current value to show if editing
-    if (selectedValue) {
+    sel.innerHTML = '<option value="">-- No agents yet. Add via Accounting → Agents --</option>';
+    if (selectedName) {
       var opt = document.createElement('option');
-      opt.value = selectedValue;
-      opt.text  = selectedValue + ' (existing)';
+      opt.value = selectedName;
+      opt.text  = selectedName + ' (existing)';
       opt.selected = true;
       sel.appendChild(opt);
+      if (uuidInput && selectedUuid) uuidInput.value = selectedUuid;
     }
     return;
   }
@@ -7122,8 +7170,17 @@ function _populateAgentSelect(selectId, selectedValue) {
   sel.innerHTML = '<option value="">-- Select Agent --</option>' +
     activeAgents.map(function(a){
       var label = a.name + (a.code ? ' · ' + a.code : '') + (a.country ? ' · ' + a.country : '');
-      return '<option value="' + a.name + '"' + (a.name === selectedValue ? ' selected' : '') + '>' + label + '</option>';
+      var isSelected = (a.name === selectedName) || (selectedUuid && (a._dbId === selectedUuid || a.id === selectedUuid));
+      return '<option value="' + a.name + '"' + (isSelected ? ' selected' : '') + '>' + label + '</option>';
     }).join('');
+
+  // Set the UUID hidden input based on selection
+  if (uuidInput) {
+    var match = activeAgents.find(function(a){
+      return a.name === selectedName || (selectedUuid && (a._dbId === selectedUuid || a.id === selectedUuid));
+    });
+    uuidInput.value = match ? (match._dbId || match.id || '') : (selectedUuid || '');
+  }
 }
 
 // ── Drawer Agent Panel ────────────────────────────────────────────────
@@ -8141,7 +8198,10 @@ async function _manualSync() {
 // ── Job order selector for applicant modal ────────────────────────────
 function _populateJobOrderSelect(selectedId) {
   var sel = document.getElementById('a-job-order');
+  var hiddenId = document.getElementById('a-job-order-id');
   if (!sel) return;
+  // Set hidden input immediately
+  if (hiddenId) hiddenId.value = selectedId || '';
 
   // Clear and rebuild options
   sel.innerHTML = '<option value="">— Select Job Order —</option>';
@@ -8177,8 +8237,11 @@ function _onJobOrderSelect() {
   var info  = document.getElementById('a-job-info');
   var jobTxt = document.getElementById('a-job');
   var destSel = document.getElementById('a-destination');
+  var hiddenId = document.getElementById('a-job-order-id');
 
   var jobId = sel ? sel.value : '';
+  // Always sync hidden input with select value
+  if (hiddenId) hiddenId.value = jobId || '';
   if (!jobId) { if (info) info.style.display = 'none'; return; }
 
   var job = DB.jobs.find(function(j) { return j.id === jobId; });
