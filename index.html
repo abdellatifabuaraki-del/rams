@@ -2345,6 +2345,7 @@ async function apiFetch(path, opts) {
 function mapApplicant(row) {
   return {
     id:          row.id,
+    displayId:   row.display_id || '',  // populated from our display ID store
     name:        (row.first_name || '') + ' ' + (row.last_name || ''),
     status:      row.status || 'Applied',
     agent:       row.agent_name != null ? row.agent_name : undefined,
@@ -2490,6 +2491,13 @@ async function fetchApplicants() {
     // Filter out locally deleted applicants
     var _deleted = window._deletedApplicantIds || new Set();
     fresh = fresh.filter(function(a){ return !_deleted.has(a.id) && !_deleted.has(a._dbId); });
+    // Sync APP sequence to be higher than any existing APP-XXXX display ID
+    fresh.forEach(function(a) {
+      if (a.displayId) {
+        var match = (a.displayId + '').match(/APP-(\d+)/);
+        if (match) { var num = parseInt(match[1]); if (num > _sequences.APP) { _sequences.APP = num; saveSequences(); } }
+      }
+    });
     // Apply saved agent assignments if server didn't return agent_name
     var _savedAgents = window._agentAssignments || {};
     // Preserve agent, jobOrderId, passport, gender from local if server returns empty
@@ -2512,6 +2520,7 @@ async function fetchApplicants() {
       }
     });
     DB.applicants = fresh;
+    applyDisplayIds();  // assign APP-XXXX to any new applicants from server
     filteredApps = [...getScopedApplicants()];
     if (changed.length && currentPage !== 'applicants' && currentPage !== 'pipeline') {
       var realChanges = changed.filter(function(a){ return !_deleted.has(a.id) && !_deleted.has(a._dbId); });
@@ -3222,7 +3231,7 @@ function openDrawer(appId) {
   currentDrawerApplicant = app;
   document.getElementById('drawer-name').textContent = app.name;
   document.getElementById('drawer-meta').innerHTML = `
-    <span style="font-family:'IBM Plex Mono',monospace">${app.id}</span> · ${app.job}
+    <span style="font-family:'IBM Plex Mono',monospace">${app.displayId || app.id}</span> · ${app.job}
   `;
 
   // Hide restricted tabs from Viewers
@@ -3445,9 +3454,40 @@ function pillHtml(status, variant) {
   };
   return `<span class="pill ${map[status]||'pill-gray'}">${status}</span>`;
 }
+// ── Persistent auto-increment sequences (stored in Store) ─────────────
+var _sequences = { APP: 0, JOB: 0, EXP: 0, DOC: 0 };
+
+async function loadSequences() {
+  try {
+    var stored = await Store.get('rams:sequences');
+    if (stored) {
+      var parsed = JSON.parse(typeof stored === 'string' ? stored : stored.value || '{}');
+      Object.assign(_sequences, parsed);
+    }
+  } catch(e) {}
+  // Ensure sequences are at least as high as current data
+  _sequences.APP = Math.max(_sequences.APP, DB.applicants.length);
+  _sequences.JOB = Math.max(_sequences.JOB, DB.jobs.length);
+  _sequences.EXP = Math.max(_sequences.EXP, DB.expenses.length);
+}
+
+async function saveSequences() {
+  await Store.set('rams:sequences', JSON.stringify(_sequences));
+}
+
+function nextAppId() {
+  _sequences.APP += 1;
+  saveSequences();
+  return 'APP-' + String(_sequences.APP).padStart(4, '0');
+}
+
 function genId(prefix) {
-  const max = DB[prefix === 'APP' ? 'applicants' : prefix === 'EXP' ? 'expenses' : prefix === 'JOB' ? 'jobs' : 'documents'].length;
-  return `${prefix}-${String(max + 1).padStart(3, '0')}`;
+  // Legacy function — now uses sequences
+  if (prefix === 'APP') return nextAppId();
+  if (prefix === 'JOB') { _sequences.JOB += 1; saveSequences(); return 'JOB-' + String(_sequences.JOB).padStart(3,'0'); }
+  if (prefix === 'EXP') { _sequences.EXP += 1; saveSequences(); return 'EXP-' + String(_sequences.EXP).padStart(3,'0'); }
+  var arr = DB[prefix === 'DOC' ? 'documents' : 'applicants'];
+  return prefix + '-' + String((arr ? arr.length : 0) + 1).padStart(3,'0');
 }
 function addAudit(action, entity, detail) {
   var _auditUser = (window._ramsSessionUser && window._ramsSessionUser.name) ? window._ramsSessionUser.name : 'System';
@@ -3715,7 +3755,8 @@ function openAddApplicant() {
   document.getElementById('applicant-modal-title').textContent = 'New Applicant';
   document.getElementById('applicant-modal-sub').textContent = 'Fill in all required fields to register an applicant.';
   document.getElementById('a-name').value = '';
-  document.getElementById('a-id').value = genId('APP');
+  var _previewId = nextAppId(); _sequences.APP--; saveSequences(); // peek without consuming
+  document.getElementById('a-id').value = 'APP-' + String(_sequences.APP + 1).padStart(4, '0');
   document.getElementById('a-status').value = 'Applied';
   _populateAgentSelect('a-agent', DB.agents.filter(function(a){return a.status==='Active';})[0]?.name || '');
   document.getElementById('a-contact').value = '';
@@ -3740,7 +3781,7 @@ function editApplicant(id) {
   document.getElementById('applicant-modal-title').textContent = 'Edit Applicant';
   document.getElementById('applicant-modal-sub').textContent = `Editing ${a.name}`;
   document.getElementById('a-name').value = a.name;
-  document.getElementById('a-id').value = a._dbId || a.id;
+  document.getElementById('a-id').value = a.displayId || a.id;
   document.getElementById('a-status').value = a.status;
   _populateAgentSelect('a-agent', a.agent, a._agentDbId || '');
   document.getElementById('a-contact').value = a.contact;
@@ -3826,6 +3867,8 @@ function saveApplicant() {
     queueWrite(() => apiCreateApplicant(data).then(r => { if (!r.ok) toast('Sync failed: '+r.error,'error'); }));
     toast('Applicant registered', 'success');
   }
+  // Assign display ID to new applicant
+  if (!data.displayId) { data.displayId = getDisplayId(data); }
   filteredApps = [...getScopedApplicants()];
   autosave('applicants');
   // Also persist agent assignment separately for durability
@@ -8046,9 +8089,11 @@ _showApp = function(user) {
   }, 80);
   // Sync all data from PostgreSQL after login + flush pending + load local data
   setTimeout(async function() {
-    // Load local-only data first (agents, ledger, scopes, settings)
+    // Load local-only data first (agents, ledger, scopes, settings, sequences)
     await loadDB();
     await loadSettings();
+    await loadSequences();
+    await loadDisplayIds();
     // Flush any pending server writes from last session
     await _flushPendingWrites();
     // Pull fresh data from PostgreSQL (includes agents now)
@@ -8612,6 +8657,43 @@ async function apiUpdateAgent(data) {
 async function apiDeleteAgent(dbId) {
   if (!dbId || !isUUID(dbId) || window._ramsSessionToken === 'demo') return { ok: true };
   return await apiFetch('/agents/' + dbId, { method: 'DELETE' });
+}
+
+
+// ── Display ID store — maps server UUID → APP-XXXX ────────────────────
+var _displayIdMap = {};  // { uuid: 'APP-0001' }
+
+async function loadDisplayIds() {
+  try {
+    var stored = await Store.get('rams:displayIds');
+    if (stored) {
+      _displayIdMap = JSON.parse(typeof stored === 'string' ? stored : stored.value || '{}');
+    }
+  } catch(e) {}
+}
+
+async function saveDisplayIds() {
+  await Store.set('rams:displayIds', JSON.stringify(_displayIdMap));
+}
+
+function getDisplayId(applicant) {
+  var uuid = applicant._dbId || applicant.id;
+  if (_displayIdMap[uuid]) return _displayIdMap[uuid];
+  // Assign a new display ID if not yet assigned
+  var newDisplayId = nextAppId();
+  _displayIdMap[uuid] = newDisplayId;
+  saveDisplayIds();
+  return newDisplayId;
+}
+
+// Apply display IDs to all applicants in DB.applicants
+function applyDisplayIds() {
+  DB.applicants.forEach(function(a) {
+    var uuid = a._dbId || a.id;
+    if (!a.displayId && uuid) {
+      a.displayId = _displayIdMap[uuid] || getDisplayId(a);
+    }
+  });
 }
 
 </script>
