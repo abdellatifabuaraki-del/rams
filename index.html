@@ -2430,6 +2430,7 @@ async function syncAllFromAPI() {
       return Object.assign({}, sa, { passport: sa.passport || la.passport || '' });
     });
     DB.applicants = _freshApps;
+    applyDisplayIds();
     filteredApps = [...getScopedApplicants()];
   }
   if (jobs.ok)     { DB.jobs       = jobs.data.map(mapJob); }
@@ -3390,7 +3391,7 @@ function renderCmd() {
   const list = document.getElementById('cmd-list');
   let items = [];
   const appItems = DB.applicants.filter(a => !q || a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q))
-    .map(a => ({ label: a.name, icon: '👤', action: () => { closeCmd(); openDrawer(a.id); }, sub: `${a.id} · ${a.status}` }));
+    .map(a => ({ label: a.name, icon: '👤', action: () => { closeCmd(); openDrawer(a.id); }, sub: `${a.displayId||a.id} · ${a.status}` }));
   const pageItems = CMD_PAGES.filter(i => !q || i.label.toLowerCase().includes(q));
   const actionItems = CMD_ACTIONS.filter(i => !q || i.label.toLowerCase().includes(q));
   let html = '';
@@ -3605,7 +3606,7 @@ function renderKanban() {
               <div class="kanban-card-name">${a.name}</div>
               <div class="kanban-card-sub">${a.job}</div>
               <div class="kanban-card-foot">
-                <span style="font-size:10px;color:var(--dim);font-family:'IBM Plex Mono',monospace">${a.id}</span>
+                <span style="font-size:10px;color:var(--dim);font-family:'IBM Plex Mono',monospace">${a.displayId||a.id}</span>
                 ${pillHtml(a.medical,'medical')}
               </div>
             </div>
@@ -3659,7 +3660,7 @@ function renderApplicants() {
   tbody.innerHTML = pageApps.length ? pageApps.map(a => `
     <tr>
       <td><input type="checkbox" class="table-check" ${selectedApps.has(a.id)?'checked':''} onchange="toggleSelect('${a.id}',this)" aria-label="Select ${a.name}"></td>
-      <td><span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--muted)">${a.id}</span></td>
+      <td><span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--muted)">${a.displayId||a.id}</span></td>
       <td>
         <div style="font-weight:700;cursor:pointer;color:var(--text)" onclick="openDrawer('${a.id}')">${a.name}</div>
         <div style="font-size:11px;color:var(--muted)">${a.email}</div>
@@ -8229,6 +8230,8 @@ _showApp = function(user) {
     await loadSettings();
     await loadSequences();
     await loadDisplayIds();
+    // Apply display IDs to any applicants already in local store
+    applyDisplayIds();
     // Flush any pending server writes from last session
     await _flushPendingWrites();
     // Pull fresh data from PostgreSQL (includes agents now)
