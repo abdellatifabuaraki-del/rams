@@ -1725,23 +1725,32 @@ button[disabled][data-rbac-locked] {
 
 <div class="page content-pad" id="page-audit">
       <div class="pg-hdr">
-        <div class="pg-hdr-l"><h1>Audit Trail</h1><p>Complete log of system actions and changes.</p></div>
+        <div class="pg-hdr-l"><h1>Audit Trail</h1><p>Complete log of all system actions and changes.</p></div>
         <div class="pg-hdr-r">
-          <button class="btn btn-s btn-sm" onclick="exportData('audit')">Export CSV</button>
-          <button class="btn btn-ghost btn-sm" onclick="clearAudit()">Clear Log</button>
+          <button class="btn btn-s btn-sm" onclick="exportData('audit')">⬇ Export CSV</button>
+          <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="clearAudit()">Clear Log</button>
         </div>
       </div>
-      <div class="filter-bar">
-        <div class="filter-search">
+      <div class="filter-bar" style="flex-wrap:wrap;gap:8px">
+        <div class="filter-search" style="flex:1;min-width:180px">
           <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input type="text" placeholder="Search audit log…" oninput="filterAudit(this.value)" aria-label="Search audit log">
+          <input type="text" id="audit-search" placeholder="Search actions, users, entities…" oninput="renderAudit()" aria-label="Search audit log">
         </div>
-        <select class="filter-select" onchange="filterAuditAction(this.value)" aria-label="Filter by action type">
+        <select class="filter-select" id="audit-type-filter" onchange="renderAudit()" aria-label="Filter by action">
           <option value="">All Actions</option>
-          <option>CREATE</option><option>UPDATE</option><option>DELETE</option><option>EXPORT</option>
+          <option value="create">CREATE</option>
+          <option value="update">UPDATE</option>
+          <option value="delete">DELETE</option>
+          <option value="export">EXPORT</option>
+        </select>
+        <select class="filter-select" id="audit-entity-filter" onchange="renderAudit()" aria-label="Filter by entity">
+          <option value="">All Entities</option>
+          <option>Applicant</option><option>Job Order</option><option>Document</option>
+          <option>Expense</option><option>Agent</option><option>User</option>
+          <option>Settings</option><option>Integration</option><option>System</option>
         </select>
       </div>
-      <div class="card cp" id="audit-list"></div>
+      <div class="card cp" id="audit-log" style="padding:0;overflow:hidden"></div>
     </div>
 
     <!-- ══════════════════════════════════════
@@ -5076,48 +5085,78 @@ let auditSearchQ = '', auditActionFilter = '';
 function filterAudit(q) { auditSearchQ = q; renderAudit(); }
 function filterAuditAction(a) { auditActionFilter = a; renderAudit(); }
 function renderAudit() {
-  // Pull fresh audit from server (non-blocking — renders local first)
+  // Pull fresh from server non-blocking
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
-  if (isLive) {
-    fetchAudit().catch(function(){});
-  }
-  const search = document.getElementById('audit-search');
-  const q = search ? search.value.toLowerCase() : '';
-  const typeFilter = document.getElementById('audit-type-filter');
-  const tf = typeFilter ? typeFilter.value : '';
-  const dateFrom = document.getElementById('audit-date-from');
-  const dateTo   = document.getElementById('audit-date-to');
+  if (isLive) fetchAudit().catch(function(){});
 
-  let logs = DB.auditLog.slice().reverse();
-  if (q)  logs = logs.filter(l => l.detail.toLowerCase().includes(q) || l.user.toLowerCase().includes(q) || l.entity.toLowerCase().includes(q));
-  if (tf) logs = logs.filter(l => l.type === tf);
-  if (dateFrom && dateFrom.value) logs = logs.filter(l => l.time >= dateFrom.value);
-  if (dateTo   && dateTo.value)   logs = logs.filter(l => l.time <= dateTo.value + ' 23:59');
+  var q        = (document.getElementById('audit-search')        ? document.getElementById('audit-search').value.toLowerCase()        : '');
+  var tf       = (document.getElementById('audit-type-filter')   ? document.getElementById('audit-type-filter').value.toLowerCase()   : '');
+  var ef       = (document.getElementById('audit-entity-filter') ? document.getElementById('audit-entity-filter').value.toLowerCase() : '');
 
-  const typeColors = {create:'var(--gbg)',update:'var(--brand-l)',delete:'var(--rbg)',export:'var(--abg)',adjustment:'var(--abg)'};
-  const typeIcons  = {create:'➕',update:'✏️',delete:'🗑️',export:'📤',adjustment:'🔧'};
+  var logs = DB.auditLog.slice();
+  if (q)  logs = logs.filter(function(l){ return (l.detail||'').toLowerCase().includes(q) || (l.user||'').toLowerCase().includes(q) || (l.entity||'').toLowerCase().includes(q); });
+  if (tf) logs = logs.filter(function(l){ return (l.type||'').toLowerCase() === tf; });
+  if (ef) logs = logs.filter(function(l){ return (l.entity||'').toLowerCase().includes(ef); });
 
-  const el = document.getElementById('audit-log');
+  var typeColors = { create:'var(--gbg)', update:'var(--brand-l)', delete:'var(--rbg)', export:'var(--abg)', adjustment:'var(--abg)' };
+  var typeText   = { create:'var(--green)', update:'var(--brand)', delete:'var(--red)', export:'var(--amber)', adjustment:'var(--amber)' };
+  var typeIcons  = { create:'＋', update:'✎', delete:'✕', export:'↓', adjustment:'⚙' };
+
+  var el = document.getElementById('audit-log');
+  if (!el) return;
+
   if (!logs.length) {
-    el.innerHTML = '<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">No audit entries found</div><div class="empty-sub">Try adjusting your filters.</div></div>';
+    el.innerHTML = '<div class="empty-state" style="padding:40px 0"><div class="empty-icon">📋</div><div class="empty-title">No entries found</div><div class="empty-sub">Try adjusting your search or filters.</div></div>';
     return;
   }
-  el.innerHTML = logs.map(l => `
-    <div class="audit-item">
-      <div class="audit-ico" style="background:${typeColors[l.type]||'var(--s2)'}">
-        ${typeIcons[l.type]||'•'}
-      </div>
-      <div class="audit-content">
-        <div class="audit-action">${l.detail}</div>
-        <div class="audit-meta">
-          <span class="pill ${l.type==='create'?'pill-green':l.type==='delete'?'pill-red':l.type==='update'?'pill-blue':'pill-amber'}" style="font-size:10px">${l.action}</span>
-          ${l.entity} · ${l.user}
-        </div>
-      </div>
-      <div class="audit-time">${l.time}</div>
-    </div>`).join('');
+
+  // Table header
+  var html = '<table style="width:100%;border-collapse:collapse">' +
+    '<thead><tr style="border-bottom:2px solid var(--border);background:var(--s2)">' +
+      '<th style="padding:10px 16px;font-size:11px;font-weight:700;color:var(--muted);text-align:left;white-space:nowrap">ACTION</th>' +
+      '<th style="padding:10px 16px;font-size:11px;font-weight:700;color:var(--muted);text-align:left">DETAILS</th>' +
+      '<th style="padding:10px 16px;font-size:11px;font-weight:700;color:var(--muted);text-align:left;white-space:nowrap">ENTITY</th>' +
+      '<th style="padding:10px 16px;font-size:11px;font-weight:700;color:var(--muted);text-align:left;white-space:nowrap">USER</th>' +
+      '<th style="padding:10px 16px;font-size:11px;font-weight:700;color:var(--muted);text-align:right;white-space:nowrap">TIME</th>' +
+    '</tr></thead><tbody>';
+
+  html += logs.map(function(l, i) {
+    var bg    = i % 2 === 0 ? 'var(--surface)' : 'var(--s2)';
+    var tCol  = typeColors[l.type] || 'var(--s2)';
+    var tText = typeText[l.type]   || 'var(--muted)';
+    var tIco  = typeIcons[l.type]  || '•';
+    return '<tr style="border-bottom:1px solid var(--border);background:'+bg+'">' +
+      '<td style="padding:10px 16px;white-space:nowrap">' +
+        '<div style="display:inline-flex;align-items:center;gap:6px;background:'+tCol+';color:'+tText+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700">' +
+          '<span>'+tIco+'</span><span>'+(l.action||'').toUpperCase()+'</span>' +
+        '</div>' +
+      '</td>' +
+      '<td style="padding:10px 16px;font-size:13px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(l.detail||'')+'">'+
+        (l.detail||'—')+
+      '</td>' +
+      '<td style="padding:10px 16px;font-size:12px;color:var(--muted);white-space:nowrap">'+
+        (l.entity||'—')+
+      '</td>' +
+      '<td style="padding:10px 16px;font-size:12px;font-weight:600;white-space:nowrap">'+
+        (l.user||'System')+
+      '</td>' +
+      '<td style="padding:10px 16px;font-size:11px;font-family:monospace;color:var(--muted);text-align:right;white-space:nowrap">'+
+        (l.time||'—')+
+      '</td>' +
+    '</tr>';
+  }).join('');
+
+  html += '</tbody></table>';
+  el.innerHTML = html;
 }
-function clearAudit() { if(confirm('Clear all audit logs?')){DB.auditLog=[];renderAudit();toast('Audit log cleared','success');} }
+
+function clearAudit() {
+  if (!confirm('Clear all local audit log entries? This cannot be undone.')) return;
+  DB.auditLog = [];
+  autosave('auditLog');
+  renderAudit();
+  toast('Audit log cleared', 'success');
+}
 
 // ════════════════════════════════════════════════════════
 // CHAT
