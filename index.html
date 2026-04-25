@@ -2838,7 +2838,51 @@ async function fetchAudit() {
     return { id:row.id, action:row.action, entity:row.entity||'', detail:row.detail||'',
              user:row.user_name||'System', time:new Date(row.created_at).toLocaleString(), type:(row.action||'').toLowerCase() };
   });
-  if (currentPage === 'audit') renderAudit();
+  // Only update the audit DOM — never call renderAudit() (avoids recursion)
+  if (currentPage === 'audit') _updateAuditDOM();
+}
+
+// ── Direct DOM update for audit — no filter logic, just rebuild table ──
+function _updateAuditDOM() {
+  var el = document.getElementById('audit-log');
+  if (!el) return;
+  var q  = (document.getElementById('audit-search')        || {value:''}).value.toLowerCase();
+  var tf = (document.getElementById('audit-type-filter')   || {value:''}).value.toLowerCase();
+  var ef = (document.getElementById('audit-entity-filter') || {value:''}).value.toLowerCase();
+  var logs = DB.auditLog.slice();
+  if (q)  logs = logs.filter(function(l){ return (l.detail+l.user+l.entity).toLowerCase().includes(q); });
+  if (tf) logs = logs.filter(function(l){ return (l.type||'').toLowerCase() === tf; });
+  if (ef) logs = logs.filter(function(l){ return (l.entity||'').toLowerCase().includes(ef); });
+  var typeColors = { create:'var(--gbg)', update:'var(--brand-l)', delete:'var(--rbg)', export:'var(--abg)' };
+  var typeText   = { create:'var(--green)', update:'var(--brand)', delete:'var(--red)', export:'var(--amber)' };
+  var typeIcons  = { create:'＋', update:'✎', delete:'✕', export:'↓', adjustment:'⚙' };
+  if (!logs.length) {
+    el.innerHTML = '<div class="empty-state" style="padding:40px 0"><div class="empty-icon">📋</div><div class="empty-title">No entries found</div><div class="empty-sub">Try adjusting your filters.</div></div>';
+    return;
+  }
+  var rows = logs.map(function(l, i) {
+    var bg   = i%2===0?'var(--surface)':'var(--s2)';
+    var tCol = typeColors[l.type]||'var(--s2)';
+    var tTxt = typeText[l.type]  ||'var(--muted)';
+    var tIco = typeIcons[l.type] ||'•';
+    return '<tr style="border-bottom:1px solid var(--border);background:'+bg+'">' +
+      '<td style="padding:10px 16px;white-space:nowrap">' +
+        '<div style="display:inline-flex;align-items:center;gap:6px;background:'+tCol+';color:'+tTxt+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700">'+tIco+' '+(l.action||'').toUpperCase()+'</div>' +
+      '</td>' +
+      '<td style="padding:10px 16px;font-size:13px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(l.detail||'')+'">'+( l.detail||'—')+'</td>' +
+      '<td style="padding:10px 16px;font-size:12px;color:var(--muted);white-space:nowrap">'+(l.entity||'—')+'</td>' +
+      '<td style="padding:10px 16px;font-size:12px;font-weight:600;white-space:nowrap">'+(l.user||'System')+'</td>' +
+      '<td style="padding:10px 16px;font-size:11px;font-family:monospace;color:var(--muted);text-align:right;white-space:nowrap">'+(l.time||'—')+'</td>' +
+    '</tr>';
+  }).join('');
+  el.innerHTML = '<table style="width:100%;border-collapse:collapse">' +
+    '<thead><tr style="border-bottom:2px solid var(--border);background:var(--s2)">' +
+      '<th style="padding:10px 16px;font-size:11px;font-weight:700;color:var(--muted);text-align:left">ACTION</th>' +
+      '<th style="padding:10px 16px;font-size:11px;font-weight:700;color:var(--muted);text-align:left">DETAILS</th>' +
+      '<th style="padding:10px 16px;font-size:11px;font-weight:700;color:var(--muted);text-align:left">ENTITY</th>' +
+      '<th style="padding:10px 16px;font-size:11px;font-weight:700;color:var(--muted);text-align:left">USER</th>' +
+      '<th style="padding:10px 16px;font-size:11px;font-weight:700;color:var(--muted);text-align:right">TIME</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table>';
 }
 
 // Full sync on login — parallel fetch of all collections
@@ -5153,68 +5197,9 @@ let auditSearchQ = '', auditActionFilter = '';
 function filterAudit(q) { auditSearchQ = q; renderAudit(); }
 function filterAuditAction(a) { auditActionFilter = a; renderAudit(); }
 function renderAudit() {
-  // Only fetch from server when navigating TO audit page (not on every render)
-  // fetchAudit() calls renderAudit() on completion — never call it from here
-
-  var q        = (document.getElementById('audit-search')        ? document.getElementById('audit-search').value.toLowerCase()        : '');
-  var tf       = (document.getElementById('audit-type-filter')   ? document.getElementById('audit-type-filter').value.toLowerCase()   : '');
-  var ef       = (document.getElementById('audit-entity-filter') ? document.getElementById('audit-entity-filter').value.toLowerCase() : '');
-
-  var logs = DB.auditLog.slice();
-  if (q)  logs = logs.filter(function(l){ return (l.detail||'').toLowerCase().includes(q) || (l.user||'').toLowerCase().includes(q) || (l.entity||'').toLowerCase().includes(q); });
-  if (tf) logs = logs.filter(function(l){ return (l.type||'').toLowerCase() === tf; });
-  if (ef) logs = logs.filter(function(l){ return (l.entity||'').toLowerCase().includes(ef); });
-
-  var typeColors = { create:'var(--gbg)', update:'var(--brand-l)', delete:'var(--rbg)', export:'var(--abg)', adjustment:'var(--abg)' };
-  var typeText   = { create:'var(--green)', update:'var(--brand)', delete:'var(--red)', export:'var(--amber)', adjustment:'var(--amber)' };
-  var typeIcons  = { create:'＋', update:'✎', delete:'✕', export:'↓', adjustment:'⚙' };
-
-  var el = document.getElementById('audit-log');
-  if (!el) return;
-
-  if (!logs.length) {
-    el.innerHTML = '<div class="empty-state" style="padding:40px 0"><div class="empty-icon">📋</div><div class="empty-title">No entries found</div><div class="empty-sub">Try adjusting your search or filters.</div></div>';
-    return;
-  }
-
-  // Table header
-  var html = '<table style="width:100%;border-collapse:collapse">' +
-    '<thead><tr style="border-bottom:2px solid var(--border);background:var(--s2)">' +
-      '<th style="padding:10px 16px;font-size:11px;font-weight:700;color:var(--muted);text-align:left;white-space:nowrap">ACTION</th>' +
-      '<th style="padding:10px 16px;font-size:11px;font-weight:700;color:var(--muted);text-align:left">DETAILS</th>' +
-      '<th style="padding:10px 16px;font-size:11px;font-weight:700;color:var(--muted);text-align:left;white-space:nowrap">ENTITY</th>' +
-      '<th style="padding:10px 16px;font-size:11px;font-weight:700;color:var(--muted);text-align:left;white-space:nowrap">USER</th>' +
-      '<th style="padding:10px 16px;font-size:11px;font-weight:700;color:var(--muted);text-align:right;white-space:nowrap">TIME</th>' +
-    '</tr></thead><tbody>';
-
-  html += logs.map(function(l, i) {
-    var bg    = i % 2 === 0 ? 'var(--surface)' : 'var(--s2)';
-    var tCol  = typeColors[l.type] || 'var(--s2)';
-    var tText = typeText[l.type]   || 'var(--muted)';
-    var tIco  = typeIcons[l.type]  || '•';
-    return '<tr style="border-bottom:1px solid var(--border);background:'+bg+'">' +
-      '<td style="padding:10px 16px;white-space:nowrap">' +
-        '<div style="display:inline-flex;align-items:center;gap:6px;background:'+tCol+';color:'+tText+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700">' +
-          '<span>'+tIco+'</span><span>'+(l.action||'').toUpperCase()+'</span>' +
-        '</div>' +
-      '</td>' +
-      '<td style="padding:10px 16px;font-size:13px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(l.detail||'')+'">'+
-        (l.detail||'—')+
-      '</td>' +
-      '<td style="padding:10px 16px;font-size:12px;color:var(--muted);white-space:nowrap">'+
-        (l.entity||'—')+
-      '</td>' +
-      '<td style="padding:10px 16px;font-size:12px;font-weight:600;white-space:nowrap">'+
-        (l.user||'System')+
-      '</td>' +
-      '<td style="padding:10px 16px;font-size:11px;font-family:monospace;color:var(--muted);text-align:right;white-space:nowrap">'+
-        (l.time||'—')+
-      '</td>' +
-    '</tr>';
-  }).join('');
-
-  html += '</tbody></table>';
-  el.innerHTML = html;
+  // Render local data immediately via shared DOM updater
+  // Comment kept for clarity: fetchAudit() must NOT call renderAudit()
+  _updateAuditDOM();
 }
 
 function clearAudit() {
