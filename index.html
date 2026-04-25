@@ -4280,7 +4280,27 @@ function confirmDelete(type, id) {
     }
     if (type==='expense') { DB.expenses=DB.expenses.filter(x=>x.id!==id); addAudit('DELETE','Expense',`Deleted ${name}`); renderAccounting(); }
     if (type==='job') { DB.jobs=DB.jobs.filter(x=>x.id!==id); addAudit('DELETE','Job Order',`Deleted ${name}`); renderJobs(); }
-    if (type==='document') { DB.documents=DB.documents.filter(x=>x.id!==id); addAudit('DELETE','Document',`Deleted ${name}`); renderDocs(); }
+    if (type==='document') {
+      var _delDoc = DB.documents.find(x=>x.id===id);
+      DB.documents = DB.documents.filter(x=>x.id!==id);
+      // Immediate save (no debounce) for deletes to prevent restore on reload
+      Store.set('rams:db:documents', DB.documents);
+      autosave('documents');
+      addAudit('DELETE','Document','Deleted '+name);
+      // Sync delete to server
+      var _docDbId = _delDoc ? (_delDoc._dbId || _delDoc.id) : id;
+      if (_docDbId && isUUID(_docDbId) && window._ramsSessionToken !== 'demo') {
+        apiFetch('/documents/' + _docDbId, { method: 'DELETE' })
+          .then(function(r){ if (!r.ok) console.warn('Doc delete sync failed:', r.error); });
+      }
+      renderDocs();
+      // Also refresh drawer docs tab if open
+      // Refresh drawer docs tab if open
+      if (currentDrawerApplicant) {
+        var _docsTab = document.querySelector('.dtab[onclick*="docs"]');
+        if (_docsTab) switchDrawerTab('docs', _docsTab);
+      }
+    }
     closeOverlay('overlay-confirm');
     toast(`${name} deleted`, 'success');
   };
@@ -5133,9 +5153,8 @@ let auditSearchQ = '', auditActionFilter = '';
 function filterAudit(q) { auditSearchQ = q; renderAudit(); }
 function filterAuditAction(a) { auditActionFilter = a; renderAudit(); }
 function renderAudit() {
-  // Pull fresh from server non-blocking
-  var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
-  if (isLive) fetchAudit().catch(function(){});
+  // Only fetch from server when navigating TO audit page (not on every render)
+  // fetchAudit() calls renderAudit() on completion — never call it from here
 
   var q        = (document.getElementById('audit-search')        ? document.getElementById('audit-search').value.toLowerCase()        : '');
   var tf       = (document.getElementById('audit-type-filter')   ? document.getElementById('audit-type-filter').value.toLowerCase()   : '');
