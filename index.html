@@ -2262,14 +2262,12 @@ button[disabled][data-rbac-locked] {
       <button class="dtab" onclick="switchDrawerTab('expenses',this)" role="tab" aria-selected="false">Expenses</button>
       <button class="dtab" onclick="switchDrawerTab('agent',this)" role="tab" aria-selected="false">Agent Account</button>
       <button class="dtab" onclick="switchDrawerTab('history',this)" role="tab" aria-selected="false">History</button>
-      <button class="dtab" onclick="switchDrawerTab('agent',this)" role="tab" aria-selected="false">👥 Agent</button>
     </div>
     <div class="dtab-panel active" id="dtab-overview"></div>
     <div class="dtab-panel" id="dtab-docs"></div>
     <div class="dtab-panel" id="dtab-expenses"></div>
     <div class="dtab-panel" id="dtab-agent"></div>
     <div class="dtab-panel" id="dtab-history"></div>
-    <div class="dtab-panel" id="dtab-agent"></div>
   </div>
 </aside>
 
@@ -3493,36 +3491,86 @@ function switchDrawerTab(tab, btn) {
   }
   if (tab === 'docs') {
     var _isViewerDoc = (typeof getCurrentRole === 'function') && getCurrentRole() === 'Viewer';
-    const docs = DB.documents.filter(d => d.applicant === app.name);
-    panel.innerHTML = docs.length ? `
-      <div style="display:flex;flex-direction:column;gap:8px">
-        ${docs.map(d=>`<div class="doc-card">
+    var _canEditDoc  = !_isViewerDoc;
+    var docs = DB.documents.filter(function(d){ return d.applicant === app.name; });
+    var docHeader = _canEditDoc ? `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div style="font-size:12px;font-weight:700;color:var(--muted)">${docs.length} document${docs.length!==1?'s':''}</div>
+        <button class="btn btn-p btn-sm" onclick="openUploadDoc('${app.name}')">📎 Upload Document</button>
+      </div>` : '';
+    var docList = docs.length ? docs.map(function(d){
+      return `<div class="doc-card" style="margin-bottom:8px">
           <div class="doc-icon" style="background:var(--brand-l);font-size:20px">📄</div>
-          <div style="flex:1"><div style="font-size:13px;font-weight:700">${d.name}</div><div style="font-size:11px;color:var(--muted)">${d.type} · ${d.size||''} · ${d.date}</div></div>
-          <div style="display:flex;gap:5px;align-items:center">
-              <span class="pill ${d.status==='Approved'?'pill-green':d.status==='Pending'?'pill-amber':'pill-red'}">${d.status}</span>
-              <button class="btn btn-ghost btn-xs" onclick="previewDoc('${d.id}')" title="Preview">👁 Preview</button>
-              ${_isViewerDoc ? '' : `<button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="confirmDelete('document','${d.id}')">🗑</button>`}
-            </div>
-        </div>`).join('')}
-      </div>
-    ` : `<div class="empty-state"><div class="empty-icon">📂</div><div class="empty-title">No Documents</div><div class="empty-sub">No documents uploaded for this applicant yet.</div>${_isViewerDoc ? '' : `<button class="btn btn-p btn-sm" onclick="openUploadDoc(app&&app.name)">Upload Document</button>`}</div>`;
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${d.name}</div>
+            <div style="font-size:11px;color:var(--muted)">${d.type||''} · ${d.size||''} · ${d.date||''}</div>
+          </div>
+          <div style="display:flex;gap:5px;align-items:center;flex-shrink:0">
+            <span class="pill ${d.status==='Approved'?'pill-green':d.status==='Pending'?'pill-amber':'pill-red'}">${d.status}</span>
+            <button class="btn btn-ghost btn-xs" onclick="previewDoc('${d.id}')" title="Preview">👁</button>
+            ${_canEditDoc ? `<button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="confirmDelete('document','${d.id}')">🗑</button>` : ''}
+          </div>
+        </div>`;
+    }).join('') : `<div style="text-align:center;padding:24px 0;color:var(--muted)">
+        <div style="font-size:32px;margin-bottom:8px">📂</div>
+        <div style="font-size:13px;font-weight:600">No documents yet</div>
+        ${_canEditDoc ? '<div style="font-size:12px;margin-top:8px;color:var(--muted)">Use the button above to upload</div>' : ''}
+      </div>`;
+    panel.innerHTML = docHeader + docList;
   }
   if (tab === 'expenses') {
-    const exps = DB.expenses.filter(e => e.applicant === app.name);
-    const total = exps.reduce((s,e) => s + e.amount, 0);
-    panel.innerHTML = exps.length ? `
-      <div style="background:var(--brand-l);border:1px solid #BFCFFF;border-radius:8px;padding:12px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
-        <span style="font-size:12px;color:var(--brand);font-weight:700">Total Expenses</span>
-        <span style="font-size:16px;font-weight:800;font-family:monospace;color:var(--brand)">₱${total.toLocaleString()}</span>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:6px">
-        ${exps.map(e=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--s2);border:1px solid var(--border);border-radius:7px">
-          <div><div style="font-size:12.5px;font-weight:700">${e.desc}</div><div style="font-size:11px;color:var(--muted)">${e.category} · ${e.date}</div></div>
-          <div style="text-align:right"><div style="font-size:13px;font-weight:800;font-family:monospace">₱${e.amount.toLocaleString()}</div><span class="pill ${e.status==='Paid'?'pill-green':'pill-amber'}">${e.status}</span></div>
-        </div>`).join('')}
-      </div>
-    ` : `<div class="empty-state"><div class="empty-icon">💸</div><div class="empty-title">No Expenses</div><div class="empty-sub">No expenses recorded for this applicant.</div><button class="btn btn-p btn-sm" onclick="openAddExpense(app&&app.name)">Record Expense</button></div>`;
+    var _canExp = getCurrentRole && !['Viewer'].includes(getCurrentRole());
+    var exps   = DB.expenses.filter(function(e){ return e.applicant === app.name; });
+    var total  = exps.reduce(function(s,e){ return s + (e.amount||0); }, 0);
+
+    // Pre-fill applicant name for the expense modal
+    function _openExpForApp() {
+      openAddExpense && openAddExpense();
+      setTimeout(function(){
+        var af = document.getElementById('exp-applicant');
+        if (af) { af.value = app.name; }
+      }, 50);
+    }
+
+    var header = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">' +
+      '<div>' +
+        '<div style="font-size:12px;font-weight:700;color:var(--muted)">' + exps.length + ' expense' + (exps.length!==1?'s':'') + '</div>' +
+        (total ? '<div style="font-size:18px;font-weight:800;color:var(--brand);font-family:monospace">₱' + total.toLocaleString() + '</div>' : '') +
+      '</div>' +
+      (_canExp ? '<button class="btn btn-p btn-sm" id="drawer-add-exp-btn">+ Record Expense</button>' : '') +
+    '</div>';
+
+    var body;
+    if (!exps.length) {
+      body = '<div style="text-align:center;padding:28px 0;color:var(--muted)">' +
+        '<div style="font-size:32px;margin-bottom:8px">💸</div>' +
+        '<div style="font-size:13px;font-weight:600">No expenses recorded</div>' +
+        (_canExp ? '<div style="font-size:12px;margin-top:6px">Click the button above to add one</div>' : '') +
+      '</div>';
+    } else {
+      body = '<div style="display:flex;flex-direction:column;gap:6px">' +
+        exps.map(function(e){
+          return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--s2);border:1px solid var(--border);border-radius:8px">' +
+            '<div style="min-width:0;flex:1">' +
+              '<div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (e.desc||'Expense') + '</div>' +
+              '<div style="font-size:11px;color:var(--muted)">' + (e.date||'') + ' · ' + (e.category||'') + '</div>' +
+            '</div>' +
+            '<div style="display:flex;align-items:center;gap:8px;flex-shrink:0">' +
+              '<span class="pill ' + (e.status==='Paid'?'pill-green':'pill-amber') + '">' + (e.status||'Pending') + '</span>' +
+              '<span style="font-size:13px;font-weight:800;font-family:monospace">₱' + (e.amount||0).toLocaleString() + '</span>' +
+              (_canExp ? '<button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="confirmDelete(&quot;expense&quot;,&quot;' + e.id + '&quot;)">🗑</button>' : '') +
+            '</div>' +
+          '</div>';
+        }).join('') +
+      '</div>';
+    }
+
+    panel.innerHTML = header + body;
+    // Wire Add Expense button to pre-fill applicant name
+    setTimeout(function() {
+      var addBtn = document.getElementById('drawer-add-exp-btn');
+      if (addBtn) addBtn.onclick = _openExpForApp;
+    }, 10);
   }
   if (tab === 'agent') {
     panel.innerHTML = (typeof renderDrawerAgentPanel === 'function')
