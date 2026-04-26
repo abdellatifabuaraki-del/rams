@@ -40,7 +40,7 @@ a{text-decoration:none;color:inherit;}
 .content{flex:1;overflow-y:auto;background:var(--bg);}
 .content-pad{padding:24px 26px;}
 .page{display:none;animation:fadeUp .2s ease;}
-.page.active{display:block;}
+.page.active{display:block;}#page-chat.active{display:flex;}
 #page-pipeline.active{display:flex !important;flex-direction:column;}
 
 @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
@@ -1756,7 +1756,7 @@ button[disabled][data-rbac-locked] {
     <!-- ══════════════════════════════════════
          CHAT
     ══════════════════════════════════════ -->
-    <div class="page" id="page-chat" style="display:flex;flex-direction:column;height:calc(100vh - 56px);overflow:hidden;padding:0;position:relative">
+    <div class="page" id="page-chat" style="flex-direction:column;height:calc(100vh - 56px);overflow:hidden;padding:0;position:relative">
 
       <!-- Chat Layout -->
       <div style="display:flex;flex:1;overflow:hidden">
