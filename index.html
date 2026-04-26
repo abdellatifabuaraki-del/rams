@@ -3201,7 +3201,7 @@ const DB = {
   jobs:          [],
   auditLog:      [],
   notifications: [],
-  chatMessages:  [],
+  chatMessages:  { __rooms: [], __dms: [], __messages: {} },
   integrations: [
     {id:'INT-001',name:'POEA Online',desc:'Philippine Overseas Employment Administration portal sync',icon:'🏛️',connected:false,category:'Government'},
     {id:'INT-002',name:'BancNet',desc:'Payment processing for applicant fees and disbursements',icon:'💳',connected:false,category:'Finance'},
@@ -3310,8 +3310,19 @@ async function loadDB() {
   let loaded = false;
   for (const k of DB_KEYS) {
     const data = await Store.get('rams:db:' + k);
-    if (data && Array.isArray(data) && data.length > 0) {
-      // Filter out permanently deleted documents
+    if (data === null || data === undefined) continue;
+    if (k === 'chatMessages') {
+      // chatMessages is an object, not an array
+      if (data && typeof data === 'object' && !Array.isArray(data)) {
+        DB.chatMessages = data;
+        if (!DB.chatMessages.__rooms)    DB.chatMessages.__rooms    = [];
+        if (!DB.chatMessages.__dms)      DB.chatMessages.__dms      = [];
+        if (!DB.chatMessages.__messages) DB.chatMessages.__messages = {};
+        loaded = true;
+      }
+      continue;
+    }
+    if (Array.isArray(data) && data.length > 0) {
       if (k === 'documents' && window._deletedDocumentIds && window._deletedDocumentIds.size > 0) {
         DB[k] = data.filter(function(d){ return !window._deletedDocumentIds.has(d.id); });
       } else {
@@ -5366,7 +5377,7 @@ function getViewerAllowedRooms() {
   var u = getCurrentUser();
   if (!u || !u.email) return [];
   // Viewer gets: general room always + any rooms assigned via viewerScopes
-  var allowedRoomIds = new Set(['room-general']);
+  var allowedRoomIds = new Set(['general']);
   // Add rooms explicitly assigned (stored in viewerScopes[email].chatRooms)
   var chatRooms = viewerScopes[(u.email||'').toLowerCase() + ':chatRooms'];
   if (Array.isArray(chatRooms)) {
@@ -5418,11 +5429,14 @@ async function _fetchChatMessages(roomId) {
 
 function saveChatRooms(rooms) {
   DB.chatMessages.__rooms = rooms;
+  // Immediately persist so new channels survive refresh
+  Store.set('rams:db:chatMessages', DB.chatMessages).catch(function(){});
   autosave('chatMessages');
 }
 
 function saveChatDMs(dms) {
   DB.chatMessages.__dms = dms;
+  Store.set('rams:db:chatMessages', DB.chatMessages).catch(function(){});
   autosave('chatMessages');
 }
 
@@ -5495,10 +5509,14 @@ function renderChatRooms() {
 
 function selectChatRoom(roomId) {
   _currentRoomId = roomId;
-  // Clear unread
-  var rooms = getChatRooms();
-  var room  = rooms.find(function(r){ return r.id === roomId; });
-  if (room) { room.unread = 0; saveChatRooms(rooms.filter(function(r){ return !_defaultRooms.find(function(d){ return d.id === r.id; }); })); }
+  // Clear unread on default rooms (in-memory)
+  var defRoom = _defaultRooms.find(function(r){ return r.id === roomId; });
+  if (defRoom) defRoom.unread = 0;
+  // Clear unread on custom rooms (persisted)
+  if (DB.chatMessages.__rooms) {
+    var customRoom = DB.chatMessages.__rooms.find(function(r){ return r.id === roomId; });
+    if (customRoom) { customRoom.unread = 0; autosave('chatMessages'); }
+  }
   renderChatRooms();
   renderChatMessages();
 }
@@ -5831,8 +5849,9 @@ function createChatRoom() {
   var roomId = 'room-' + name.replace(/[^a-z0-9]/g,'-');
   var existing = getChatRooms().find(function(r){ return r.name === name; });
   if (existing) { toast('Channel already exists', 'error'); return; }
-  var customRooms = DB.chatMessages.__rooms || [];
-  customRooms.push({ id: roomId, name: name, desc: desc, type: type, icon: type==='private'?'🔒':'#', unread: 0 });
+  if (!DB.chatMessages.__rooms) DB.chatMessages.__rooms = [];
+  var customRooms = DB.chatMessages.__rooms;
+  customRooms.push({ id: roomId, name: name, desc: desc, type: type, icon: type==='private'?'🔒':'#', unread: 0, members: [] });
   saveChatRooms(customRooms);
   closeOverlay('overlay-new-room');
   selectChatRoom(roomId);
