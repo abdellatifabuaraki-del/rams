@@ -1756,7 +1756,7 @@ button[disabled][data-rbac-locked] {
     <!-- ══════════════════════════════════════
          CHAT
     ══════════════════════════════════════ -->
-    <div class="page" id="page-chat" style="display:flex;flex-direction:column;height:calc(100vh - 56px);overflow:hidden;padding:0">
+    <div class="page" id="page-chat" style="display:flex;flex-direction:column;height:calc(100vh - 56px);overflow:hidden;padding:0;position:relative">
 
       <!-- Chat Layout -->
       <div style="display:flex;flex:1;overflow:hidden">
@@ -1817,11 +1817,10 @@ button[disabled][data-rbac-locked] {
           <!-- Typing indicator -->
           <div id="chat-typing" style="height:18px;padding:0 16px;font-size:11px;color:var(--muted);font-style:italic;flex-shrink:0"></div>
 
-          <!-- @mention autocomplete -->
-          <div id="chat-mention-popup" style="display:none;position:absolute;bottom:80px;left:260px;right:0;background:var(--surface);border:1.5px solid var(--border);border-radius:10px;box-shadow:var(--md);max-height:200px;overflow-y:auto;z-index:200;margin:0 16px"></div>
-
           <!-- Input area -->
-          <div style="border-top:1px solid var(--border);padding:10px 14px;flex-shrink:0;background:var(--surface)">
+          <div style="border-top:1px solid var(--border);padding:10px 14px;flex-shrink:0;background:var(--surface);position:relative">
+            <!-- @mention autocomplete — inside input area for correct positioning -->
+            <div id="chat-mention-popup" style="display:none;position:absolute;bottom:100%;left:14px;right:14px;background:var(--surface);border:1.5px solid var(--border);border-radius:10px;box-shadow:var(--md);max-height:200px;overflow-y:auto;z-index:200;margin-bottom:4px"></div>
             <!-- Attachment preview -->
             <div id="chat-attachment-preview" style="display:none;margin-bottom:8px;padding:8px 10px;background:var(--s2);border-radius:8px;border:1px solid var(--border);display:flex;align-items:center;gap:8px">
               <span id="chat-attach-icon" style="font-size:20px">📎</span>
@@ -5888,16 +5887,120 @@ function toggleChatSearch() {
 function filterChatMessages() { renderChatMessages(); }
 
 // ── Members list ──────────────────────────────────────────────────────
-function openChatMembers() {
-  var members = DB.users.slice(0, 8);
-  var html = members.map(function(u){
-    var av = (u.name||'?').split(' ').map(function(n){return n[0];}).join('').toUpperCase().slice(0,2);
-    return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">' +
-      '<div style="width:28px;height:28px;border-radius:50%;background:'+stringToColor(u.name)+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700">'+av+'</div>' +
-      '<div><div style="font-size:12px;font-weight:700">'+u.name+'</div><div style="font-size:11px;color:var(--muted)">'+u.role+'</div></div>' +
+function _getChannelMembers(roomId) {
+  // Members are stored per-room in chatMessages
+  var room = getChatRooms().concat(getChatDMs()).find(function(r){ return r.id === roomId; });
+  if (!room) return [];
+  return room.members || [];
+}
+
+function _saveChannelMembers(roomId, memberNames) {
+  var customRooms = DB.chatMessages.__rooms || [];
+  var room = customRooms.find(function(r){ return r.id === roomId; });
+  if (room) {
+    room.members = memberNames;
+    saveChatRooms(customRooms.filter(function(r){ return !_defaultRooms.find(function(d){ return d.id === r.id; }); }));
+  }
+  // Also update default rooms in memory
+  var defRoom = _defaultRooms.find(function(r){ return r.id === roomId; });
+  if (defRoom) defRoom.members = memberNames;
+}
+
+function renderChatMembersCurrent() {
+  var el = document.getElementById('chat-members-current');
+  if (!el) return;
+  var members = _getChannelMembers(_currentRoomId);
+  var canEdit = getCurrentRole() === 'Admin' || getCurrentRole() === 'Manager';
+  if (!members.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:8px 0">All users can access this channel</div>';
+    return;
+  }
+  el.innerHTML = members.map(function(name) {
+    var u   = DB.users.find(function(u){ return u.name === name; }) || { name: name, role: '' };
+    var av  = (u.name||'?').split(' ').map(function(n){ return n[0]; }).join('').toUpperCase().slice(0,2);
+    var col = stringToColor(u.name);
+    return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">' +
+      '<div style="width:32px;height:32px;border-radius:50%;background:'+col+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">'+av+'</div>' +
+      '<div style="flex:1"><div style="font-size:13px;font-weight:600">'+u.name+'</div><div style="font-size:11px;color:var(--muted)">'+( u.role||'')+'</div></div>' +
+      (canEdit ? '<button data-remove-member="'+name+'" style="background:none;border:1px solid var(--red);color:var(--red);border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer">Remove</button>' : '') +
     '</div>';
   }).join('');
-  toast('Members in this channel: ' + members.length, 'info');
+  // Wire remove buttons
+  el.querySelectorAll('[data-remove-member]').forEach(function(btn) {
+    btn.onclick = function() {
+      var name = btn.getAttribute('data-remove-member');
+      var members = _getChannelMembers(_currentRoomId).filter(function(m){ return m !== name; });
+      _saveChannelMembers(_currentRoomId, members);
+      addAudit('UPDATE', 'Chat', 'Removed '+name+' from #'+_currentRoomId);
+      renderChatMembersCurrent();
+      renderChatMembersSearch();
+      toast(name + ' removed from channel', 'success');
+    };
+  });
+}
+
+function renderChatMembersSearch() {
+  var el  = document.getElementById('chat-members-search-results');
+  var inp = document.getElementById('chat-members-search');
+  if (!el || !inp) return;
+  var q       = inp.value.toLowerCase();
+  var current = new Set(_getChannelMembers(_currentRoomId));
+  var me      = (window._ramsSessionUser && window._ramsSessionUser.name) || '';
+  var users   = DB.users.filter(function(u){
+    return !current.has(u.name) && u.name !== me &&
+           (!q || u.name.toLowerCase().includes(q) || (u.role||'').toLowerCase().includes(q));
+  }).slice(0, 8);
+  if (!users.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--muted);text-align:center;padding:12px">'+
+      (q ? 'No users match "'+q+'"' : 'All users already in channel') + '</div>';
+    return;
+  }
+  el.innerHTML = users.map(function(u) {
+    var av  = (u.name||'?').split(' ').map(function(n){ return n[0]; }).join('').toUpperCase().slice(0,2);
+    var col = stringToColor(u.name);
+    return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">' +
+      '<div style="width:32px;height:32px;border-radius:50%;background:'+col+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">'+av+'</div>' +
+      '<div style="flex:1"><div style="font-size:13px;font-weight:600">'+u.name+'</div><div style="font-size:11px;color:var(--muted)">'+(u.role||'')+'</div></div>' +
+      '<button data-add-member="'+u.name+'" style="background:var(--brand-l);border:1px solid var(--brand);color:var(--brand);border-radius:6px;padding:3px 10px;font-size:11px;font-weight:600;cursor:pointer">+ Add</button>' +
+    '</div>';
+  }).join('');
+  el.querySelectorAll('[data-add-member]').forEach(function(btn) {
+    btn.onclick = function() {
+      var name = btn.getAttribute('data-add-member');
+      var members = _getChannelMembers(_currentRoomId);
+      if (!members.includes(name)) {
+        members.push(name);
+        _saveChannelMembers(_currentRoomId, members);
+        addAudit('UPDATE', 'Chat', 'Added '+name+' to #'+_currentRoomId);
+        renderChatMembersCurrent();
+        renderChatMembersSearch();
+        toast(name + ' added to channel ✓', 'success');
+      }
+    };
+  });
+}
+
+function openChatMembers() {
+  var allRooms = getChatRooms().concat(getChatDMs());
+  var room = allRooms.find(function(r){ return r.id === _currentRoomId; });
+  if (!room) { toast('Select a channel first', 'error'); return; }
+
+  var title = document.getElementById('chat-members-title');
+  var sub   = document.getElementById('chat-members-sub');
+  if (title) title.textContent = (room.icon || '#') + ' ' + room.name + ' — Members';
+  if (sub)   sub.textContent   = (room.desc || 'Manage who can access this channel');
+
+  // Hide add section for DMs
+  var addSec = document.getElementById('chat-members-add-section');
+  if (addSec) addSec.style.display = room.type === 'dm' ? 'none' : 'block';
+
+  // Clear search
+  var inp = document.getElementById('chat-members-search');
+  if (inp) inp.value = '';
+
+  renderChatMembersCurrent();
+  renderChatMembersSearch();
+  openOverlay('overlay-chat-members');
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -10540,5 +10643,35 @@ function stopChatPoll() {
     </div>
   </div>
 </div>
+
+<!-- Chat Members Modal -->
+<div class="overlay" id="overlay-chat-members" onclick="closeOverlayIfBg(event,'overlay-chat-members')">
+  <div class="modal" style="max-width:460px;max-height:80vh;display:flex;flex-direction:column">
+    <div class="modal-hdr">
+      <div>
+        <h2 id="chat-members-title">Channel Members</h2>
+        <p id="chat-members-sub" style="font-size:12px;color:var(--muted)"></p>
+      </div>
+      <button class="close-btn" onclick="closeOverlay('overlay-chat-members')">✕</button>
+    </div>
+    <div class="modal-body" style="flex:1;overflow-y:auto;padding:0">
+      <!-- Current members -->
+      <div style="padding:14px 16px;border-bottom:1px solid var(--border)">
+        <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.07em;margin-bottom:10px">CURRENT MEMBERS</div>
+        <div id="chat-members-current"></div>
+      </div>
+      <!-- Add members -->
+      <div id="chat-members-add-section" style="padding:14px 16px">
+        <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.07em;margin-bottom:10px">ADD MEMBERS</div>
+        <input type="text" id="chat-members-search" placeholder="Search users to add…" oninput="renderChatMembersSearch()" style="width:100%;padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--s2);color:var(--text);outline:none;box-sizing:border-box;margin-bottom:10px">
+        <div id="chat-members-search-results"></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeOverlay('overlay-chat-members')">Done</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
