@@ -7450,17 +7450,32 @@ function renderCommissions() {
   // Commission history table
   var tbody = document.getElementById('commission-tbody');
   if (tbody) {
+    var trancheColors = { 1:'var(--teal)', 2:'var(--amber)', 3:'var(--brand)' };
     tbody.innerHTML = DB.commissions.map(function(c) {
-      var agent = DB.agents.find(function(a){ return a.id===c.agentId; });
+      var agent      = DB.agents.find(function(a){ return a.id===c.agentId; });
+      var tColor     = trancheColors[c.tranche] || 'var(--muted)';
+      var tLabel     = c.trancheLabel || (c.tranche ? 'Tranche '+c.tranche : 'Commission');
+      var statusPill = c.status === 'Pending Release'
+        ? '<span style="background:var(--abg);color:var(--amber);border-radius:99px;padding:2px 8px;font-size:11px;font-weight:700">⏳ Pending</span>'
+        : c.status === 'Released'
+        ? '<span style="background:var(--gbg);color:var(--green);border-radius:99px;padding:2px 8px;font-size:11px;font-weight:700">✓ Released</span>'
+        : c.status === 'Reversed'
+        ? '<span style="background:var(--rbg);color:var(--red);border-radius:99px;padding:2px 8px;font-size:11px;font-weight:700">✕ Reversed</span>'
+        : pillHtml(c.status);
       return '<tr>'+
-        '<td style="font-size:11.5px;font-family:\'IBM Plex Mono\',monospace;color:var(--muted)">'+c.deployDate+'</td>'+
-        '<td style="font-weight:600">'+(agent?agent.name:'—')+'</td>'+
-        '<td>'+c.applicantName+'</td>'+
-        '<td style="font-size:12.5px">'+c.country+'</td>'+
-        '<td style="text-align:right;font-weight:800;font-family:\'IBM Plex Mono\',monospace">₱'+c.amount.toLocaleString()+'<div style="font-size:10px;color:var(--muted);font-weight:400">≈ $'+Math.round(c.amount/56).toLocaleString()+' USD</div></td>'+
-        '<td>'+pillHtml(c.status)+'</td>'+
-        '<td style="text-align:right;white-space:nowrap">'+
-          (c.status==='In Guarantee'?'<button class="btn btn-sm" style="font-size:11px;background:var(--gbg);color:var(--green);border:1px solid #86efac" onclick="releaseCommission(\''+c.id+'\')">Release</button> ':'')+
+        '<td style="font-size:11px;font-family:monospace;color:var(--muted);padding:10px 12px">'+c.id+'</td>'+
+        '<td style="font-weight:700;padding:10px 12px">'+(agent?agent.name:'—')+'</td>'+
+        '<td style="padding:10px 12px">'+c.applicantName+'</td>'+
+        '<td style="padding:10px 12px">'+
+          '<span style="background:'+tColor+'22;color:'+tColor+';border-radius:99px;padding:2px 8px;font-size:11px;font-weight:700">'+tLabel+'</span>'+
+        '</td>'+
+        '<td style="text-align:right;font-weight:800;font-family:monospace;padding:10px 12px">₱'+c.amount.toLocaleString()+
+          (c.totalCommission?'<div style="font-size:10px;color:var(--muted);font-weight:400">of ₱'+c.totalCommission.toLocaleString()+' total</div>':'')+'</td>'+
+        '<td style="padding:10px 12px">'+statusPill+'</td>'+
+        '<td style="font-size:11px;color:var(--muted);padding:10px 12px">'+(c.triggerDate||c.deployDate||'')+'</td>'+
+        '<td style="font-size:11px;color:var(--muted);padding:10px 12px">'+(c.triggerStatus||'')+'</td>'+
+        '<td style="text-align:right;white-space:nowrap;padding:10px 12px">'+
+          (c.status==='Pending Release'?'<button class="btn btn-sm" style="font-size:11px;background:var(--gbg);color:var(--green);border:1px solid #86efac" onclick="releaseCommission(\''+c.id+'\')">Release</button> ':'')+
           (c.status==='Released'?'<button class="btn btn-sm" style="font-size:11px;background:var(--rbg);color:var(--red);border:1px solid #fca5a5" onclick="reverseCommission(\''+c.id+'\')">Reverse</button>':'')+
         '</td>'+
       '</tr>';
@@ -7483,7 +7498,10 @@ function saveCommissionRates() {
 function releaseCommission(commId) {
   var c = DB.commissions.find(function(x){ return x.id===commId; });
   if (!c) return;
-  if (!confirm('Release commission of ₱'+c.amount.toLocaleString()+' for '+c.applicantName+'?')) return;
+  if (!confirm('Release '+( c.trancheLabel||'commission')+' of ₱'+c.amount.toLocaleString()+' for '+c.applicantName+'?')) return;
+  if (c.status !== 'Pending Release' && c.status !== 'In Guarantee') {
+    toast('This commission cannot be released (status: '+c.status+')', 'error'); return;
+  }
   c.status = 'Released';
   c.releaseDate = new Date().toISOString().split('T')[0];
   var agent = DB.agents.find(function(a){ return a.id===c.agentId; });
@@ -7792,31 +7810,127 @@ function onApplicantStatusChange(applicantId, newStatus, oldStatus) {
     }
   }
 
-  // ── 3. DEPLOYED → create commission record ───────────────────────
-  if (newStatus === 'Deployed' && oldStatus !== 'Deployed') {
+  // ── 3. Commission helper — resolve country rule + total commission ──
+  function _resolveCommission() {
     var country = app.job ? app.job.split('·').pop().trim() : '';
-    var rule    = DB.countryRules.find(function(r) { return r.country === country && r.active; })
-               || DB.countryRules.find(function(r) { return r.active; });
-    var commAmt = rule ? rule.commissionAmt : (agent ? (agent.commissionAmt || 15000) : 15000);
+    var rule    = DB.countryRules.find(function(r){ return r.country === country && r.active; })
+               || DB.countryRules.find(function(r){ return r.active; });
+    var total   = rule ? rule.commissionAmt : (agent ? (agent.commissionAmt || 15000) : 15000);
+    return { country: country || 'Philippines', rule: rule, total: total };
+  }
 
-    var gEnd = new Date();
-    gEnd.setMonth(gEnd.getMonth() + (rule ? rule.guaranteePeriod : 6));
-
+  // ── MEDICAL → 20% of total commission (Tranche 1) ────────────────
+  if (newStatus === 'Medical' && oldStatus !== 'Medical' && agent) {
+    var _mc = _resolveCommission();
+    var tranche1 = Math.round(_mc.total * 0.20);
     DB.commissions.push({
       id:            'COM-' + String(DB.commissions.length + 1).padStart(3, '0'),
-      agentId:       agent ? agent.id : null,
+      agentId:       agent.id,
       applicantId:   applicantId,
       applicantName: app.name,
-      country:       country || 'Philippines',
-      amount:        commAmt,
-      status:        'In Guarantee',
-      deployDate:    new Date().toISOString().split('T')[0],
-      guaranteeEnd:  gEnd.toISOString().split('T')[0],
+      country:       _mc.country,
+      amount:        tranche1,
+      totalCommission: _mc.total,
+      tranche:       1,
+      trancheLabel:  'Medical (20%)',
+      status:        'Pending Release',
+      triggerStatus: 'Medical',
+      triggerDate:   new Date().toISOString().split('T')[0],
       releaseDate:   null,
     });
+    addAudit('CREATE', 'Commission',
+      'Tranche 1 (20%) — ₱' + tranche1.toLocaleString() + ' pending release for ' + app.name + ' — Medical cleared');
+    toast('Commission Tranche 1: ₱' + tranche1.toLocaleString() + ' (20%) pending release for ' + agent.name, 'info');
+    autosave('commissions');
+  }
 
+  // ── OWWA / PROCESSING → 20% of total commission (Tranche 2) ──────
+  if ((newStatus === 'OWWA' || newStatus === 'Processing') &&
+      (oldStatus !== 'OWWA' && oldStatus !== 'Processing') && agent) {
+    // Only create tranche 2 if tranche 1 already exists for this applicant
+    var _oc = _resolveCommission();
+    var tranche2 = Math.round(_oc.total * 0.20);
+    // Check tranche 1 exists (may have been skipped if status jumped)
+    var t1Exists = DB.commissions.some(function(c){
+      return c.applicantId === applicantId && c.tranche === 1;
+    });
+    if (!t1Exists) {
+      // Auto-create tranche 1 if it was missed
+      DB.commissions.push({
+        id:            'COM-' + String(DB.commissions.length + 1).padStart(3, '0'),
+        agentId:       agent.id, applicantId: applicantId, applicantName: app.name,
+        country:       _oc.country, amount:  Math.round(_oc.total * 0.20), totalCommission: _oc.total,
+        tranche: 1, trancheLabel: 'Medical (20%) — auto-created', status: 'Pending Release',
+        triggerStatus: 'Medical', triggerDate: new Date().toISOString().split('T')[0], releaseDate: null,
+      });
+    }
+    DB.commissions.push({
+      id:            'COM-' + String(DB.commissions.length + 1).padStart(3, '0'),
+      agentId:       agent.id,
+      applicantId:   applicantId,
+      applicantName: app.name,
+      country:       _oc.country,
+      amount:        tranche2,
+      totalCommission: _oc.total,
+      tranche:       2,
+      trancheLabel:  newStatus + ' (20%)',
+      status:        'Pending Release',
+      triggerStatus: newStatus,
+      triggerDate:   new Date().toISOString().split('T')[0],
+      releaseDate:   null,
+    });
+    addAudit('CREATE', 'Commission',
+      'Tranche 2 (20%) — ₱' + tranche2.toLocaleString() + ' pending release for ' + app.name + ' — ' + newStatus);
+    toast('Commission Tranche 2: ₱' + tranche2.toLocaleString() + ' (20%) pending release for ' + agent.name, 'info');
+    autosave('commissions');
+  }
+
+  // ── DEPLOYED → 60% remaining commission (Tranche 3) ─────────────
+  if (newStatus === 'Deployed' && oldStatus !== 'Deployed') {
+    var _dc = _resolveCommission();
+    var tranche3 = Math.round(_dc.total * 0.60);
+
+    // Ensure tranches 1 and 2 exist (auto-create if statuses were skipped)
+    var existTranches = DB.commissions.filter(function(c){ return c.applicantId === applicantId; });
+    if (!existTranches.some(function(c){ return c.tranche === 1; }) && agent) {
+      DB.commissions.push({
+        id: 'COM-' + String(DB.commissions.length + 1).padStart(3, '0'),
+        agentId: agent.id, applicantId: applicantId, applicantName: app.name, country: _dc.country,
+        amount: Math.round(_dc.total * 0.20), totalCommission: _dc.total, tranche: 1,
+        trancheLabel: 'Medical (20%) — auto-created', status: 'Pending Release',
+        triggerStatus: 'Medical', triggerDate: new Date().toISOString().split('T')[0], releaseDate: null,
+      });
+    }
+    if (!existTranches.some(function(c){ return c.tranche === 2; }) && agent) {
+      DB.commissions.push({
+        id: 'COM-' + String(DB.commissions.length + 1).padStart(3, '0'),
+        agentId: agent.id, applicantId: applicantId, applicantName: app.name, country: _dc.country,
+        amount: Math.round(_dc.total * 0.20), totalCommission: _dc.total, tranche: 2,
+        trancheLabel: 'Processing (20%) — auto-created', status: 'Pending Release',
+        triggerStatus: 'Processing', triggerDate: new Date().toISOString().split('T')[0], releaseDate: null,
+      });
+    }
     if (agent) {
+      DB.commissions.push({
+        id:            'COM-' + String(DB.commissions.length + 1).padStart(3, '0'),
+        agentId:       agent.id,
+        applicantId:   applicantId,
+        applicantName: app.name,
+        country:       _dc.country,
+        amount:        tranche3,
+        totalCommission: _dc.total,
+        tranche:       3,
+        trancheLabel:  'Deployment (60%)',
+        status:        'Pending Release',
+        triggerStatus: 'Deployed',
+        triggerDate:   new Date().toISOString().split('T')[0],
+        releaseDate:   null,
+      });
       agent.totalDeployed = (agent.totalDeployed || 0) + 1;
+      addAudit('CREATE', 'Commission',
+        'Tranche 3 (60%) — ₱' + tranche3.toLocaleString() + ' pending release for ' + app.name + ' — Deployed');
+      toast('Commission Tranche 3: ₱' + tranche3.toLocaleString() + ' (60%) pending release for ' + agent.name, 'info');
+      autosave('commissions');
     }
 
     // ── Consume one slot from linked job order ────────────────────────
