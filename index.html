@@ -2627,7 +2627,7 @@ function mapApplicant(row) {
     displayId:   row.display_id || '',
     name:        (row.first_name || '') + ' ' + (row.last_name || ''),
     status:      row.status || 'Applied',
-    agent:       row.agent_name != null ? row.agent_name : undefined,
+    agent:       row.agent_name || '',   // '' = no agent; server is authoritative
     _agentId:    row.agent_uuid  || row.agent_id || '',
     _agentDbId:  row.agent_id    || row.agent_uuid || '',
     contact:     row.phone || '',
@@ -2893,21 +2893,18 @@ async function fetchApplicants() {
   // Filter permanently deleted
   var _deleted = window._deletedApplicantIds || new Set();
   fresh = fresh.filter(function(a){ return !_deleted.has(a.id) && !_deleted.has(a._dbId); });
-  // Preserve local agent/passport/gender if server returned empty
-  var _savedAgents = window._agentAssignments || {};
+  // Server (PostgreSQL JOIN) is authoritative for agent_id/agent_name and job_order_id.
+  // Only preserve NON-server fields (passport, gender) that aren't in backend yet.
   fresh.forEach(function(a) {
-    var _savedName = _savedAgents[a.id];
-    if (!a.agent && _savedName) {
-      var _stillExists = DB.agents.find(function(ag){ return ag.name === _savedName; });
-      if (_stillExists) a.agent = _savedName;
-    }
     var local = DB.applicants.find(function(x){ return x.id === a.id || x._dbId === a.id; });
     if (local) {
-      if (a.agent === undefined && local.agent) a.agent      = local.agent;
-      if (!a._agentDbId  && local._agentDbId)  a._agentDbId  = local._agentDbId;
+      // Passport/gender may not be in backend schema for all deployments — preserve local
+      if (!a.passport && local.passport) a.passport = local.passport;
+      if (!a.gender   && local.gender)   a.gender   = local.gender;
+      // Job order: prefer server if set, fall back to local only if server has none
       if (!a._jobOrderId && local._jobOrderId) a._jobOrderId = local._jobOrderId;
-      if (!a.passport    && local.passport)    a.passport    = local.passport;
-      if (!a.gender      && local.gender)      a.gender      = local.gender;
+      // Agent: ALWAYS trust server (agent_name comes from JOIN on agent_id in PostgreSQL)
+      // Do NOT override server's null/empty agent with a stale local value
     }
   });
   // Detect changes by another user
@@ -2919,12 +2916,14 @@ async function fetchApplicants() {
   applyDisplayIds();
   filteredApps = [...getScopedApplicants()];
   autosave('applicants');
-  // Broadcast fresh applicants to shared Store so other users get updates faster
   Store.set('rams:shared:applicants:ts', String(Date.now()), true).catch(function(){});
   if (changed.length) _showSyncBadge(changed.length + ' applicant' + (changed.length > 1 ? 's' : '') + ' updated by another user');
+  // Render the current page with fresh data
   if (currentPage === 'applicants') renderApplicants();
-  if (currentPage === 'pipeline')   renderKanban();
-  if (currentPage === 'dashboard')  renderDashboard();
+  else if (currentPage === 'pipeline')  renderKanban();
+  else if (currentPage === 'dashboard') renderDashboard();
+  else if (currentPage === 'documents') renderDocs();
+  else if (currentPage === 'analytics') renderAnalytics();
 }
 
 async function fetchJobs() {
@@ -2955,7 +2954,11 @@ async function fetchExpenses() {
   });
   DB.expenses = fresh;
   autosave('expenses');
-  if (currentPage === 'accounting' && typeof renderExpensesTab === 'function') renderExpensesTab();
+  if (currentPage === 'accounting') {
+    if (typeof renderAccounting === 'function') renderAccounting();
+    if (typeof renderExpensesTab === 'function') renderExpensesTab();
+  }
+  if (currentPage === 'dashboard') renderDashboard();
 }
 
 async function fetchUsers() {
@@ -3044,11 +3047,11 @@ async function syncAllFromAPI() {
     _freshApps.forEach(function(a) {
       var local = DB.applicants.find(function(x){ return x.id === a.id; });
       if (local) {
-        if (!a.agent      && local.agent)      a.agent      = local.agent;
-        if (!a._agentDbId && local._agentDbId) a._agentDbId = local._agentDbId;
-        if (!a._jobOrderId&& local._jobOrderId)a._jobOrderId= local._jobOrderId;
-        if (!a.passport   && local.passport)   a.passport   = local.passport;
-        if (!a.gender     && local.gender)     a.gender     = local.gender;
+        // Only preserve non-server fields
+        if (!a.passport    && local.passport)    a.passport    = local.passport;
+        if (!a.gender      && local.gender)      a.gender      = local.gender;
+        if (!a._jobOrderId && local._jobOrderId) a._jobOrderId = local._jobOrderId;
+        // Agent: trust server (PostgreSQL JOIN is authoritative)
       }
     });
     DB.applicants = _freshApps;
@@ -3332,15 +3335,6 @@ async function loadDB() {
   // Also load viewer scopes
   const vs = await Store.get('rams:db:viewerScopes');
   if (vs && typeof vs === 'object') viewerScopes = vs;
-  // Reload agent text assignments for applicants (persisted separately)
-  try {
-    var agentMap = await Store.get('rams:applicant:agents');
-    if (agentMap) {
-      var agentMapObj = JSON.parse(typeof agentMap === 'string' ? agentMap : agentMap.value || '{}');
-      window._agentAssignments = agentMapObj;
-    }
-  } catch(e) {}
-
   // Load agents and ledger (stored locally since no backend API)
   const storedAgents = await Store.get('rams:db:agents');
   if (storedAgents && Array.isArray(storedAgents) && storedAgents.length > 0) {
@@ -4405,8 +4399,14 @@ function saveApplicant() {
     id: editId || genId('APP'), name,
     status: document.getElementById('a-status').value,
     agent: document.getElementById('a-agent').value,
-    _agentDbId: (document.getElementById('a-agent-uuid') ? document.getElementById('a-agent-uuid').value : '') ||
-                (function(){ var ag = DB.agents.find(function(a){ return a.name === document.getElementById('a-agent').value; }); return ag ? (ag._dbId||ag.id||'') : ''; })(),
+    _agentDbId: (function() {
+      var hiddenUUID = document.getElementById('a-agent-uuid') ? document.getElementById('a-agent-uuid').value.trim() : '';
+      if (hiddenUUID && isUUID(hiddenUUID)) return hiddenUUID;
+      var selectedName = document.getElementById('a-agent').value;
+      if (!selectedName) return '';
+      var found = DB.agents.find(function(ag){ return ag.name === selectedName; });
+      return found ? (found._dbId || found.id || '') : '';
+    })(),
     contact: document.getElementById('a-contact').value || '+63 900 000 0000',
     email: document.getElementById('a-email').value || 'no-email@example.com',
     job: document.getElementById('a-job').value || 'Not specified',
@@ -4446,12 +4446,11 @@ function saveApplicant() {
         // Merge server response back — preserves _updatedAt so fetchApplicants
         // knows this record was just updated and won't overwrite local data
         var serverData = mapApplicant(r.data);
-        // Preserve locally set fields that server may not echo back yet
+        // Preserve non-server fields only
         if (!serverData.passport    && data.passport)    serverData.passport    = data.passport;
-        if (!serverData.agent       && data.agent)       serverData.agent       = data.agent;
-        if (!serverData._agentDbId  && data._agentDbId)  serverData._agentDbId  = data._agentDbId;
-        if (!serverData._jobOrderId && data._jobOrderId) serverData._jobOrderId = data._jobOrderId;
         if (!serverData.gender      && data.gender)      serverData.gender      = data.gender;
+        if (!serverData._jobOrderId && data._jobOrderId) serverData._jobOrderId = data._jobOrderId;
+        // Agent: server has the JOIN'd agent_name — trust it
         var i = DB.applicants.findIndex(function(a){ return a.id === data.id || a._dbId === data._dbId; });
         if (i !== -1) DB.applicants[i] = Object.assign({}, DB.applicants[i], serverData);
         filteredApps = [...getScopedApplicants()];
@@ -4469,13 +4468,11 @@ function saveApplicant() {
   if (!data.displayId) { data.displayId = getDisplayId(data); }
   filteredApps = [...getScopedApplicants()];
   autosave('applicants');
-  // Also persist agent assignment separately for durability
-  if (data.agent) {
-    var _agentStore = {};
-    DB.applicants.forEach(function(a){ if(a.agent) _agentStore[a.id] = a.agent; });
-    Store.set('rams:applicant:agents', JSON.stringify(_agentStore));
-  }
+  // Agent is now stored server-side via agent_id FK — no local override needed
   closeOverlay('overlay-applicant');
+  // Invalidate applicants cache so next poll gets fresh agent assignments for ALL users
+  if (typeof _cache !== 'undefined') delete _cache['/applicants?limit=500'];
+  if (typeof _lastFetch !== 'undefined') _lastFetch['applicants'] = 0;
   if (currentPage === 'applicants') renderApplicants();
   if (currentPage === 'pipeline') renderKanban();
   if (currentPage === 'dashboard') renderDashboard();
@@ -4507,7 +4504,12 @@ function confirmDelete(type, id) {
       if(currentDrawerApplicant?.id===id) closeDrawer();
       renderApplicants();
       if(_delA) apiDeleteApplicant(_delDbId).then(function(r){
-        if(r.ok){ window._deletedApplicantIds.delete(id); window._deletedApplicantIds.delete(_delDbId); Store.set('rams:deleted:applicants', JSON.stringify([...window._deletedApplicantIds])); }
+        if(r.ok){
+          window._deletedApplicantIds.delete(id); window._deletedApplicantIds.delete(_delDbId);
+          Store.set('rams:deleted:applicants', JSON.stringify([...window._deletedApplicantIds]));
+          // Invalidate so other users stop seeing this applicant on next poll
+          if (typeof _cache !== 'undefined') Object.keys(_cache).forEach(function(k){ if(k.includes('/applicants')) delete _cache[k]; });
+        }
         else toast('Delete sync failed: '+r.error,'error');
       });
     }
@@ -4518,11 +4520,28 @@ function confirmDelete(type, id) {
       addAudit('DELETE','Expense','Deleted '+name);
       if (_delExp) {
         var _expDbId = _delExp._dbId || _delExp.id;
-        apiDeleteExpense(_expDbId).then(function(r){ if(!r.ok) toast('Expense deleted locally; server sync failed','error'); });
+        apiDeleteExpense(_expDbId).then(function(r){
+          if (!r.ok) toast('Expense deleted locally; server sync failed','error');
+          else {
+            if (typeof _cache !== 'undefined') Object.keys(_cache).forEach(function(k){ if(k.includes('/expenses')) delete _cache[k]; });
+            if (typeof _lastFetch !== 'undefined') _lastFetch['expenses'] = 0;
+          }
+        });
       }
       renderAccounting();
     }
-    if (type==='job') { DB.jobs=DB.jobs.filter(x=>x.id!==id); addAudit('DELETE','Job Order',`Deleted ${name}`); renderJobs(); }
+    if (type==='job') {
+      var _delJob = DB.jobs.find(x=>x.id===id);
+      DB.jobs = DB.jobs.filter(x=>x.id!==id);
+      autosave('jobs');
+      addAudit('DELETE','Job Order','Deleted '+name);
+      if (_delJob && isUUID(_delJob._dbId||_delJob.id)) {
+        apiDeleteJob(_delJob._dbId||_delJob.id).catch(function(){});
+        if (typeof _cache !== 'undefined') Object.keys(_cache).forEach(function(k){ if(k.includes('/jobs')) delete _cache[k]; });
+        if (typeof _lastFetch !== 'undefined') _lastFetch['jobs'] = 0;
+      }
+      renderJobs();
+    }
     if (type==='document') {
       var _delDoc = DB.documents.find(x=>x.id===id);
       DB.documents = DB.documents.filter(x=>x.id!==id);
@@ -5093,6 +5112,9 @@ function saveJob() {
   }
 
   autosave('jobs');
+  // Invalidate jobs cache so all users see changes on next poll
+  if (typeof _cache !== 'undefined') Object.keys(_cache).forEach(function(k){ if(k.includes('/jobs')) delete _cache[k]; });
+  if (typeof _lastFetch !== 'undefined') _lastFetch['jobs'] = 0;
   closeOverlay('overlay-job');
   renderJobs();
 }
@@ -5354,6 +5376,9 @@ function saveExpense() {
       toast('Expense saved locally; server sync failed: ' + r.error, 'error');
     } else {
       autosave('expenses'); // update with server-assigned _dbId
+      // Invalidate expense cache so all other users see this immediately
+      if (typeof _cache !== 'undefined') Object.keys(_cache).forEach(function(k){ if(k.includes('/expenses')) delete _cache[k]; });
+      if (typeof _lastFetch !== 'undefined') _lastFetch['expenses'] = 0;
     }
   });
 
@@ -8103,7 +8128,11 @@ function submitAgent() {
     addAudit('UPDATE','Agent','Updated agent: '+name);
     apiUpdateAgent(existing).then(function(r){
       if (!r.ok) toast('Agent updated locally; sync failed: '+r.error,'error');
-      else { Object.assign(existing, mapAgent(r.data)); }
+      else {
+        Object.assign(existing, mapAgent(r.data));
+        autosave('agents');
+        if (typeof _lastFetch !== 'undefined') _lastFetch['agents'] = 0;
+      }
     });
     toast('Agent updated','success');
   } else {
@@ -8112,7 +8141,11 @@ function submitAgent() {
     addAudit('CREATE','Agent','Added agent: '+name);
     apiCreateAgent(newAgent).then(function(r){
       if (!r.ok) toast('Agent saved locally; sync failed: '+r.error,'error');
-      else { Object.assign(newAgent, mapAgent(r.data)); autosave('agents'); }
+      else {
+        Object.assign(newAgent, mapAgent(r.data));
+        autosave('agents');
+        if (typeof _lastFetch !== 'undefined') _lastFetch['agents'] = 0;
+      }
     });
     toast('Agent added','success');
   }
@@ -10167,11 +10200,15 @@ async function fetchAgents() {
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
   if (!isLive) return;
   var r = await apiFetch('/agents');
-  if (r.ok) {
-    DB.agents = r.data.map(mapAgent);
-    await Store.set('rams:db:agents', DB.agents);
-    if (currentPage === 'accounting' && currentAccTab === 'agents') renderAgentGrid();
+  if (!r.ok) return;
+  DB.agents = r.data.map(mapAgent);
+  await Store.set('rams:db:agents', DB.agents);
+  // Re-render any page that shows agent data
+  if (currentPage === 'accounting') {
+    if (typeof renderAgentGrid === 'function') renderAgentGrid();
+    if (typeof renderAccounting === 'function') renderAccounting();
   }
+  if (currentPage === 'dashboard') renderDashboard();
 }
 
 async function apiCreateAgent(data) {
