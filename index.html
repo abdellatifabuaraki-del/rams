@@ -6459,24 +6459,37 @@ function _showApp(user) {
   document.getElementById('login-screen').style.display = 'none';
   var appEl = document.getElementById('app');
   appEl.style.cssText = 'display:flex !important';
-  if(user) {
-    var ini=(user.name||user.email||'U').split(' ').map(function(w){return w[0];}).join('').toUpperCase().slice(0,2);
-    var n=document.getElementById('sb-uname'); if(n) n.textContent=user.name||user.email;
-    var r=document.getElementById('sb-urole'); if(r) r.textContent=user.email||user.role||'';
-    var a=document.getElementById('sb-avatar'); if(a) a.textContent=ini;
-    var h=document.getElementById('hdr-avatar'); if(h) h.textContent=ini;
+  if (user) {
+    var ini = (user.name||user.email||'U').split(' ').map(function(w){ return w[0]; }).join('').toUpperCase().slice(0,2);
+    var n = document.getElementById('sb-uname'); if (n) n.textContent = user.name || user.email;
+    var r2= document.getElementById('sb-urole'); if (r2) r2.textContent = user.role || '';
+    var a = document.getElementById('sb-avatar'); if (a) a.textContent = ini;
+    var h = document.getElementById('hdr-avatar'); if (h) h.textContent = ini;
   }
-  // Activate dashboard page and render
-  if(typeof nav==='function') {
-    nav('dashboard');
-  } else {
-    // Fallback: manually activate dashboard
-    document.querySelectorAll('.page').forEach(function(p){ p.classList.remove('active'); });
-    var dash = document.getElementById('page-dashboard');
-    if(dash) dash.classList.add('active');
-    if(typeof renderDashboard==='function') renderDashboard();
-    if(typeof renderNotifications==='function') renderNotifications();
-  }
+
+  // Apply RBAC for this user's role immediately
+  if (typeof applyRBAC === 'function') applyRBAC();
+  if (typeof _addRoleSwitcher === 'function') _addRoleSwitcher();
+
+  // Nav to dashboard
+  if (typeof nav === 'function') nav('dashboard');
+
+  // Load all data after login
+  setTimeout(async function() {
+    if (typeof loadDB === 'function')               await loadDB();
+    if (typeof loadSettings === 'function')         await loadSettings();
+    if (typeof loadSequences === 'function')        await loadSequences();
+    if (typeof loadDisplayIds === 'function')       await loadDisplayIds();
+    if (typeof loadSharedPermissions === 'function') await loadSharedPermissions();
+    if (typeof applyDisplayIds === 'function')      applyDisplayIds();
+    if (typeof applyRBAC === 'function')            applyRBAC();
+    if (typeof _flushPendingWrites === 'function')  await _flushPendingWrites();
+    await syncAllFromAPI();
+    await fetchAgents();
+    if (typeof renderDashboard === 'function')      renderDashboard();
+    if (typeof renderNotifications === 'function')  renderNotifications();
+    if (typeof startPolling === 'function')         startPolling();
+  }, 100);
 }
 async function _doLogin() {
   var email  = (document.getElementById('li-email').value||'').trim();
