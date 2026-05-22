@@ -1285,6 +1285,7 @@ button[disabled][data-rbac-locked] {
           <option>Screening</option>
           <option>Interview</option>
           <option>Selected</option>
+          <option>Medical</option>
           <option>Processing</option>
           <option>Visa</option>
           <option>OWWA</option>
@@ -1479,7 +1480,6 @@ button[disabled][data-rbac-locked] {
     <button class="acc-tab" onclick="switchAccTab('rules',this)" role="tab">⚙ Country Rules</button>
     <button class="acc-tab" onclick="switchAccTab('reports',this)" role="tab">📈 Reports</button>
     <button class="acc-tab" onclick="switchAccTab('office',this)" role="tab">🏢 Office Funds</button>
-    <button class="acc-tab" onclick="switchAccTab('invoices',this)" role="tab">🧾 Invoices</button>
   </div>
 
   <!-- OVERVIEW TAB -->
@@ -1586,17 +1586,13 @@ button[disabled][data-rbac-locked] {
 
   <!-- COMMISSIONS TAB -->
   <div class="acc-section" id="acc-commissions">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-      <div></div>
-      <button class="btn btn-s btn-sm" style="background:var(--abg);color:var(--amber);border:1px solid #fcd34d" onclick="backfillCommissions()" title="Scan all applicants and create missing commission records">⚡ Backfill Missing Commissions</button>
-    </div>
     <div class="stat-grid" id="commission-kpis"></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div class="card cp">
-        <div style="font-size:14px;font-weight:800;margin-bottom:4px">Withhold Rates by Country</div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Percentage withheld from agent commission during guarantee period</div>
+        <div style="font-size:14px;font-weight:800;margin-bottom:4px">Commission Rates by Country</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Configure the fee agents earn per successful deployment</div>
         <div id="commission-rates"></div>
-        <button class="btn btn-p btn-sm" style="margin-top:14px;width:100%" onclick="saveCommissionRates()">Save Withhold Rates</button>
+        <button class="btn btn-p btn-sm" style="margin-top:14px;width:100%" onclick="saveCommissionRates()">Save Rates</button>
       </div>
       <div class="card cp">
         <div style="font-size:14px;font-weight:800;margin-bottom:4px">Pending Commissions</div>
@@ -1605,27 +1601,7 @@ button[disabled][data-rbac-locked] {
       </div>
     </div>
     <div class="card" style="margin-top:16px">
-      <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-        <div style="font-size:14px;font-weight:800;margin-right:8px">Commission History</div>
-        <input class="f-inp" id="comm-search" placeholder="Search agent or applicant…" oninput="renderCommissions()" style="flex:1;min-width:160px;max-width:260px">
-        <select class="f-inp" id="comm-filter-tranche" onchange="renderCommissions()" style="width:140px">
-          <option value="">All Tranches</option>
-          <option value="1">T1 — Medical</option>
-          <option value="2">T2 — OWWA/Processing</option>
-          <option value="3">T3 — Deployed</option>
-        </select>
-        <select class="f-inp" id="comm-filter-status" onchange="renderCommissions()" style="width:140px">
-          <option value="">All Status</option>
-          <option value="Pending Release">Pending</option>
-          <option value="Released">Released</option>
-          <option value="Reversed">Reversed</option>
-        </select>
-        <select class="f-inp" id="comm-filter-agent" onchange="renderCommissions()" style="width:150px">
-          <option value="">All Agents</option>
-        </select>
-        <button class="btn btn-ghost btn-sm" onclick="clearCommissionFilters()" style="font-size:11.5px">Clear</button>
-        <span id="comm-filter-count" style="font-size:11px;color:var(--muted);margin-left:auto"></span>
-      </div>
+      <div style="padding:16px 18px;border-bottom:1px solid var(--border);font-size:14px;font-weight:800">Commission History</div>
       <table style="width:100%;border-collapse:collapse">
         <thead>
           <tr><th>Date</th><th>Agent</th><th>Applicant</th><th>Country</th>
@@ -1845,11 +1821,6 @@ button[disabled][data-rbac-locked] {
         <div id="office-top-cats"></div>
       </div>
     </div>
-  </div>
-
-  <!-- INVOICES TAB -->
-  <div class="acc-section" id="acc-invoices">
-    <div id="inv-list"></div>
   </div>
 
 </div>
@@ -2322,7 +2293,7 @@ button[disabled][data-rbac-locked] {
           <label class="form-label">Status <span class="req">*</span></label>
           <select class="form-input" id="a-status">
             <option>For Selection</option><option>Applied</option><option>Screening</option>
-            <option>Interview</option><option>Selected</option>
+            <option>Interview</option><option>Selected</option><option>Medical</option>
             <option>Processing</option><option>Visa</option><option>OWWA</option>
             <option>Deployed</option><option>Repatriated</option><option>Backout</option><option>Rejected</option><option>With Complaint</option>
           </select>
@@ -3343,7 +3314,6 @@ async function apiDeleteOfficeLedgerEntry(id) {
   return await apiFetch('/office-ledger/' + id, { method: 'DELETE' });
 }
 async function apiUpdateOfficeFunds(funds) {
-  try{_triggerImmediateSync();}catch(e){}
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
   if (!isLive) return { ok: true };
   return await apiFetch('/office-funds', { method: 'PUT', body: JSON.stringify({ balance_php: funds.balancePHP, balance_usd: funds.balanceUSD, fx_rate: funds.fxRate, fx_updated: funds.fxUpdated }) });
@@ -3421,7 +3391,8 @@ function mapCountryRule(row) {
     country:            row.country             || '',
     flag:               row.flag                || '🌍',
     guaranteePeriod:    row.guarantee_period != null ? parseInt(row.guarantee_period) : 6,
-    // commissionAmt removed — use agent's individual commission instead
+    commissionAmt:      row.commission_amt != null ? parseFloat(row.commission_amt) : 15000,
+    commissionCurrency: row.commission_currency || 'PHP',
     withholdPct:        row.withhold_pct != null ? parseFloat(row.withhold_pct) : 20,
     currency:           row.currency            || 'PHP',
     expenseRule:        row.expense_rule        || 'full',
@@ -3439,7 +3410,8 @@ async function apiSaveCountryRule(rule) {
   if (!isLive) return { ok: true };
   var payload = {
     country: rule.country, flag: rule.flag,
-    guarantee_period: rule.guaranteePeriod,
+    guarantee_period: rule.guaranteePeriod, commission_amt: rule.commissionAmt,
+    commission_currency: rule.commissionCurrency || 'PHP',
     withhold_pct: rule.withholdPct, currency: rule.currency,
     expense_rule: rule.expenseRule, active: rule.active,
   };
@@ -3531,7 +3503,6 @@ var _pageFetchMap = {
   pipeline:    function() { return Promise.all([_smartFetch('applicants'), _smartFetch('agents')]); },
   jobs:        function() { return _smartFetch('jobs'); },
   documents:   function() { return apiFetchDocuments(); },
-  invoices:    function() { return apiFetchInvoices(); },
   accounting:  function() { return Promise.all([_smartFetch('expenses'), fetchAgents(), apiFetchEmployerFees(), apiFetchAgentLedger(), apiFetchOfficeLedger(), apiFetchCommissions(), apiFetchCountryRules()]); },
   settings:    function() { return _smartFetch('users'); },
   audit:       function() { return _smartFetch('audit'); },
@@ -4105,50 +4076,43 @@ function startPolling() {
       window._lastNotifFetch = Date.now();
       apiFetch('/notifications').then(function(r) {
         if (!r || !r.ok || !Array.isArray(r.data)) return;
-        // Build read map keyed by BOTH id and _dbId for reliable matching
         var localReadMap = {};
-        (DB.notifications||[]).forEach(function(n){
-          if (n.read) {
-            if (n.id)    localReadMap[n.id]   = true;
-            if (n._dbId) localReadMap[n._dbId] = true;
-          }
-        });
-        // Trust server is_read flag — also apply local read overrides (sticky: once read stays read)
-        r.data.forEach(function(row) {
-          var srvId = row.id || row._dbId;
-          if (srvId && localReadMap[srvId]) row.is_read = true; // local override wins
-        });
-        // Dedup by title+body — merge read state (sticky: once read stays read)
-        function _dedupeNotifs(arr) {
-          var seen = {}; var out = [];
-          arr.forEach(function(n) {
-            var key = (n.title||'')+'|'+(n.body||'');
-            if (!seen[key]) { seen[key] = n; out.push(n); }
-            else {
-              var cur = seen[key];
-              var winner = (n.link&&n.link.id&&!(cur.link&&cur.link.id)) ? n : cur;
-              winner.read = cur.read || n.read; // once read, stays read
-              out[out.indexOf(cur)] = winner; seen[key] = winner;
-            }
-          });
-          return out;
+        (DB.notifications||[]).forEach(function(n){ if (n.read) localReadMap[n.id] = true; });
+
+  // Dedup merged notifications: same title+body = same event.
+  // Prefer the copy with a richer link (local NTF- wins over server copy with null link).
+  function _dedupeNotifs(arr) {
+    var seen = {};
+    var out = [];
+    arr.forEach(function(n) {
+      var key = (n.title || '') + '|' + (n.body || '');
+      if (!seen[key]) { seen[key] = n; out.push(n); }
+      else {
+        // Prefer the version that has a link with an id
+        var cur = seen[key];
+        var nHasId  = n.link && n.link.id;
+        var curHasId = cur.link && cur.link.id;
+        if (nHasId && !curHasId) {
+          // Replace stored with richer version
+          var idx = out.indexOf(cur);
+          out[idx] = n;
+          seen[key] = n;
         }
+      }
+    });
+    return out;
+  }
         var _fromServer = r.data.map(function(n) {
-          // Backend sends is_read (PostgreSQL column) — handle both is_read and read
-          var serverRead = !!(n.is_read || n.read);
           return { id: n.id, _dbId: n.id, title: n.title, body: n.body||'',
             type: n.type||'system',
-            read: !!(localReadMap[n.id] || serverRead),
+            read: localReadMap[n.id] || !!n.read,
             ts:   new Date(n.created_at||Date.now()).getTime(),
             time: new Date(n.created_at||Date.now()).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),
             link: n.link ? (typeof n.link==='string'?JSON.parse(n.link):n.link) : null };
         });
         var _serverIds = new Set(_fromServer.map(function(n){ return n.id; }));
-        var _localOnly = (DB.notifications||[]).filter(function(n){
-          return n.id && n.id.startsWith('NTF-') && !_serverIds.has(n.id);
-        });
-        DB.notifications = _dedupeNotifs(_fromServer.concat(_localOnly))
-          .sort(function(a,b){ return (b.ts||0)-(a.ts||0); });
+        var _localOnly = (DB.notifications||[]).filter(function(n){ return n.id && n.id.startsWith('NTF-') && !_serverIds.has(n.id); });
+        DB.notifications = _dedupeNotifs(_fromServer.concat(_localOnly)).sort(function(a,b){ return (b.ts||0)-(a.ts||0); });
         autosave('notifications');
         renderNotifications();
       }).catch(function(){});
@@ -4263,18 +4227,6 @@ function startPolling() {
     apiFetchCountryRules().catch(function(){});
     apiFetchComplaints().catch(function(){});
     apiFetchDocuments().catch(function(){});
-    apiFetchInvoices().catch(function(){});
-    if (!window._lastScopeFetch||Date.now()-window._lastScopeFetch>30000){window._lastScopeFetch=Date.now();loadViewerScopes().then(function(){if(getCurrentRole()==="Viewer"){filteredApps=[...getScopedApplicants()];if(currentPage==="applicants")renderApplicants();}}).catch(function(){});}
-    // Refresh viewer scopes every ~30s so scope changes reach viewer quickly
-    if (!window._lastScopeFetch || Date.now()-window._lastScopeFetch > 30000) {
-      window._lastScopeFetch = Date.now();
-      loadViewerScopes().then(function() {
-        if (getCurrentRole()==='Viewer') {
-          filteredApps = [...getScopedApplicants()];
-          if (currentPage==='applicants') renderApplicants();
-        }
-      }).catch(function(){});
-    }
     apiFetchOfficeLedger().then(function() {
       if (currentPage === 'accounting') {
         if (typeof renderOffice === 'function') renderOffice();
@@ -4559,43 +4511,20 @@ const DB = {
 
 // 💾  DB PERSISTENCE  — save / load all collections
 // ════════════════════════════════════════════════════════
-const DB_KEYS = ['applicants','expenses','documents','jobs','auditLog','notifications','chatMessages','integrations','users','agents','agentLedger','countryRules','officeLedger','officeFunds','employerFees','complaints','commissions','invoices'];
+const DB_KEYS = ['applicants','expenses','documents','jobs','auditLog','notifications','chatMessages','integrations','users','agents','agentLedger','countryRules','officeLedger','officeFunds','employerFees','complaints','commissions'];
 
 // Viewer scope assignments: { 'user@email.com': ['JOB-001','JOB-003', ...] }
 let viewerScopes = {};
 
 async function saveViewerScopes() {
+  // Save to both private AND shared Store so viewers pick up admin changes on next poll
   await Store.set('rams:db:viewerScopes', viewerScopes);
   await Store.set('rams:shared:viewerScopes', JSON.stringify(viewerScopes), true);
   await Store.set('rams:shared:viewerScopes:ts', String(Date.now()), true);
-  // Persist to PostgreSQL — only way to share scopes across different browsers/devices
-  var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
-  if (!isLive) return;
-  Object.keys(viewerScopes).forEach(function(key) {
-    if (key.includes(':chatRooms')) return;
-    var jobIds   = viewerScopes[key] || [];
-    var chatRooms= viewerScopes[key+':chatRooms'] || [];
-    apiFetch('/viewer-scopes', {
-      method:'POST', body: JSON.stringify({ email: key, job_ids: jobIds, chat_room_ids: chatRooms }),
-    }).catch(function(){});
-  });
 }
 async function loadViewerScopes() {
   const d = await Store.get('rams:db:viewerScopes');
   if (d && typeof d === 'object') viewerScopes = d;
-  // Pull from PostgreSQL to get cross-device scopes
-  var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
-  if (!isLive) return;
-  try {
-    var r = await apiFetch('/viewer-scopes');
-    if (r.ok && Array.isArray(r.data)) {
-      r.data.forEach(function(row) {
-        var em = (row.email||'').toLowerCase();
-        viewerScopes[em]               = typeof row.job_ids==='string'      ? JSON.parse(row.job_ids||'[]')      : (row.job_ids||[]);
-        viewerScopes[em+':chatRooms']  = typeof row.chat_room_ids==='string' ? JSON.parse(row.chat_room_ids||'[]') : (row.chat_room_ids||[]);
-      });
-    }
-  } catch(e) { console.warn('[viewerScopes] backend fetch failed:', e.message); }
 }
 
 // Returns the scoped job IDs for current user (empty array = see all, for non-viewers)
@@ -4632,25 +4561,10 @@ function getScopedApplicants() {
   // Also include the raw scope IDs in case DB.jobs hasn't loaded yet
   scope.forEach(function(id) { scopedJobIds.add(id); });
 
-  // Build set of employer names from scoped jobs (fallback for applicants without _jobOrderId)
-  var scopedEmployers = new Set();
-  DB.jobs.forEach(function(j) {
-    if (scope.indexOf(j.id) !== -1 || scope.indexOf(j._dbId) !== -1) {
-      if (j.employer) scopedEmployers.add(j.employer.toLowerCase());
-    }
-  });
-
+  // Strict: ONLY applicants with an explicit _jobOrderId that matches the scope.
+  // Applicants with no job order assigned are never visible to viewers.
   return DB.applicants.filter(function(a) {
-    // Primary: match by explicit job order ID
-    if (a._jobOrderId && scopedJobIds.has(a._jobOrderId)) return true;
-    // Fallback: match by employer name in job field (for applicants not linked to a job order)
-    if (scopedEmployers.size > 0 && a.job) {
-      var jobLower = a.job.toLowerCase();
-      for (var emp of scopedEmployers) {
-        if (jobLower.includes(emp)) return true;
-      }
-    }
-    return false;
+    return a._jobOrderId && scopedJobIds.has(a._jobOrderId);
   });
 }
 
@@ -4834,8 +4748,7 @@ async function loadDB() {
       await apiFetchCountryRules();
       await apiFetchComplaints();
       await apiFetchDocuments();
-      await apiFetchInvoices();
-      await loadViewerScopes(); // sync scopes so viewers see correct applicants on refresh
+      await loadSharedPermissions().catch(function(){});
       // Fetch notifications from backend
       var _nr = await apiFetch('/notifications');
       if (_nr.ok && Array.isArray(_nr.data)) {
@@ -5392,10 +5305,9 @@ function markRead(id) {
     autosave('notifications');
     Store.set('rams:shared:notifications', DB.notifications, true).catch(function(){});
     Store.set('rams:shared:notifications:ts', String(Date.now()), true).catch(function(){});
-    // Always persist to backend — use UUID _dbId if available, otherwise POST ids array
-    var backendId = n._dbId || (n.id && n.id.includes('-') && n.id.length > 20 ? n.id : null);
-    if (backendId) {
-      apiFetch('/notifications/' + backendId + '/read', { method: 'PATCH' }).catch(function(){});
+    // Also mark read in backend DB if this is a server-sourced notification
+    if (n._dbId || (n.id && n.id.length === 36 && n.id.includes('-'))) {
+      apiFetch('/notifications/' + (n._dbId || n.id) + '/read', { method: 'PATCH' }).catch(function(){});
     }
     renderNotifications();
   }
@@ -5405,16 +5317,8 @@ function markAllRead() {
   autosave('notifications');
   Store.set('rams:shared:notifications', DB.notifications, true).catch(function(){});
   Store.set('rams:shared:notifications:ts', String(Date.now()), true).catch(function(){});
-  // Persist to backend so re-fetch doesn't restore as unread
-  var ids = DB.notifications
-    .filter(function(n){ return n._dbId || (n.id && n.id.length===36 && n.id.includes('-')); })
-    .map(function(n){ return n._dbId || n.id; });
-  if (ids.length) {
-    apiFetch('/notifications/mark-read', {
-      method: 'POST',
-      body: JSON.stringify({ ids: ids }),
-    }).catch(function(){});
-  }
+  var ids = DB.notifications.filter(function(n){ return n._dbId||(n.id&&n.id.includes('-')&&n.id.length>20); }).map(function(n){ return n._dbId||n.id; });
+  if (ids.length) apiFetch('/notifications/mark-read',{method:'POST',body:JSON.stringify({ids:ids})}).catch(function(){});
   renderNotifications();
   toast('All notifications marked as read', 'success');
 }
@@ -5897,12 +5801,6 @@ function pushNotif(title, body, type, link) {
   var toggleLabel = toggleMap[type] || 'System Alerts';
   if (!_notifEnabled(toggleLabel)) return; // user has this category off
 
-  // Dedup: skip if same title+body was already fired within the last 60 seconds
-  var _now = Date.now();
-  var _isDupe = (DB.notifications||[]).some(function(x){
-    return x.title === title && x.body === body && (_now - (x.ts||0)) < 60000;
-  });
-  if (_isDupe) return;
   var n = {
     id:    'NTF-' + Date.now() + '-' + Math.random().toString(36).slice(2,6),
     title: title,
@@ -6187,7 +6085,7 @@ function switchDrawerTab(tab, btn) {
   }
   if (tab === 'overview') {
     var _isViewer = (typeof getCurrentRole === 'function') && getCurrentRole() === 'Viewer';
-    const stages = ['For Selection','Applied','Screening','Interview','Selected','Processing','Visa','OWWA','Deployed'];
+    const stages = ['For Selection','Applied','Screening','Interview','Medical','Processing','Visa','OWWA','Deployed'];
     // With Complaint doesn't fit in the linear pipeline — show it as a special state
     const ci = app.status === 'With Complaint' ? -2 : stages.indexOf(app.status);
     // Viewers only see status, medical, position and pipeline — no agent/contact/email
@@ -6408,7 +6306,7 @@ function pillHtml(status, variant) {
   const map = {
     'Deployed':'pill-green','Repatriated':'pill-red','Backout':'pill-amber',
     'Applied':'pill-blue','Screening':'pill-purple',
-    'Interview':'pill-amber','Rejected':'pill-red',
+    'Interview':'pill-amber','Medical':'pill-teal','Rejected':'pill-red',
     'Processing':'pill-blue','Visa':'pill-purple','OWWA':'pill-teal','For Selection':'pill-amber',
     'With Complaint':'pill-red',
     'Passed':'pill-green','Pending':'pill-amber','Failed':'pill-red',
@@ -6492,7 +6390,7 @@ function renderDashboard() {
   const slotUtilRate = totalSlots ? Math.round(filledSlots/totalSlots*100) : 0;
 
   // ── Pipeline breakdown ───────────────────────────────────────────
-  var pipelineStages = ['For Selection','Applied','Screening','Interview','Selected','Processing','Visa','OWWA'];
+  var pipelineStages = ['For Selection','Applied','Screening','Interview','Selected','Medical','Processing','Visa','OWWA'];
   var pipelineCounts = pipelineStages.map(function(s){
     return { stage: s, count: _dashApps.filter(function(a){return a.status===s;}).length };
   }).filter(function(x){return x.count>0;});
@@ -6573,7 +6471,7 @@ function renderDashboard() {
       const maxCount = Math.max(...pipelineCounts.map(function(x){return x.count;}), 1);
       const stageColors = {
         'For Selection':'#94a3b8','Applied':'var(--brand)','Screening':'var(--purple)',
-        'Interview':'var(--amber)','Selected':'var(--green)',
+        'Interview':'var(--amber)','Selected':'var(--green)','Medical':'var(--teal)',
         'Processing':'#0891B2','Visa':'var(--purple)','OWWA':'var(--teal)',
         'With Complaint':'var(--red)'
       };
@@ -6707,7 +6605,7 @@ function renderDashboard() {
 // ── Pipeline stages — order is admin-configurable and persisted ────────
 var _DEFAULT_STAGE_ORDER = [
   'For Selection','Applied','Screening','Interview','Selected',
-  'Processing','Visa','OWWA','Deployed',
+  'Medical','Processing','Visa','OWWA','Deployed',
 ];
 var _STAGE_META = {
   'For Selection': {color:'var(--muted)', bg:'var(--s2)',      cnt:'pill-gray'},
@@ -6715,7 +6613,8 @@ var _STAGE_META = {
   'Screening':     {color:'var(--purple)',bg:'var(--pbg)',      cnt:'pill-purple'},
   'Interview':     {color:'var(--amber)', bg:'var(--abg)',      cnt:'pill-amber'},
   'Selected':      {color:'var(--green)', bg:'var(--gbg)',      cnt:'pill-green'},
-    'Processing':    {color:'#0891B2',      bg:'#E0F2FE',         cnt:'pill-teal'},
+  'Medical':       {color:'var(--teal)',  bg:'#F0F9FF',         cnt:'pill-teal'},
+  'Processing':    {color:'#0891B2',      bg:'#E0F2FE',         cnt:'pill-teal'},
   'Visa':          {color:'var(--purple)',bg:'var(--pbg)',      cnt:'pill-purple'},
   'OWWA':          {color:'#0891B2',      bg:'#E0F2FE',         cnt:'pill-teal'},
   'Deployed':      {color:'var(--green)', bg:'var(--gbg)',      cnt:'pill-green'},
@@ -6876,7 +6775,7 @@ function sortTable(col) {
 }
 // ── INLINE STATUS / MEDICAL EDIT ─────────────────────────────────────
 var _ALL_APP_STATUSES = ['For Selection','Applied','Screening','Interview','Selected',
-  'Processing','Visa','OWWA','Deployed','Repatriated','Backout','Rejected','With Complaint'];
+  'Medical','Processing','Visa','OWWA','Deployed','Repatriated','Backout','Rejected','With Complaint'];
 var _ALL_MEDICAL = ['Pending','Passed','Failed','Exempted'];
 
 function _inlineStatusCell(app) {
@@ -6911,10 +6810,11 @@ function _inlineSaveStatus(appId, newStatus) {
   // ── Stage gate: Deployed requires Medical + (OWWA or Processing) ──
   if (newStatus === 'Deployed') {
     var hist = app._stageHistory || [];
+    var hasMedical     = hist.indexOf('Medical')     !== -1;
     var hasProcessing  = hist.indexOf('Processing')  !== -1 || hist.indexOf('OWWA') !== -1;
     if (!hasMedical || !hasProcessing) {
       var missing = [];
-      // Medical stage removed from pipeline
+      if (!hasMedical)    missing.push('Medical');
       if (!hasProcessing) missing.push('Processing or OWWA');
       toast('⛔ Cannot deploy ' + app.name + ' — required stage' + (missing.length > 1 ? 's' : '') +
         ' not completed: ' + missing.join(', '), 'error');
@@ -6996,9 +6896,9 @@ function _inlineSaveMedical(appId, newMedical) {
       } else {
         var _medCountry = app.job ? app.job.split('·').pop().trim() : '';
         var _medRule    = DB.countryRules.find(function(r){ return r.country===_medCountry && r.active; });
-        var _agentHasRate = _agent && _agent.commissionAmt != null && _agent.commissionAmt > 0;
-        var _medTotal  = (_agent && _agent.commissionAmt > 0) ? _agent.commissionAmt : 15000;
-        var _medCurr   = (_agent && _agent.commissionCurrency) || 'PHP';
+        var _agentHasRate = _agent.commissionAmt != null && _agent.commissionAmt > 0;
+        var _medTotal  = _agentHasRate ? _agent.commissionAmt : (_medRule ? _medRule.commissionAmt : 15000);
+        var _medCurr   = _agentHasRate ? (_agent.commissionCurrency||'PHP') : (_medRule ? (_medRule.commissionCurrency||'PHP') : 'PHP');
         var _medGP     = _medRule ? (_medRule.guaranteePeriod||6) : 6;
         var _t1amt     = Math.round(_medTotal * 0.20);
         var _t1gEnd    = (function(){ var d=new Date(); d.setMonth(d.getMonth()+_medGP); return d.toISOString().split('T')[0]; })();
@@ -7006,7 +6906,7 @@ function _inlineSaveMedical(appId, newMedical) {
           id: 'COM-' + Date.now() + '-T1',
           agentId: _agent.id, applicantId: appId, applicantName: app.name,
           country: _medCountry || 'Philippines', amount: _t1amt,
-          totalCommission: _medTotal, tranche: 1, trancheLabel: 'Medical Cleared (20%)',
+          totalCommission: _medTotal, tranche: 1, trancheLabel: 'Medical — Passed (20%)',
           currency: _medCurr, status: 'Pending Release', triggerStatus: 'Medical Passed',
           triggerDate: new Date().toISOString().split('T')[0],
           guaranteeEnd: _t1gEnd, releaseDate: null,
@@ -7014,9 +6914,9 @@ function _inlineSaveMedical(appId, newMedical) {
         DB.commissions.push(_t1);
         window._commissionFired[_t1Key] = true;
         autosave('commissions');
-        addAudit('CREATE','Commission','T1 Medical Cleared (20%) — '+(_medCurr==='USD'?'$':'₱')+_t1amt.toLocaleString()+' for '+app.name);
-        toast('✅ T1 commission: '+(_medCurr==='USD'?'$':'₱')+_t1amt.toLocaleString()+' created for '+_agent.name+' (Medical Cleared)','success');
-        apiCreateCommission(_t1).then(function(r){ if(r&&r.ok&&r.data&&r.data.id){ _t1._dbId=r.data.id; autosave('commissions'); try{_triggerImmediateSync();}catch(e){} } }).catch(function(){});
+        addAudit('CREATE','Commission','Tranche 1 (20%) — '+(_medCurr==='USD'?'$':'₱')+_t1amt.toLocaleString()+' pending for '+app.name+' — Medical Passed');
+        toast('Commission T1: '+(_medCurr==='USD'?'$':'₱')+_t1amt.toLocaleString()+' (20%) pending for '+_agent.name,'info');
+        apiCreateCommission(_t1).then(function(r){ if(r&&r.ok&&r.data&&r.data.id){ _t1._dbId=r.data.id; autosave('commissions'); } }).catch(function(){});
         if (currentPage==='accounting') renderCommissions();
       }
     }
@@ -7378,10 +7278,11 @@ function saveApplicant() {
       // ── Stage gate: Deployed requires Medical + (OWWA or Processing) ──
       if (data.status === 'Deployed') {
         var _hist = existing._stageHistory || [];
-                var _hasProc = _hist.indexOf('Processing') !== -1 || _hist.indexOf('OWWA') !== -1;
+        var _hasMed  = _hist.indexOf('Medical')    !== -1;
+        var _hasProc = _hist.indexOf('Processing') !== -1 || _hist.indexOf('OWWA') !== -1;
         if (!_hasMed || !_hasProc) {
           var _miss = [];
-          // Medical stage removed from pipeline
+          if (!_hasMed)  _miss.push('Medical');
           if (!_hasProc) _miss.push('Processing or OWWA');
           var errEl = document.getElementById('a-error') || document.getElementById('applicant-error');
           if (errEl) {
@@ -8317,7 +8218,7 @@ function renderAnalytics() {
   const statusBreakdown={};
   DB.applicants.forEach(a=>{statusBreakdown[a.status]=(statusBreakdown[a.status]||0)+1;});
   const colors={'Deployed':'var(--green)','Applied':'var(--brand)','Screening':'var(--purple)',
-                'Interview':'var(--amber)','Rejected':'var(--red)'};
+                'Interview':'var(--amber)','Medical':'var(--teal)','Rejected':'var(--red)'};
   const breakdownEl = document.getElementById('analytics-breakdown');
   if (breakdownEl) {
     breakdownEl.innerHTML = Object.entries(statusBreakdown).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`
@@ -9590,14 +9491,14 @@ const PERMISSIONS=[
   ['Approve Documents',true,false,true,true,false,false],
   ['Upload Documents',true,true,false,true,false,false],
   ['View Analytics',true,true,true,true,true,true],
-  ['Manage Accounting',true,false,false,false,true,false],
-  ['View Accounting',true,false,true,false,true,false],
+  ['Manage Accounting',true,true, false,false,true, false],
+  ['View Accounting',true,true, true, false,true, false],
   ['Export Reports',true,true,true,false,true,false],
   ['Manage Users',true,false,false,false,false,false],
   ['Manage Roles',true,false,false,false,false,false],
   ['View Audit Log',true,false,true,true,false,false],
   ['Manage Integrations',true,false,false,false,false,false],
-  ['Manage Expenses',true,true, false,false,true, false],
+  ['Manage Expenses',true,false,false,false,false,false],
   ['System Settings',true,false,false,false,false,false],
   ['Send Chat Messages',true,true,true,true,true,false],
   ['View Dashboard',true,true,true,true,true,true],
@@ -9733,6 +9634,12 @@ async function savePermissions() {
   // Re-apply RBAC for current user immediately
   applyRBAC();
 
+  // Also sync to backend for cross-browser persistence
+  var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
+  if (isLive) {
+    var permData = { permissions: PERMISSIONS, rolesConfig: ROLES_CONFIG, ts: Date.now() };
+    apiFetch('/permissions', { method:'POST', body:JSON.stringify(permData) }).catch(function(){});
+  }
   toast('Permissions saved — all users will be updated within 30s', 'success');
   var saveBtn = document.querySelector('[onclick="savePermissions()"]');
   if (saveBtn) {
@@ -9842,7 +9749,6 @@ function _showApp(user) {
     if (typeof flushAutosave === 'function')  await flushAutosave();
     await syncAllFromAPI();
     await fetchAgents();
-    await loadViewerScopes(); // load after jobs/users are in DB — required for cross-device scope
     if (typeof renderNotifications === 'function')  renderNotifications();
     // Clear the restore flag — we already navigated there in _showApp
     window.__pendingPageRestore = null;
@@ -10533,11 +10439,6 @@ function switchAccTab(tab, el) {
   if (tab === 'rules')        renderCountryRules();
   if (tab === 'reports')      renderReports();
   if (tab === 'office')       renderOffice();
-  if (tab === 'invoices') {
-    // Update header buttons for invoices tab
-    if (hdra) hdra.innerHTML = '<button class="btn btn-p btn-sm" onclick="openNewInvoice()">+ New Invoice</button>';
-    renderInvoices();
-  }
 }
 
 // ── RENDER ACCOUNTING (main entry) ───────────────────────────────────
@@ -10676,18 +10577,12 @@ function renderAgentGrid(query) {
         '</div>'+
       '</div>'+
       '<div class="agent-stats">'+
-        (function(){
-          var al=( DB.agentLedger||[]).filter(function(e){return e.agentId===a.id;});
-          var cr=al.filter(function(e){return e.amount>0;}).reduce(function(s,e){return s+e.amount;},0);
-          var db=al.filter(function(e){return e.amount<0;}).reduce(function(s,e){return s+e.amount;},0);
-          var nb=cr+db;
-          return '<div class="agent-stat">'+
-            '<div class="agent-stat-val" style="color:'+(nb>=0?'var(--green)':'var(--red)')+'">'+
-              (nb>=0?'₱':'−₱')+Math.abs(nb).toLocaleString()+
-            '</div>'+
-            '<div class="agent-stat-lbl">Net Balance</div>'+
-          '</div>';
-        })()+
+        '<div class="agent-stat">'+
+          '<div class="agent-stat-val" style="color:'+(a.balance>=0?'var(--green)':'var(--red)')+'">'+
+            (a.balance>=0?'₱':'−₱')+Math.abs(a.balance).toLocaleString()+
+          '</div>'+
+          '<div class="agent-stat-lbl">Net Balance</div>'+
+        '</div>'+
         '<div class="agent-stat">'+
           '<div class="agent-stat-val" style="color:var(--brand)">'+a.totalDeployed+'</div>'+
           '<div class="agent-stat-lbl">Deployed</div>'+
@@ -10772,17 +10667,14 @@ function renderLedger() {
   var commTot   = entries.filter(function(e){ return e.type==='commission'; }).reduce(function(s,e){ return s+e.amount; }, 0);
   var expTot    = entries.filter(function(e){ return e.type==='expense'; }).reduce(function(s,e){ return s+e.amount; }, 0);
 
-  // Net balance = credits + debits (debits are negative) — always computed from ledger entries
-  var netBalance = credits + debits;
-
   var _isAdminLedger = (typeof getCurrentRole === 'function') && getCurrentRole() === 'Admin';
-  var _balanceNonZero = netBalance !== 0;
+  var _balanceNonZero = agent && agent.balance !== 0;
 
   if (sumEl) sumEl.innerHTML = [
     { label:'Total Credits', val:'₱'+credits.toLocaleString(), color:'var(--green)' },
     { label:'Total Debits',  val:'−₱'+Math.abs(debits).toLocaleString(), color:'var(--red)' },
     { label:'Commission',    val:'₱'+commTot.toLocaleString(), color:'var(--brand)' },
-    { label:'Net Balance',   val:(netBalance>=0?'₱':'−₱')+Math.abs(netBalance).toLocaleString(), color:netBalance>=0?'var(--green)':'var(--red)' },
+    { label:'Net Balance',   val:(agent?((agent.balance>=0?'₱':'−₱')+Math.abs(agent.balance).toLocaleString()):'—'), color:agent&&agent.balance>=0?'var(--green)':'var(--red)' },
   ].map(function(s){
     return '<div class="ledger-sum-card"><div class="ledger-sum-val" style="color:'+s.color+'">'+s.val+'</div><div class="ledger-sum-lbl">'+s.label+'</div></div>';
   }).join('') +
@@ -10968,23 +10860,20 @@ function renderCommissions() {
     ].map(function(s){ return '<div class="stat-card"><div class="stat-top"><div class="stat-icon" style="background:'+s.bg+';color:'+s.c+'">'+s.icon+'</div></div><div class="stat-val">'+s.val+'</div><div class="stat-lbl">'+s.label+'</div></div>'; }).join('');
   }
 
-  // Withhold rates config (commission amount now per agent, not per country)
+  // Commission rates config
   var ratesEl = document.getElementById('commission-rates');
   if (ratesEl) {
-    var activeRules = DB.countryRules.filter(function(r){ return r.active; });
-    if (!activeRules.length) {
-      ratesEl.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:10px 0">No active country rules yet.</div>';
-    } else {
-      ratesEl.innerHTML = activeRules.map(function(r) {
-        return '<div class="comm-row">'+
-          '<div class="comm-country">'+r.flag+' '+r.country+'</div>'+
-          '<div style="display:flex;align-items:center;gap:8px">'+
-            '<input class="comm-inp" type="number" min="0" max="100" step="1" value="'+r.withholdPct+'" id="cwith-'+r.id+'" title="Withhold during guarantee %" style="width:70px">'+
-            '<span style="font-size:11px;color:var(--dim)">% held during guarantee</span>'+
-          '</div>'+
-        '</div>';
-      }).join('');
-    }
+    ratesEl.innerHTML = DB.countryRules.filter(function(r){ return r.active; }).map(function(r) {
+      return '<div class="comm-row">'+
+        '<div class="comm-country">'+r.flag+' '+r.country+'</div>'+
+        '<div style="display:flex;align-items:center;gap:8px">'+
+          '<span style="font-size:12px;color:var(--muted);font-weight:700">'+(r.commissionCurrency==='USD'?'$ USD':'₱ PHP')+'</span>'+
+          '<input class="comm-inp" type="number" min="0" step="500" value="'+r.commissionAmt+'" id="crate-'+r.id+'" title="Commission amount PHP" style="width:90px">'+
+          '<input class="comm-inp" type="number" min="0" max="100" step="1" value="'+r.withholdPct+'" id="cwith-'+r.id+'" title="Withhold during guarantee %" style="width:60px">'+
+          '<span style="font-size:11px;color:var(--dim)">%&nbsp;held</span>'+
+        '</div>'+
+      '</div>';
+    }).join('');
   }
 
   // Pending commissions
@@ -11011,46 +10900,11 @@ function renderCommissions() {
     }).join('') : '<div class="empty-state" style="padding:20px"><div class="empty-icon">✅</div><div class="empty-title" style="font-size:13px">No pending commissions</div></div>';
   }
 
-  // Commission history table with filters
+  // Commission history table
   var tbody = document.getElementById('commission-tbody');
   if (tbody) {
-    // Populate agent filter dropdown
-    var agentSel = document.getElementById('comm-filter-agent');
-    if (agentSel && agentSel.options.length <= 1) {
-      var agentNames = [...new Set(DB.commissions.map(function(c){ return c.applicantName ? DB.agents.find(function(a){ return a.id===c.agentId; }) : null; }).filter(Boolean).map(function(a){ return a.name; }))].sort();
-      agentNames.forEach(function(name) {
-        var o = document.createElement('option'); o.value = name; o.text = name;
-        agentSel.appendChild(o);
-      });
-    }
-
-    // Read filters
-    var srch    = ((document.getElementById('comm-search')||{}).value||'').toLowerCase();
-    var fTranche= (document.getElementById('comm-filter-tranche')||{}).value||'';
-    var fStatus = (document.getElementById('comm-filter-status')||{}).value||'';
-    var fAgent  = (document.getElementById('comm-filter-agent')||{}).value||'';
-
-    var filtered = DB.commissions.filter(function(c) {
-      if (fTranche && String(c.tranche) !== fTranche) return false;
-      if (fStatus  && c.status !== fStatus) return false;
-      if (fAgent) {
-        var a = DB.agents.find(function(a){ return a.id===c.agentId; });
-        if (!a || a.name !== fAgent) return false;
-      }
-      if (srch) {
-        var agent = DB.agents.find(function(a){ return a.id===c.agentId; });
-        var agentName = agent ? agent.name.toLowerCase() : '';
-        if (!agentName.includes(srch) && !(c.applicantName||'').toLowerCase().includes(srch) && !(c.triggerStatus||'').toLowerCase().includes(srch)) return false;
-      }
-      return true;
-    });
-
-    // Update count
-    var countEl = document.getElementById('comm-filter-count');
-    if (countEl) countEl.textContent = filtered.length + ' of ' + DB.commissions.length + ' records';
-
     var trancheColors = { 1:'var(--teal)', 2:'var(--amber)', 3:'var(--brand)' };
-    tbody.innerHTML = filtered.length ? filtered.map(function(c) {
+    tbody.innerHTML = DB.commissions.map(function(c) {
       var agent      = DB.agents.find(function(a){ return a.id===c.agentId; });
       var tColor     = trancheColors[c.tranche] || 'var(--muted)';
       var tLabel     = c.trancheLabel || (c.tranche ? 'Tranche '+c.tranche : 'Commission');
@@ -11096,27 +10950,21 @@ function renderCommissions() {
           })()+
         '</td>'+
       '</tr>';
-    }).join('') : '<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--muted)">No commissions match the current filters</td></tr>';
+    }).join('');
   }
-}
-
-function clearCommissionFilters() {
-  var ids = ['comm-search','comm-filter-tranche','comm-filter-status'];
-  ids.forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
-  var agSel = document.getElementById('comm-filter-agent');
-  if (agSel) agSel.value = '';
-  renderCommissions();
 }
 
 function saveCommissionRates() {
   DB.countryRules.forEach(function(r) {
+    var rateEl = document.getElementById('crate-'+r.id);
     var withEl = document.getElementById('cwith-'+r.id);
-    if (withEl && withEl.value !== '') r.withholdPct = parseFloat(withEl.value);
-    apiSaveCountryRule(r).then(function(res){ if(res&&res.ok){ try{_triggerImmediateSync();}catch(e){} } }).catch(function(){});
+    if (rateEl && rateEl.value !== '') r.commissionAmt  = parseFloat(rateEl.value);
+    if (withEl && withEl.value !== '') r.withholdPct    = parseFloat(withEl.value);
+    apiSaveCountryRule(r).catch(function(){});
   });
   autosave('countryRules');
-  addAudit('UPDATE','Commissions','Withhold rates updated');
-  toast('Withhold rates saved','success');
+  addAudit('UPDATE','Commissions','Commission rates updated');
+  toast('Commission rates saved','success');
 }
 
 function releaseCommission(commId) {
@@ -11160,9 +11008,7 @@ function releaseCommission(commId) {
     phpAmt, c.applicantId);
   autosave('commissions');
   autosave('agents');
-  apiUpdateCommission(c, { status: 'Released', release_date: c.releaseDate }).then(function(r){
-    if(r&&r.ok){ if(window._lastFetch) window._lastFetch['commissions']=0; try{_triggerImmediateSync();}catch(e){} }
-  }).catch(function(){});
+  apiUpdateCommission(c, { status: 'Released', release_date: c.releaseDate }).catch(function(){});
   addAudit('UPDATE','Commission','Released T'+c.tranche+' '+sym+c.amount.toLocaleString()+' '+currency+' for '+c.applicantName);
   toast('Commission T'+c.tranche+' of '+sym+c.amount.toLocaleString()+' '+currency+' released to '+(agent?agent.name:'agent'),'success');
   renderCommissions();
@@ -11182,9 +11028,7 @@ function reverseCommission(commId) {
   addLedgerEntry(c.agentId, 'reversal', 'Commission reversed — '+c.applicantName, -c.amount, c.applicantId);
   autosave('commissions');
   autosave('agents');
-  apiUpdateCommission(c, { status: 'Reversed' }).then(function(r){
-    if(r&&r.ok){ if(window._lastFetch) window._lastFetch['commissions']=0; try{_triggerImmediateSync();}catch(e){} }
-  }).catch(function(){});
+  apiUpdateCommission(c, { status: 'Reversed' }).catch(function(){});
   addAudit('UPDATE','Commission','Reversed ₱'+c.amount.toLocaleString()+' for '+c.applicantName);
   toast('Commission reversed','success');
   renderCommissions();
@@ -11201,13 +11045,13 @@ function renderCountryRules() {
         '<span class="pill '+(r.active?'pill-green':'pill-gray')+'" style="font-size:10px;margin-left:auto">'+(r.active?'Active':'Inactive')+'</span>'+
       '</div>'+
       '<div class="rule-row"><span>Guarantee Period</span><span class="rule-val">'+r.guaranteePeriod+' mo</span></div>'+
-            '<div class="rule-row"><span>Withhold (guarantee)</span><span class="rule-val">'+r.withholdPct+'%</span></div>'+
+      '<div class="rule-row"><span>Commission Amount</span><span class="rule-val">'+(r.commissionCurrency==='USD'?'$':'₱')+r.commissionAmt.toLocaleString()+' '+(r.commissionCurrency||'PHP')+'</span></div>'+
+      '<div class="rule-row"><span>Withhold (guarantee)</span><span class="rule-val">'+r.withholdPct+'%</span></div>'+
       '<div class="rule-row"><span>Expense Rule</span><span style="font-size:11.5px;color:var(--muted)">'+expLabel+'</span></div>'+
       '<div class="rule-row"><span>Currency</span><span class="rule-val">'+r.currency+'</span></div>'+
       '<div style="display:flex;gap:6px;margin-top:10px">'+
         '<button class="btn btn-s btn-sm" style="flex:1" onclick="openEditCountryRule('+idx+')">✏ Edit</button>'+
         '<button class="btn btn-ghost btn-xs" onclick="toggleRuleActive('+idx+')">'+(r.active?'Disable':'Enable')+'</button>'+
-        '<button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="deleteCountryRule(\'' + r.id + '\')">🗑</button>'+
       '</div>'+
     '</div>';
   }).join('');
@@ -11218,25 +11062,8 @@ function toggleRuleActive(idx) {
   rule.active = !rule.active;
   renderCountryRules();
   autosave('countryRules');
-  apiSaveCountryRule(rule).then(function(r){ if(r&&r.ok){ try{_triggerImmediateSync();}catch(e){} } }).catch(function(){});
+  apiSaveCountryRule(rule).catch(function(){});
   toast('Country rule ' + (rule.active ? 'enabled' : 'disabled'), 'success');
-}
-function deleteCountryRule(ruleId) {
-  if (!confirm('Delete this country rule? This cannot be undone.')) return;
-  var idx = DB.countryRules.findIndex(function(r){ return r.id===ruleId; });
-  if (idx === -1) return;
-  var rule = DB.countryRules[idx];
-  DB.countryRules.splice(idx, 1);
-  autosave('countryRules');
-  renderCountryRules();
-  var dbId = rule._dbId || rule.id;
-  if (dbId && isUUID(dbId)) {
-    apiFetch('/country-rules/' + dbId, { method: 'DELETE' })
-      .then(function(r){ if(r&&r.ok){ try{_triggerImmediateSync();}catch(e){} } })
-      .catch(function(){});
-  }
-  addAudit('DELETE','Country Rule','Deleted rule for ' + rule.country);
-  toast('Country rule deleted', 'success');
 }
 
 // ── REPORTS ───────────────────────────────────────────────────────────
@@ -11326,9 +11153,7 @@ function addLedgerEntry(agentId, type, desc, amount, applicantId) {
   autosave('agents');
   autosave('agentLedger');
   // Persist to PostgreSQL
-  apiCreateLedgerEntry(newEntry).then(function(r){
-    if(r&&r.ok){ try{_triggerImmediateSync();}catch(e){} }
-  }).catch(function(){});
+  apiCreateLedgerEntry(newEntry).catch(function(){});
   // Persist agent balance to PostgreSQL
   apiUpdateAgent(agent).catch(function(){});
   // Sync to shared storage so all users see the new entry immediately on next poll
@@ -11344,7 +11169,9 @@ function addLedgerEntry(agentId, type, desc, amount, applicantId) {
 // ── resetAgentBalanceToZero — Admin-only: clears all ledger entries,
 //    reverts all Charged expenses back to Pending, resets balance to 0 ──────
 function resetAgentBalanceToZero(agentId) {
-  if ((typeof getCurrentRole === 'function') && getCurrentRole() !== 'Admin') { var _rr=getCurrentRole(); if(!['Admin','Finance'].includes(_rr)){toast('Only Admin/Finance can reset balances','error');return;} }
+  if ((typeof getCurrentRole === 'function') && getCurrentRole() !== 'Admin') {
+    toast('Only Admins can reset agent balances', 'error'); return;
+  }
   var agent = DB.agents.find(function(a){ return a.id === agentId; });
   if (!agent) { toast('Agent not found', 'error'); return; }
 
@@ -11851,16 +11678,21 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
     }
   }
 
-  // ── 3. Commission helper — uses agent's commission only ──────────────
+  // ── 3. Commission helper — resolve country rule + total commission ──
   function _resolveCommission() {
-    var country = app.job ? app.job.split('·').pop().trim() : '';
-    var rule    = DB.countryRules.find(function(r){ return r.country === country && r.active; })
-               || DB.countryRules.find(function(r){ return r.active; });
-    // Commission amount comes from the agent's own setting ONLY
-    // Country rules only provide guarantee period and withhold %
-    var total    = (agent && agent.commissionAmt != null && agent.commissionAmt > 0)
-                 ? agent.commissionAmt : 15000;
-    var currency = (agent && agent.commissionCurrency) || 'PHP';
+    var country  = app.job ? app.job.split('·').pop().trim() : '';
+    var rule     = DB.countryRules.find(function(r){ return r.country === country && r.active; })
+                || DB.countryRules.find(function(r){ return r.active; });
+    // Priority: 1) Agent's own commission rate  2) Country rule  3) Default ₱15,000
+    // If the agent has a commission amount set, it always wins over the country rate.
+    // Agent commission wins if explicitly set (non-null). Country rule is fallback only.
+    var agentHasRate = agent && agent.commissionAmt != null && agent.commissionAmt > 0;
+    var total    = agentHasRate
+      ? agent.commissionAmt
+      : (rule ? rule.commissionAmt : 15000);
+    var currency = agentHasRate
+      ? (agent.commissionCurrency || 'PHP')
+      : (rule ? (rule.commissionCurrency || 'PHP') : 'PHP');
     return { country: country || 'Philippines', rule: rule, total: total, currency: currency };
   }
 
@@ -11905,7 +11737,7 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
       DB.commissions.push(_t2); _markTrancheFired(2); autosave('commissions');
       addAudit('CREATE','Commission','Tranche 2 (20%) — '+_oc.currency+' '+t2amt.toLocaleString()+' pending for '+app.name+' — '+newStatus);
       toast('Commission T2: '+(_oc.currency==='USD'?'$':'\u20B1')+t2amt.toLocaleString()+' (20%) pending for '+agent.name,'info');
-      apiCreateCommission(_t2).then(function(r){ if(r&&r.ok&&r.data&&r.data.id){ _t2._dbId=r.data.id; autosave('commissions'); try{_triggerImmediateSync();}catch(e){} } }).catch(function(){});
+      apiCreateCommission(_t2).then(function(r){ if(r&&r.ok&&r.data&&r.data.id){ _t2._dbId=r.data.id; autosave('commissions'); } }).catch(function(){});
     }
   }
 
@@ -11927,7 +11759,7 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
       };
       DB.commissions.push(_t3); _markTrancheFired(3);
       DB.commissions.filter(function(x){ return x.applicantId===applicantId && !x._dbId; })
-        .forEach(function(x){ apiCreateCommission(x).then(function(r){ if(r&&r.ok&&r.data&&r.data.id){ x._dbId=r.data.id; autosave('commissions'); try{_triggerImmediateSync();}catch(e){} } }).catch(function(){}); });
+        .forEach(function(x){ apiCreateCommission(x).then(function(r){ if(r&&r.ok&&r.data&&r.data.id){ x._dbId=r.data.id; autosave('commissions'); } }).catch(function(){}); });
       agent.totalDeployed = (agent.totalDeployed || 0) + 1;
       autosave('agents');
       addAudit('CREATE', 'Commission',
@@ -12189,23 +12021,13 @@ function openEditAgent(idx) {
   openOverlay('overlay-agent');
 }
 
-// Find highest existing AGT-XXX number and return the next unique code
-function _nextAgentCode() {
-  var max = 0;
-  (DB.agents || []).forEach(function(a) {
-    var m = (a.code || a.id || '').match(/AGT[-_]?(\d+)/i);
-    if (m) max = Math.max(max, parseInt(m[1]));
-  });
-  return 'AGT-' + String(max + 1).padStart(3, '0');
-}
-
 function submitAgent() {
   var name  = (document.getElementById('ag-name').value||'').trim();
   var phone = (document.getElementById('ag-phone').value||'').trim();
   if (!name || !phone) { toast('Name and phone are required','error'); return; }
   var data = {
     name: name,
-    code: (document.getElementById('ag-code').value||'').trim() || _nextAgentCode(),
+    code: (document.getElementById('ag-code').value||'').trim() || ('AGT-'+String(DB.agents.length+1).padStart(3,'0')),
     phone: phone,
     email: (document.getElementById('ag-email').value||'').trim(),
     country: document.getElementById('ag-country').value,
@@ -12223,14 +12045,13 @@ function submitAgent() {
       if (!r.ok) toast('💾 Agent saved — server will update when reconnected','info');
       else {
         Object.assign(existing, mapAgent(r.data));
-        try{_triggerImmediateSync();}catch(e){}
         autosave('agents');
         if (typeof _lastFetch !== 'undefined') _lastFetch['agents'] = 0;
       }
     });
     toast('Agent updated','success');
   } else {
-    var newAgent = Object.assign(data,{id:'AGT-LOCAL-'+Date.now(),balance:0,totalCommission:0,totalExpenses:0,totalDeployed:0,backouts:0,repatriations:0});
+    var newAgent = Object.assign(data,{id:'AGT-'+String(DB.agents.length+1).padStart(3,'0'),balance:0,totalCommission:0,totalExpenses:0,totalDeployed:0,backouts:0,repatriations:0});
     DB.agents.push(newAgent);
     addAudit('CREATE','Agent','Added agent: '+name);
     apiCreateAgent(newAgent).then(function(r){
@@ -12452,30 +12273,24 @@ function renderEmployerFees() {
     return true;
   }).sort(function(a,b){ return (b.createdAt||'').localeCompare(a.createdAt||''); });
 
-  // KPIs — calculated from the same filtered set as the table
+  // KPIs
   var kpiEl = document.getElementById('ef-kpis');
   if (kpiEl) {
-    // Use filtered fees for KPIs so they reflect the current employer/status selection
-    var kpiFees   = DB.employerFees.filter(function(f) {
-      if (employerFilter && f.employer !== employerFilter) return false;
-      return true; // status filter intentionally excluded from KPIs so totals make sense
-    });
-    var totalUSD   = kpiFees.reduce(function(s,f){ return s + (f.feeUSD||0); }, 0);
-    var pendingCt  = kpiFees.filter(function(f){ return f.status==='Pending'; }).length;
-    var settledCt  = kpiFees.filter(function(f){ return f.status==='Settled'; }).length;
-    var settledUSD = kpiFees.filter(function(f){ return f.status==='Settled'; }).reduce(function(s,f){ return s+(f.feeUSD||0); },0);
-    var pendingUSD = kpiFees.filter(function(f){ return f.status==='Pending'; }).reduce(function(s,f){ return s+(f.feeUSD||0); },0);
-    // Deployment ready — only for the filtered employer's applicants
-    var deployReadyCt = DB.applicants.filter(function(a){
-      if (a.status !== 'OWWA' && a.status !== 'Visa') return false;
-      var pf = kpiFees.find(function(f){ return f.applicantId===a.id && f.status==='Pending'; });
-      return !pf;
-    }).length;
+    var allFees    = DB.employerFees;
+    var totalUSD   = allFees.reduce(function(s,f){ return s + (f.feeUSD||0); }, 0);
+    var pendingCt  = allFees.filter(function(f){ return f.status==='Pending'; }).length;
+    var settledCt  = allFees.filter(function(f){ return f.status==='Settled'; }).length;
+    var settledUSD = allFees.filter(function(f){ return f.status==='Settled'; }).reduce(function(s,f){ return s+(f.feeUSD||0); },0);
+    var pendingUSD = allFees.filter(function(f){ return f.status==='Pending'; }).reduce(function(s,f){ return s+(f.feeUSD||0); },0);
     kpiEl.innerHTML =
-      _efKpi('💵', 'Total Fees',       '$' + totalUSD.toLocaleString() + ' USD', 'var(--brand)') +
-      _efKpi('⏳', 'Pending',          pendingCt  + ' · $' + pendingUSD.toLocaleString()  + ' USD', 'var(--amber)') +
-      _efKpi('✅', 'Settled',          settledCt  + ' · $' + settledUSD.toLocaleString()  + ' USD', 'var(--green)') +
-      _efKpi('🚀', 'Deployment Ready', deployReadyCt + ' applicants', 'var(--teal)');
+      _efKpi('💵', 'Total Fees', '$' + totalUSD.toLocaleString() + ' USD', 'var(--brand)') +
+      _efKpi('⏳', 'Pending', pendingCt + ' · $' + pendingUSD.toLocaleString() + ' USD', 'var(--amber)') +
+      _efKpi('✅', 'Settled', settledCt + ' · $' + settledUSD.toLocaleString() + ' USD', 'var(--green)') +
+      _efKpi('🚀', 'Deployment Ready', DB.applicants.filter(function(a){
+        if (a.status !== 'OWWA' && a.status !== 'Visa') return false;
+        var pf = DB.employerFees.find(function(f){ return f.applicantId===a.id && f.status==='Pending'; });
+        return !pf; // no pending fee = ready
+      }).length + ' applicants', 'var(--teal)');
   }
 
   // Table
@@ -12540,7 +12355,9 @@ function _efKpi(icon, label, val, color) {
 }
 
 function markFeeSettled(feeId) {
-  if ((typeof getCurrentRole === 'function') && getCurrentRole() !== 'Admin') { var _sr=getCurrentRole(); if(!['Admin','Manager','Finance'].includes(_sr)){toast('Only Admin/Manager/Finance can settle fees','error');return;} }
+  if ((typeof getCurrentRole === 'function') && getCurrentRole() !== 'Admin') {
+    toast('Only Admins can mark employer fees as settled', 'error'); return;
+  }
   var fee = DB.employerFees.find(function(f){ return f.id === feeId; });
   if (!fee) return;
   var currentUser = (typeof _currentUser !== 'undefined' && _currentUser) ? _currentUser.name || _currentUser.email : 'Admin';
@@ -12552,14 +12369,16 @@ function markFeeSettled(feeId) {
   apiPatchEmployerFee(fee._dbId || fee.id, {
     status: 'Settled', settled_by: currentUser,
     settled_at: fee.settledAt,
-  }).then(function(r){ if(r&&r.ok){ try{_triggerImmediateSync();}catch(e){} } }).catch(function(){});
+  }).catch(function(){});
   addAudit('UPDATE', 'Employer Fee', 'Fee $' + fee.feeUSD + ' USD settled for ' + fee.applicantName + ' (' + fee.employer + ')');
   toast('✅ Employer fee marked as settled — applicant can now be deployed', 'success');
   renderEmployerFees();
 }
 
 function markFeeWaived(feeId) {
-  if ((typeof getCurrentRole === 'function') && getCurrentRole() !== 'Admin') { var _wr=getCurrentRole(); if(!['Admin','Manager','Finance'].includes(_wr)){toast('Only Admin/Manager/Finance can waive fees','error');return;} }
+  if ((typeof getCurrentRole === 'function') && getCurrentRole() !== 'Admin') {
+    toast('Only Admins can waive employer fees', 'error'); return;
+  }
   var fee = DB.employerFees.find(function(f){ return f.id === feeId; });
   if (!fee) return;
   if (!confirm('Waive the $' + fee.feeUSD + ' USD employer fee for ' + fee.applicantName + '?\n\nApplicant will be allowed to deploy without fee payment.')) return;
@@ -12571,7 +12390,7 @@ function markFeeWaived(feeId) {
   _syncEmployerFees();
   apiPatchEmployerFee(fee._dbId || fee.id, {
     status: 'Waived', settled_by: fee.settledBy, settled_at: fee.settledAt,
-  }).then(function(r){ if(r&&r.ok){ try{_triggerImmediateSync();}catch(e){} } }).catch(function(){});
+  }).catch(function(){});
   addAudit('UPDATE', 'Employer Fee', 'Fee $' + fee.feeUSD + ' USD WAIVED for ' + fee.applicantName + ' (' + fee.employer + ')');
   toast('Fee waived — applicant can now be deployed', 'info');
   renderEmployerFees();
@@ -13493,7 +13312,7 @@ function openAddCountryRule() {
     var el=document.getElementById(id); if(el) el.value='';
   });
   var gu=document.getElementById('cr-guarantee'); if(gu) gu.value='6';
-
+  var co=document.getElementById('cr-commission'); if(co) co.value='5';
   var wh=document.getElementById('cr-withhold'); if(wh) wh.value='20';
   openOverlay('overlay-country-rule');
 }
@@ -13503,10 +13322,13 @@ function openEditCountryRule(idx) {
   if (!r) return;
   editingRuleIdx = idx;
   document.getElementById('rule-modal-title').textContent = 'Edit Country Rule';
-  document.getElementById('cr-country').value      = r.country;
-  document.getElementById('cr-guarantee').value    = r.guaranteePeriod;
-  document.getElementById('cr-withhold').value     = r.withholdPct;
-  document.getElementById('cr-currency').value     = r.currency;
+  document.getElementById('cr-country').value    = r.country;
+  document.getElementById('cr-guarantee').value  = r.guaranteePeriod;
+  document.getElementById('cr-commission').value = r.commissionAmt;
+  var crCurEl = document.getElementById('cr-commission-currency');
+  if (crCurEl) crCurEl.value = r.commissionCurrency || 'PHP';
+  document.getElementById('cr-withhold').value   = r.withholdPct;
+  document.getElementById('cr-currency').value   = r.currency;
   document.getElementById('cr-expense-rule').value = r.expenseRule;
   openOverlay('overlay-country-rule');
 }
@@ -13518,7 +13340,8 @@ function submitCountryRule() {
     country: country,
     flag: '🌍',
     guaranteePeriod: (function(){ var v = document.getElementById('cr-guarantee').value; return v !== '' && !isNaN(parseInt(v)) ? parseInt(v) : 6; })(),
-
+    commissionAmt:   (function(){ var v = document.getElementById('cr-commission').value; return v !== '' && !isNaN(parseFloat(v)) ? parseFloat(v) : 15000; })(),
+    commissionCurrency: (document.getElementById('cr-commission-currency') || {}).value || 'PHP',
     withholdPct:     (function(){ var v = document.getElementById('cr-withhold').value; return v !== '' && !isNaN(parseFloat(v)) ? parseFloat(v) : 20; })(),
     currency:        document.getElementById('cr-currency').value,
     expenseRule:     document.getElementById('cr-expense-rule').value,
@@ -13533,679 +13356,13 @@ function submitCountryRule() {
     toast('Country added', 'success');
   }
   autosave('countryRules');
-  apiSaveCountryRule(editingRuleIdx >= 0 ? DB.countryRules[editingRuleIdx] : DB.countryRules[DB.countryRules.length-1]).then(function(r){ if(r&&r.ok){ try{_triggerImmediateSync();}catch(e){} } }).catch(function(){});
+  apiSaveCountryRule(editingRuleIdx >= 0 ? DB.countryRules[editingRuleIdx] : DB.countryRules[DB.countryRules.length-1]).catch(function(){});
   addAudit('UPDATE', 'Settings', 'Country rule saved: ' + (data.country || ''));
   closeOverlay('overlay-country-rule');
   renderCountryRules();
 }
 
-
-// ── INVOICE API ───────────────────────────────────────────────────────
-async function apiFetchInvoices() {
-  var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
-  if (!isLive) return;
-  var r = await apiFetch('/invoices');
-  if (r.ok && Array.isArray(r.data)) {
-    DB.invoices = r.data.map(function(row) {
-      var data = typeof row.data === 'string' ? JSON.parse(row.data||'{}') : (row.data||{});
-      return Object.assign({ id: row.id, _dbId: row.id }, data, {
-        id: row.id, _dbId: row.id,
-        number: row.number || data.number,
-        date:   row.date   || data.date,
-        employer: row.employer || data.employer,
-        createdAt: row.created_at ? String(row.created_at).slice(0,10) : data.createdAt,
-      });
-    });
-    autosave('invoices');
-  }
-}
-async function apiCreateInvoice(inv) {
-  var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
-  if (!isLive) return { ok: true };
-  var r = await apiFetch('/invoices', {
-    method: 'POST',
-    body: JSON.stringify({
-      number:   inv.number,
-      date:     inv.date,
-      employer: inv.employer,
-      data:     JSON.stringify(inv),
-    }),
-  });
-  if (r.ok && r.data && r.data.id) { inv._dbId = r.data.id; inv.id = r.data.id; }
-  else if (!r.ok) console.error('[Invoice create]', r.httpStatus, r.error);
-  return r;
-}
-async function apiUpdateInvoice(inv) {
-  var dbId = inv._dbId || inv.id;
-  var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
-  if (!isLive || !dbId || !isUUID(dbId)) { autosave('invoices'); return { ok: true }; }
-  var r = await apiFetch('/invoices/' + dbId, {
-    method: 'PATCH',
-    body: JSON.stringify({
-      number:   inv.number,
-      date:     inv.date,
-      employer: inv.employer,
-      data:     JSON.stringify(inv),
-    }),
-  });
-  if (!r.ok) console.error('[Invoice update]', r.httpStatus, r.error);
-  return r;
-}
-async function apiDeleteInvoice(id) {
-  var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
-  if (!isLive || !id || !isUUID(id)) return { ok: true };
-  return await apiFetch('/invoices/' + id, { method: 'DELETE' });
-}
-
-var _INV_CURRENCIES = {
-  SAR: { name:'Saudi Riyal',         symbol:'SAR',  rate: 3.75   },
-  AED: { name:'UAE Dirham',          symbol:'AED',  rate: 3.6725 },
-  KWD: { name:'Kuwaiti Dinar',       symbol:'KWD',  rate: 0.307  },
-  QAR: { name:'Qatari Riyal',        symbol:'QAR',  rate: 3.64   },
-  BHD: { name:'Bahraini Dinar',      symbol:'BHD',  rate: 0.376  },
-  OMR: { name:'Omani Rial',          symbol:'OMR',  rate: 0.385  },
-  JOD: { name:'Jordanian Dinar',     symbol:'JOD',  rate: 0.709  },
-  LBP: { name:'Lebanese Pound',      symbol:'LBP',  rate: 89500  },
-  EGP: { name:'Egyptian Pound',      symbol:'EGP',  rate: 48.5   },
-  MYR: { name:'Malaysian Ringgit',   symbol:'MYR',  rate: 4.72   },
-  SGD: { name:'Singapore Dollar',    symbol:'SGD',  rate: 1.34   },
-  HKD: { name:'Hong Kong Dollar',    symbol:'HKD',  rate: 7.84   },
-  JPY: { name:'Japanese Yen',        symbol:'JPY',  rate: 156.5  },
-  KRW: { name:'Korean Won',          symbol:'KRW',  rate: 1375   },
-  TWD: { name:'Taiwan Dollar',       symbol:'TWD',  rate: 32.3   },
-  EUR: { name:'Euro',                symbol:'EUR',  rate: 0.924  },
-  GBP: { name:'British Pound',       symbol:'GBP',  rate: 0.792  },
-  CAD: { name:'Canadian Dollar',     symbol:'CAD',  rate: 1.367  },
-  AUD: { name:'Australian Dollar',   symbol:'AUD',  rate: 1.548  },
-  NZD: { name:'New Zealand Dollar',  symbol:'NZD',  rate: 1.665  },
-  PHP: { name:'Philippine Peso',     symbol:'PHP',  rate: 57.5   },
-  INR: { name:'Indian Rupee',        symbol:'INR',  rate: 83.8   },
-  PKR: { name:'Pakistani Rupee',     symbol:'PKR',  rate: 278    },
-  BDT: { name:'Bangladeshi Taka',    symbol:'BDT',  rate: 110    },
-  LKR: { name:'Sri Lanka Rupee',     symbol:'LKR',  rate: 306    },
-};
-// ╔══════════════════════════════════════════════════════════════════╗
-// ║  INVOICES MODULE                                                  ║
-// ╚══════════════════════════════════════════════════════════════════╝
-
-
-var _editingInvoiceId = null;
-
-function _nextInvoiceNo() {
-  var max = 0;
-  (DB.invoices||[]).forEach(function(inv) {
-    var n = parseInt(inv.number||0); if (n > max) max = n;
-  });
-  return String(max + 1);
-}
-
-// ── Render invoice list ──────────────────────────────────────────────
-function renderInvoices() {
-  var el = document.getElementById('acc-invoices') || document.getElementById('inv-list');
-  if (!el) return;
-  var invs = (DB.invoices||[]).slice().sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
-  if (!invs.length) {
-    el.innerHTML =
-      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'+
-        '<div><div style="font-size:15px;font-weight:800">Employer Invoices</div>'+
-        '<div style="font-size:12px;color:var(--muted)">Generate and manage invoices for employer processing fees</div></div>'+
-        '<button class="btn btn-p" onclick="openNewInvoice()">+ New Invoice</button>'+
-      '</div>'+
-      '<div style="text-align:center;padding:56px 24px;color:var(--muted)"><div style="font-size:36px;margin-bottom:10px">🧾</div><div style="font-weight:700;margin-bottom:6px">No invoices yet</div><div style="font-size:12px">Click "+ New Invoice" to create your first invoice.</div></div>';
-    return;
-  }
-  el.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'+
-    '<div><div style="font-size:15px;font-weight:800">Employer Invoices</div>'+
-    '<div style="font-size:12px;color:var(--muted)">'+invs.length+' invoice(s)</div></div>'+
-    '<button class="btn btn-p" onclick="openNewInvoice()">+ New Invoice</button>'+
-    '</div>'+
-    '<div class="card" style="padding:0;overflow:hidden"><table style="width:100%;border-collapse:collapse">'+
-    '<thead><tr style="border-bottom:2px solid var(--border)">'+
-    '<th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--muted)">INV NO.</th>'+
-    '<th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--muted)">DATE</th>'+
-    '<th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--muted)">EMPLOYER</th>'+
-    '<th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--muted)">APPLICANTS</th>'+
-    '<th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:700;color:var(--muted)">TOTAL USD</th>'+
-    '<th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:700;color:var(--muted)">BALANCE</th>'+
-    '<th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:700;color:var(--muted)">ACTIONS</th>'+
-    '</tr></thead><tbody>'+
-    invs.map(function(inv) {
-      var total   = (inv.rows||[]).reduce(function(s,r){ return s+(parseFloat(r.usd)||0); },0);
-      var paid    = parseFloat(inv.paid||0);
-      var balance = total - paid;
-      var balCol  = balance > 0 ? 'var(--red)' : 'var(--green)';
-      return '<tr style="border-bottom:1px solid var(--border)" onmouseover="this.style.background=\'var(--s2)\'" onmouseout="this.style.background=\'\'">'+
-        '<td style="padding:11px 14px;font-family:monospace;font-size:12px;font-weight:700;color:var(--brand)">#'+inv.number+'</td>'+
-        '<td style="padding:11px 14px;font-size:12px;color:var(--muted)">'+inv.date+'</td>'+
-        '<td style="padding:11px 14px;font-size:13px;font-weight:600">'+inv.employer+'</td>'+
-        '<td style="padding:11px 14px;font-size:12px;color:var(--muted)">'+(inv.rows||[]).length+' applicant(s)</td>'+
-        '<td style="padding:11px 14px;text-align:right;font-size:13px;font-weight:700;font-family:monospace">$'+total.toLocaleString()+'</td>'+
-        '<td style="padding:11px 14px;text-align:right;font-size:13px;font-weight:700;font-family:monospace;color:'+balCol+'">$'+Math.abs(balance).toLocaleString()+(balance>0?' due':' paid')+'</td>'+
-        '<td style="padding:11px 14px;text-align:right;white-space:nowrap">'+
-          '<button class="btn btn-p btn-sm" style="font-size:11px;margin-right:4px" onclick="viewInvoice(\''+inv.id+'\')">View</button>'+
-          '<button class="btn btn-s btn-sm" style="font-size:11px;margin-right:4px" onclick="editInvoice(\''+inv.id+'\')">Edit</button>'+
-          '<button class="btn btn-ghost btn-sm" style="font-size:11px;color:var(--red)" onclick="deleteInvoice(\''+inv.id+'\')">🗑</button>'+
-        '</td></tr>';
-    }).join('')+'</tbody></table></div>';
-}
-
-// ── Open new invoice ─────────────────────────────────────────────────
-function openNewInvoice() {
-  _editingInvoiceId = null;
-  document.getElementById('inv-modal-title').textContent = '🧾 New Invoice';
-  document.getElementById('inv-number').value        = _nextInvoiceNo();
-  document.getElementById('inv-date').value          = new Date().toISOString().split('T')[0];
-  document.getElementById('inv-counterpart').value   = '';
-  document.getElementById('inv-charges-for').value   = 'APPLICANTS DEPLOYMENT';
-  document.getElementById('inv-employer-address').value = '';
-  document.getElementById('inv-paid').value          = '0';
-  document.getElementById('inv-sar-rate').value      = '3.75';
-  var lcEl = document.getElementById('inv-local-currency');
-  if (lcEl) { lcEl.value = 'SAR'; }
-  setTimeout(onInvoiceCurrencyChange, 50);
-  document.getElementById('inv-notes').value         = '';
-  // Populate employer dropdown from job orders
-  var empSel = document.getElementById('inv-employer');
-  var employers = [...new Set((DB.jobs||[]).map(function(j){ return j.employer; }).filter(Boolean))].sort();
-  empSel.innerHTML = '<option value="">— Select employer —</option>' +
-    employers.map(function(e){ return '<option value="'+e+'">'+e+'</option>'; }).join('');
-  empSel.value = '';
-  document.getElementById('inv-rows').innerHTML = '';
-  recalcInvoice();
-  openOverlay('overlay-invoice');
-}
-
-
-function onInvoiceCurrencyChange() {
-  var code = (document.getElementById('inv-local-currency')||{}).value || '';
-  var rateEl = document.getElementById('inv-sar-rate');
-  var hdrEl  = document.getElementById('inv-local-col-hdr');
-  var wrapEl = document.getElementById('inv-total-local-wrap');
-  if (code && _INV_CURRENCIES[code]) {
-    if (rateEl) rateEl.value = _INV_CURRENCIES[code].rate;
-    if (hdrEl)  hdrEl.textContent = code;
-    if (wrapEl) wrapEl.style.display = '';
-  } else {
-    if (rateEl) rateEl.value = '1';
-    if (hdrEl)  hdrEl.textContent = '';
-    if (wrapEl) wrapEl.style.display = 'none';
-  }
-  recalcInvoice();
-}
-
-function loadInvoiceApplicants() {
-  var employer = (document.getElementById('inv-employer')||{}).value || '';
-  // Auto-detect currency from the employer's country
-  var job = (DB.jobs||[]).find(function(j){ return j.employer===employer; });
-  if (job && job.country) {
-    var _countryToCurrency = {
-      'Saudi Arabia':'SAR','UAE':'AED','United Arab Emirates':'AED',
-      'Kuwait':'KWD','Qatar':'QAR','Bahrain':'BHD','Oman':'OMR',
-      'Jordan':'JOD','Egypt':'EGP','Malaysia':'MYR','Singapore':'SGD',
-      'Hong Kong':'HKD','Japan':'JPY','Korea':'KRW','Taiwan':'TWD',
-      'Philippines':'PHP','UK':'GBP','United Kingdom':'GBP','Australia':'AUD',
-      'Canada':'CAD','Europe':'EUR','Germany':'EUR','France':'EUR',
-    };
-    var detectedCurrency = _countryToCurrency[job.country];
-    if (detectedCurrency && _INV_CURRENCIES[detectedCurrency]) {
-      var lcEl = document.getElementById('inv-local-currency');
-      if (lcEl) lcEl.value = detectedCurrency;
-      onInvoiceCurrencyChange();
-    }
-  }
-  var sarRate  = parseFloat((document.getElementById('inv-sar-rate')||{}).value||3.75);
-  document.getElementById('inv-rows').innerHTML = '';
-  if (!employer) return;
-  // Auto-fill address from job destination/country
-  var job = (DB.jobs||[]).find(function(j){ return j.employer===employer; });
-  if (job && job.country) {
-    var addrEl = document.getElementById('inv-employer-address');
-    if (addrEl && !addrEl.value) addrEl.value = job.country.toUpperCase();
-  }
-  // Add employer fees for this employer as line items
-  var fees = (DB.employerFees||[]).filter(function(f){ return f.employer===employer && f.status==='Pending'; });
-  if (fees.length) {
-    fees.forEach(function(f) {
-      _addInvoiceRowData(f.applicantName||'', 'PROCESSING FEES', employer, f.feeUSD||0, sarRate);
-    });
-  } else {
-    // Add an empty row
-    addInvoiceRow(employer, sarRate);
-  }
-  recalcInvoice();
-}
-
-function _addInvoiceRowData(applicant, particular, company, usd, sarRate) {
-  var tbody = document.getElementById('inv-rows');
-  var idx   = tbody.children.length;
-  var sar   = (parseFloat(usd)||0) * (parseFloat(sarRate)||3.75);
-  var tr = document.createElement('tr');
-  tr.style.borderBottom = '1px solid var(--border)';
-  tr.innerHTML =
-    '<td style="padding:5px 8px"><input class="f-inp" style="font-size:11.5px;padding:5px 7px" value="'+_esc(applicant)+'" placeholder="Applicant name" oninput="recalcInvoice()"></td>'+
-    '<td style="padding:5px 8px"><input class="f-inp" style="font-size:11.5px;padding:5px 7px" value="'+_esc(particular)+'" placeholder="e.g. Processing Fees"></td>'+
-    '<td style="padding:5px 8px"><input class="f-inp" style="font-size:11.5px;padding:5px 7px" value="'+_esc(company)+'" placeholder="Company"></td>'+
-    '<td style="padding:5px 8px"><input class="f-inp" style="font-size:11.5px;padding:5px 6px;text-align:right;width:70px" type="number" min="0" value="'+usd+'" oninput="recalcInvoice()"></td>'+
-    '<td style="padding:5px 8px;text-align:right;font-size:11.5px;color:var(--muted);white-space:nowrap;min-width:80px" class="inv-sar-cell">'+sar.toLocaleString(undefined,{minimumFractionDigits:2})+'</td>'+
-    '<td style="padding:5px 6px"><button onclick="this.closest(\'tr\').remove();recalcInvoice()" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px">✕</button></td>';
-  tbody.appendChild(tr);
-}
-function addInvoiceRow(company, sarRate) {
-  var emp = (document.getElementById('inv-employer')||{}).value||company||'';
-  var rate = parseFloat((document.getElementById('inv-sar-rate')||{}).value||sarRate||3.75);
-  _addInvoiceRowData('','PROCESSING FEES',emp,0,rate);
-}
-function _esc(s){ return (s||'').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
-
-function recalcInvoice() {
-  var rate     = parseFloat((document.getElementById('inv-sar-rate')||{}).value)||3.75;
-  var currCode = (document.getElementById('inv-local-currency')||{}).value||'SAR';
-  var symbol   = currCode || 'SAR';
-  // Update column header
-  var hdrEl = document.getElementById('inv-local-col-hdr');
-  if (hdrEl) hdrEl.textContent = symbol;
-  var rows = document.querySelectorAll('#inv-rows tr');
-  var totalUSD = 0;
-  rows.forEach(function(tr) {
-    var inp = tr.querySelectorAll('input')[3]; // usd input
-    var usd = parseFloat((inp||{}).value||0)||0;
-    totalUSD += usd;
-    var localCell = tr.querySelector('.inv-sar-cell');
-    if (localCell) {
-      if (currCode) {
-        localCell.textContent = symbol + ' ' + (usd*rate).toLocaleString(undefined,{minimumFractionDigits:2});
-        localCell.style.display = '';
-      } else {
-        localCell.textContent = '';
-        localCell.style.display = 'none';
-      }
-    }
-  });
-  var totalEl = document.getElementById('inv-total-usd');
-  var localEl = document.getElementById('inv-total-sar');
-  var wrapEl  = document.getElementById('inv-total-local-wrap');
-  if (totalEl) totalEl.textContent = '$' + totalUSD.toLocaleString(undefined,{minimumFractionDigits:2});
-  if (localEl) localEl.textContent = symbol + ' ' + (totalUSD*rate).toLocaleString(undefined,{minimumFractionDigits:2});
-  if (wrapEl)  wrapEl.style.display = currCode ? '' : 'none';
-}
-
-function _collectInvoiceData() {
-  var rate     = parseFloat(document.getElementById('inv-sar-rate').value)||3.75;
-  var currCode = (document.getElementById('inv-local-currency')||{}).value||'SAR';
-  var rows = [];
-  document.querySelectorAll('#inv-rows tr').forEach(function(tr) {
-    var inps = tr.querySelectorAll('input');
-    var usd  = parseFloat((inps[3]||{}).value||0)||0;
-    rows.push({
-      applicant:  (inps[0]||{}).value||'',
-      particular: (inps[1]||{}).value||'PROCESSING FEES',
-      company:    (inps[2]||{}).value||'',
-      usd:      usd,
-      local:    usd * rate,
-      currency: currCode,
-    });
-  });
-  var totalUSD = rows.reduce(function(s,r){ return s+r.usd; },0);
-  var paid     = parseFloat(document.getElementById('inv-paid').value)||0;
-  return {
-    id:             _editingInvoiceId || ('INV-'+Date.now()),
-    number:         document.getElementById('inv-number').value||_nextInvoiceNo(),
-    date:           document.getElementById('inv-date').value,
-    counterpart:    document.getElementById('inv-counterpart').value,
-    chargesFor:     document.getElementById('inv-charges-for').value,
-    employer:       document.getElementById('inv-employer').value,
-    employerAddress:document.getElementById('inv-employer-address').value,
-    rows:           rows,
-    totalUSD:       totalUSD,
-    totalLocal:     totalUSD * rate,
-    paid:           paid,
-    paidLocal:      paid * rate,
-    balance:        totalUSD - paid,
-    balanceLocal:   (totalUSD - paid) * rate,
-    localCurrency:  currCode,
-    localCurrencyName: (_INV_CURRENCIES[currCode]||{}).name||currCode,
-    sarRate:        rate,
-    company:        { name: document.getElementById('inv-co-name').value, address: document.getElementById('inv-co-address').value, phone: document.getElementById('inv-co-phone').value, email: document.getElementById('inv-co-email').value },
-    bank:           { accountName: document.getElementById('inv-bank-acct-name').value, accountNo: document.getElementById('inv-bank-acct').value, swift: document.getElementById('inv-swift').value, bank: document.getElementById('inv-bank').value, branch: document.getElementById('inv-branch').value },
-    license:        document.getElementById('inv-license').value,
-    notes:          document.getElementById('inv-notes').value,
-    createdAt:      new Date().toISOString().split('T')[0],
-  };
-}
-
-function saveInvoice() {
-  var inv = _collectInvoiceData();
-  if (!inv.employer) { toast('Please select an employer','error'); return; }
-  if (!inv.rows.length) { toast('Add at least one applicant row','error'); return; }
-  if (_editingInvoiceId) {
-    var idx = (DB.invoices||[]).findIndex(function(x){ return x.id===_editingInvoiceId; });
-    if (idx !== -1) {
-      DB.invoices[idx] = inv;
-      apiUpdateInvoice(inv).then(function(r){ if(r&&r.ok){ try{_triggerImmediateSync();}catch(e){} } }).catch(function(){});
-    }
-  } else {
-    
-    DB.invoices.unshift(inv);
-    apiCreateInvoice(inv).then(function(r){
-      if (r&&r.ok) { autosave('invoices'); try{_triggerImmediateSync();}catch(e){} }
-      else { toast('⚠️ Invoice saved locally — server sync failed','info'); }
-    }).catch(function(){});
-  }
-  autosave('invoices');
-  addAudit('CREATE','Invoice','Invoice #'+inv.number+' — '+inv.employer+' $'+inv.totalUSD.toLocaleString());
-  toast('Invoice #'+inv.number+' saved','success');
-  closeOverlay('overlay-invoice');
-  renderInvoices();
-}
-
-function previewInvoice() {
-  var inv = _collectInvoiceData();
-  _renderInvoicePrint(inv);
-  openOverlay('overlay-invoice-print');
-}
-
-function viewInvoice(id) {
-  var inv = (DB.invoices||[]).find(function(x){ return x.id===id; });
-  if (!inv) return;
-  _renderInvoicePrint(inv);
-  openOverlay('overlay-invoice-print');
-}
-
-function editInvoice(id) {
-  var inv = (DB.invoices||[]).find(function(x){ return x.id===id; });
-  if (!inv) return;
-  _editingInvoiceId = id;
-  openNewInvoice();
-  // Re-fill with saved data
-  setTimeout(function() {
-    document.getElementById('inv-modal-title').textContent = '🧾 Edit Invoice #'+inv.number;
-    document.getElementById('inv-number').value        = inv.number;
-    document.getElementById('inv-date').value          = inv.date;
-    document.getElementById('inv-counterpart').value   = inv.counterpart||'';
-    document.getElementById('inv-charges-for').value   = inv.chargesFor||'APPLICANTS DEPLOYMENT';
-    document.getElementById('inv-employer').value      = inv.employer;
-    document.getElementById('inv-employer-address').value = inv.employerAddress||'';
-    document.getElementById('inv-paid').value          = inv.paid||0;
-    document.getElementById('inv-sar-rate').value      = inv.sarRate||3.75;
-    var lcEl = document.getElementById('inv-local-currency');
-    if (lcEl) lcEl.value = inv.localCurrency||'SAR';
-    document.getElementById('inv-notes').value         = inv.notes||'';
-    if (inv.company) {
-      document.getElementById('inv-co-name').value    = inv.company.name||'';
-      document.getElementById('inv-co-address').value = inv.company.address||'';
-      document.getElementById('inv-co-phone').value   = inv.company.phone||'';
-      document.getElementById('inv-co-email').value   = inv.company.email||'';
-    }
-    if (inv.bank) {
-      document.getElementById('inv-bank-acct-name').value = inv.bank.accountName||'';
-      document.getElementById('inv-bank-acct').value      = inv.bank.accountNo||'';
-      document.getElementById('inv-swift').value          = inv.bank.swift||'';
-      document.getElementById('inv-bank').value           = inv.bank.bank||'';
-      document.getElementById('inv-branch').value         = inv.bank.branch||'';
-    }
-    document.getElementById('inv-license').value = inv.license||'';
-    document.getElementById('inv-rows').innerHTML = '';
-    (inv.rows||[]).forEach(function(r){ _addInvoiceRowData(r.applicant,r.particular,r.company,r.usd,inv.sarRate||3.75); });
-    recalcInvoice();
-  }, 100);
-}
-
-function deleteInvoice(id) {
-  var inv = (DB.invoices||[]).find(function(x){ return x.id===id; });
-  if (!inv||!confirm('Delete Invoice #'+inv.number+'?')) return;
-  DB.invoices = (DB.invoices||[]).filter(function(x){ return x.id!==id; });
-  autosave('invoices');
-  var dbId = inv._dbId || inv.id;
-  if (dbId && isUUID(dbId)) {
-    apiDeleteInvoice(dbId).then(function(r){
-      if (r&&r.ok) { try{_triggerImmediateSync();}catch(e){} }
-    }).catch(function(){});
-  }
-  addAudit('DELETE','Invoice','Invoice #'+inv.number+' deleted');
-  toast('Invoice deleted','success');
-  renderInvoices();
-}
-
-// ── Render printable invoice HTML (matches Golden Faith format) ───────
-function _renderInvoicePrint(inv) {
-  var area = document.getElementById('invoice-print-area');
-  if (!area) return;
-  var co  = inv.company  || {};
-  var bk  = inv.bank     || {};
-  var fmt = function(n){ return parseFloat(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); };
-  area.innerHTML =
-    // Company Header
-    '<div style="border-bottom:3px solid #1447E6;padding-bottom:14px;margin-bottom:14px">'+
-      '<div style="font-size:16px;font-weight:900;color:#1447E6;letter-spacing:.5px;margin-bottom:6px">'+(co.name||'')+'</div>'+
-      '<div style="display:grid;grid-template-columns:1fr auto;gap:20px;font-size:11.5px">'+
-        '<div style="line-height:1.7">'+
-          (co.address||'')+'<br>'+
-          (co.phone?co.phone+'<br>':'')+
-          (co.email||'')+
-        '</div>'+
-        '<div style="text-align:right;font-size:11.5px">'+
-          '<table style="margin-left:auto;border-collapse:collapse">'+
-            _iRow('INVOICE NO.',     inv.number)+
-            _iRow('DATE',            inv.date)+
-            _iRow('COUNTER PART ID.',inv.counterpart||'')+
-            _iRow('CHARGES FOR:',    inv.chargesFor||'')+
-          '</table>'+
-        '</div>'+
-      '</div>'+
-    '</div>'+
-    // Bill To
-    '<div style="margin-bottom:16px">'+
-      '<div style="font-size:11px;font-weight:700;color:#666;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Bill To</div>'+
-      '<div style="font-size:13px;font-weight:800">'+inv.employer+'</div>'+
-      (inv.employerAddress?'<div style="font-size:12px;color:#555">'+inv.employerAddress+'</div>':'')+
-    '</div>'+
-    // Line items table
-    '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:0">'+
-      '<thead>'+
-        '<tr style="background:#f0f4ff;border-top:2px solid #1447E6;border-bottom:1px solid #ccc">'+
-          '<th style="padding:8px 10px;text-align:left;font-weight:700;font-style:italic">NAME OF APPLICANT</th>'+
-          '<th style="padding:8px 10px;text-align:left;font-weight:700;font-style:italic">PARTICULAR</th>'+
-          '<th style="padding:8px 10px;text-align:left;font-weight:700;font-style:italic">COMPANY</th>'+
-          '<th style="padding:8px 10px;text-align:right;font-weight:700;font-style:italic">AMOUNT USD</th>'+
-          '<th style="padding:8px 10px;text-align:right;font-weight:700;font-style:italic">AMOUNT '+(inv.localCurrency||'LOCAL')+'</th>'+
-        '</tr>'+
-      '</thead>'+
-      '<tbody>'+
-        (inv.rows||[]).map(function(r){
-          return '<tr style="border-bottom:1px solid #e0e0e0">'+
-            '<td style="padding:8px 10px;font-weight:600">'+r.applicant+'</td>'+
-            '<td style="padding:8px 10px">'+r.particular+'</td>'+
-            '<td style="padding:8px 10px">'+r.company+'</td>'+
-            '<td style="padding:8px 10px;text-align:right">$ '+fmt(r.usd)+'</td>'+
-            (inv.localCurrency ? '<td style="padding:8px 10px;text-align:right">'+(inv.localCurrency)+' '+fmt(r.local||r.sar||0)+'</td>' : '')+
-          '</tr>';
-        }).join('')+
-        // Empty rows for aesthetics
-        (inv.rows.length < 4 ? Array(4-inv.rows.length).fill('<tr><td colspan="5" style="padding:8px 10px;border-bottom:1px solid #e0e0e0">&nbsp;</td></tr>').join('') : '')+
-      '</tbody>'+
-    '</table>'+
-    // Totals
-    '<table style="width:100%;border-collapse:collapse;font-size:12px;border-top:2px solid #333;margin-top:0">'+
-      '<tr style="border-bottom:1px solid #e0e0e0">'+
-        '<td colspan="3" style="padding:8px 10px;font-weight:700;text-align:right">TOTAL DUE</td>'+
-        '<td style="padding:8px 10px;text-align:right;font-weight:700">$ '+fmt(inv.totalUSD)+'</td>'+
-        (inv.localCurrency ? '<td style="padding:8px 10px;text-align:right;font-weight:700">'+(inv.localCurrency)+' '+fmt(inv.totalLocal||inv.totalSAR||0)+'</td>' : '')+
-      '</tr>'+
-      '<tr style="border-bottom:1px solid #e0e0e0">'+
-        '<td colspan="3" style="padding:7px 10px;font-weight:700;text-align:right">TOTAL PAYMENT RECEIVED</td>'+
-        '<td style="padding:7px 10px;text-align:right;font-weight:700">$ '+fmt(inv.paid)+'</td>'+
-        (inv.localCurrency ? '<td style="padding:7px 10px;text-align:right;font-weight:700">'+(inv.localCurrency)+' '+fmt(inv.paidLocal||inv.paidSAR||0)+'</td>' : '')+
-      '</tr>'+
-      '<tr>'+
-        '<td colspan="3" style="padding:7px 10px;font-weight:700;text-align:right">BALANCE DUE IMMEDIATELY</td>'+
-        '<td style="padding:7px 10px;text-align:right;font-weight:700;color:'+(inv.balance>0?'#dc2626':'#16a34a')+'">$ '+fmt(inv.balance)+'</td>'+
-        '<td style="padding:7px 10px;text-align:right;font-weight:700;color:'+(inv.balance>0?'#dc2626':'#16a34a')+'">SAR '+fmt(inv.balanceSAR)+'</td>'+
-      '</tr>'+
-    '</table>'+
-    // Amount in words
-    '<div style="margin:14px 0;font-size:11.5px"><span style="font-style:italic;color:#555">Amount in words: </span>'+
-      '<strong>USD: '+_usdWords(inv.balance)+'</strong></div>'+
-    // Bank details
-    '<div style="background:#f8f9ff;border:1px solid #1447E6;border-radius:6px;overflow:hidden;margin-bottom:16px">'+
-      '<div style="background:#1447E6;color:#fff;text-align:center;font-size:11.5px;font-weight:700;padding:6px">'+
-        'Kindly remit amount due to the below account<br>'+
-        (co.name||'')+'. ACCOUNT DETAILS'+
-      '</div>'+
-      '<table style="width:100%;border-collapse:collapse;font-size:11.5px">'+
-        _bRow('ACCOUNT NAME',    bk.accountName||'')+
-        _bRow('ACCOUNT CURRENCY','USD')+
-        _bRow('ACCOUNT NO.',     bk.accountNo||'')+
-        _bRow('SWIFT CODE',      bk.swift||'')+
-        _bRow('BANK NAME',       bk.bank||'')+
-        _bRow('BRANCH',          bk.branch||'')+
-      '</table>'+
-    '</div>'+
-    // Footer
-    '<div style="text-align:center;font-size:11px;color:#555;line-height:1.8">'+
-      'Make all checks payable to <strong>'+(co.name||'')+'</strong><br>'+
-      '<em>THANK YOU FOR YOUR BUSINESS!</em>'+
-    '</div>'+
-    (inv.notes?'<div style="margin-top:12px;font-size:11px;color:#666;border-top:1px solid #e0e0e0;padding-top:8px">'+inv.notes+'</div>':'')+
-    // Company stamp area
-    '<div style="margin-top:40px;display:flex;justify-content:space-between;align-items:flex-end">'+
-      '<div style="font-size:11px;color:#555">'+
-        '<div style="font-size:13px;font-weight:700;font-style:italic;margin-bottom:4px">'+(co.name||'')+'</div>'+
-        (co.address||'')+'<br>'+(co.phone||'')+'<br>'+(co.email||'')+
-        '<br><br><strong>'+(inv.license||'')+'</strong>'+
-      '</div>'+
-      '<div style="border-top:1px solid #333;width:200px;text-align:center;padding-top:6px;font-size:11px;color:#555">Authorized Signature</div>'+
-    '</div>';
-}
-
-function _iRow(label, val) {
-  return '<tr><td style="padding:2px 8px;font-weight:700;font-size:11px;text-align:right;color:#555">'+label+'</td>'+
-         '<td style="padding:2px 8px;font-size:11px">'+val+'</td></tr>';
-}
-function _bRow(label, val) {
-  return '<tr style="border-bottom:1px solid #dde">'+
-         '<td style="padding:5px 12px;font-weight:700;background:#eef2ff;width:160px">'+label+'</td>'+
-         '<td style="padding:5px 12px">'+val+'</td></tr>';
-}
-function _usdWords(n) {
-  n = Math.abs(Math.round(parseFloat(n)||0));
-  if (!n) return 'Zero US Dollars Only';
-  var ones=['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
-  var tens=['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];
-  function _w(num) {
-    if (!num) return '';
-    if (num < 20) return ones[num];
-    if (num < 100) return tens[Math.floor(num/10)]+(num%10?' '+ones[num%10]:'');
-    return ones[Math.floor(num/100)]+' Hundred'+(num%100?' '+_w(num%100):'');
-  }
-  var t=''; var k=1000;
-  var parts=[{v:1e9,s:'Billion'},{v:1e6,s:'Million'},{v:1e3,s:'Thousand'},{v:1,s:''}];
-  parts.forEach(function(p){ var q=Math.floor(n/p.v); if(q){t+=(t?' ':'')+_w(q)+(p.s?' '+p.s:''); n%=p.v;} });
-  return t + ' US Dollar' + (Math.abs(parseFloat(t))||1>1?'s':'') + ' Only';
-}
-
-function printInvoice() {
-  var area = document.getElementById('invoice-print-area');
-  if (!area) return;
-  var w = window.open('','_blank');
-  w.document.write('<html><head><title>Invoice</title><style>body{font-family:Arial,sans-serif;margin:32px;color:#000;} table{border-collapse:collapse;} @media print{body{margin:10px}}</style></head><body>'+area.innerHTML+'</body></html>');
-  w.document.close();
-  w.focus();
-  setTimeout(function(){ w.print(); },400);
-}
-
-// ── BACKFILL COMMISSIONS — apply new logic to all existing applicants ─
-function backfillCommissions() {
-  if (!confirm(
-    'This will scan ALL applicants with agents and create any missing commission records based on their current status and medical status.\n\n' +
-    '• Medical Passed → T1 (20%)\n' +
-    '• OWWA / Processing → T2 (20%)\n' +
-    '• Deployed → T3 (60%)\n\n' +
-    'Existing commission records will NOT be duplicated.\n\nProceed?'
-  )) return;
-
-  var created = { T1: [], T2: [], T3: [] };
-  var skipped = 0;
-  var today   = new Date().toISOString().split('T')[0];
-
-  DB.applicants.forEach(function(app) {
-    var agent = DB.agents.find(function(a){
-      return a.id===app._agentId || a.id===app._agentDbId || a.name===app.agent;
-    });
-    if (!agent) { skipped++; return; } // no agent assigned
-
-    var appId  = app.id || app._dbId;
-    var country = app.job ? app.job.split('·').pop().trim() : '';
-    var rule    = DB.countryRules.find(function(r){ return r.country===country && r.active; });
-    var total   = (agent.commissionAmt != null && agent.commissionAmt > 0) ? agent.commissionAmt : 15000;
-    var currency= agent.commissionCurrency || 'PHP';
-    var gp      = rule ? (rule.guaranteePeriod||6) : 6;
-    var gEnd    = (function(){ var d=new Date(); d.setMonth(d.getMonth()+gp); return d.toISOString().split('T')[0]; })();
-
-    function _hasT(n) {
-      return DB.commissions.some(function(c){
-        return (c.applicantId===appId || c.applicantName===app.name) && c.tranche===n && c.status!=='Reversed';
-      });
-    }
-    function _makeT(n, label, pct, trigger) {
-      var amt = Math.round(total * pct);
-      return {
-        id: 'COM-BF-' + Date.now() + '-' + appId.slice(-4) + '-T' + n,
-        agentId: agent.id, applicantId: appId, applicantName: app.name,
-        country: country||'Philippines', amount: amt, totalCommission: total,
-        tranche: n, trancheLabel: label, currency: currency,
-        status: 'Pending Release', triggerStatus: trigger,
-        triggerDate: today, guaranteeEnd: gEnd, releaseDate: null,
-        _backfilled: true,
-      };
-    }
-
-    // ── T1: Medical Status = Passed ──────────────────────────────────
-    if (app.medical === 'Passed' && !_hasT(1)) {
-      var t1 = _makeT(1, 'Medical Cleared (20%)', 0.20, 'Medical Passed');
-      DB.commissions.push(t1);
-      created.T1.push(app.name);
-      apiCreateCommission(t1).then(function(r){
-        if (r&&r.ok&&r.data&&r.data.id) { t1._dbId=r.data.id; t1.id=r.data.id; autosave('commissions'); }
-      }).catch(function(){});
-    }
-
-    // ── T2: Status = OWWA or Processing ─────────────────────────────
-    if ((app.status==='OWWA' || app.status==='Processing') && !_hasT(2)) {
-      var t2 = _makeT(2, app.status+' (20%)', 0.20, app.status);
-      DB.commissions.push(t2);
-      created.T2.push(app.name);
-      apiCreateCommission(t2).then(function(r){
-        if (r&&r.ok&&r.data&&r.data.id) { t2._dbId=r.data.id; t2.id=r.data.id; autosave('commissions'); }
-      }).catch(function(){});
-    }
-
-    // ── T3: Status = Deployed ────────────────────────────────────────
-    if (app.status==='Deployed' && !_hasT(3)) {
-      var t3 = _makeT(3, 'Deployment (60%)', 0.60, 'Deployed');
-      DB.commissions.push(t3);
-      created.T3.push(app.name);
-      apiCreateCommission(t3).then(function(r){
-        if (r&&r.ok&&r.data&&r.data.id) { t3._dbId=r.data.id; t3.id=r.data.id; autosave('commissions'); }
-      }).catch(function(){});
-    }
-  });
-
-  autosave('commissions');
-  try { _triggerImmediateSync(); } catch(e) {}
-
-  var total_created = created.T1.length + created.T2.length + created.T3.length;
-  if (!total_created) {
-    toast('✅ All commission records are up to date — nothing to backfill', 'success');
-  } else {
-    var lines = [];
-    if (created.T1.length) lines.push('T1 Medical ×' + created.T1.length + ': ' + created.T1.join(', '));
-    if (created.T2.length) lines.push('T2 OWWA/Processing ×' + created.T2.length + ': ' + created.T2.join(', '));
-    if (created.T3.length) lines.push('T3 Deployed ×' + created.T3.length + ': ' + created.T3.join(', '));
-    addAudit('CREATE', 'Commissions', 'Backfill: ' + total_created + ' records created');
-    toast('✅ Created ' + total_created + ' commission record(s):\n' + lines.join('\n'), 'success');
-  }
-  renderCommissions();
-}
+// ── EXPORTS ───────────────────────────────────────────────────────────
 function exportAccountingReport() {
   var rows = ['Agent,Commission,Expenses,Balance,Deployed,Backouts'];
   DB.agents.forEach(function(a){
@@ -14708,7 +13865,7 @@ function submitAddFunds() {
   autosave('officeLedger');
   autosave('officeFunds');
   var _lastEntry = DB.officeLedger[DB.officeLedger.length-1];
-  apiCreateOfficeLedgerEntry(_lastEntry).then(function(r){ if(r&&r.ok){ try{_triggerImmediateSync();}catch(e){} } }).catch(function(){});
+  apiCreateOfficeLedgerEntry(_lastEntry).catch(function(){});
   apiUpdateOfficeFunds(DB.officeFunds).catch(function(){});
   addAudit('CREATE','Office Funds','Fund allocation: '+(cur==='PHP'?'₱':'$')+amount.toLocaleString()+' '+cur);
   toast('₱'+(cur==='PHP'?amount.toLocaleString():amount.toLocaleString())+' '+cur+' allocated','success');
@@ -14791,7 +13948,7 @@ function submitOfficeExpense() {
   autosave('officeLedger');
   autosave('officeFunds');
   var _oeEntry = DB.officeLedger[DB.officeLedger.length-1];
-  apiCreateOfficeLedgerEntry(_oeEntry).then(function(r){ if(r&&r.ok){ try{_triggerImmediateSync();}catch(e){} } }).catch(function(){});
+  apiCreateOfficeLedgerEntry(_oeEntry).catch(function(){});
   apiUpdateOfficeFunds(DB.officeFunds).catch(function(){});
   addAudit('CREATE','Office Expense',cat+' — '+(cur==='PHP'?'₱':'$')+amount.toLocaleString()+' '+cur);
   toast((cur==='PHP'?'₱':'$')+amount.toLocaleString()+' '+cat+' expense posted','success');
@@ -15193,7 +14350,7 @@ function renderAgentSummaryInDrawer(app) {
               '</div></div>';
           }).join('') +
         '</div>' : '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">No transactions linked to this applicant yet.</div>') +
-      '<button class="btn btn-s btn-sm" style="width:100%" onclick="nav(\'accounting\');setTimeout(function(){ viewAgentLedger(\'' + agent.id + '\'); },150)">📒 View in Accounting</button>' +
+      '<button class="btn btn-s btn-sm" style="width:100%" onclick="switchAccTab(\'agents\',document.querySelectorAll(\'.acc-tab\')[1]);nav(\'accounting\')">📒 View in Accounting</button>' +
         '📒 Open Full Agent Ledger →' +
       '</button>' +
     '</div>'
@@ -15598,21 +14755,7 @@ function _gateButtons() {
     ['[onclick*="openManualAdjustment"]', 'Manage Accounting',    'Your role cannot manage accounting'],
     ['[onclick*="saveCommissionRates"]',  'Manage Accounting',    'Your role cannot manage accounting'],
     ['[onclick*="releaseCommission"]',    'Manage Accounting',    'Your role cannot manage accounting'],
-    ['[onclick*="deleteInvoice"]',        'Manage Accounting',  'Your role cannot delete invoices'],
-    // Accounting write actions — require Manage Accounting (Finance + Admin + Manager)
-    ['[onclick*="openAddAgent"]',          'Manage Accounting',  'Your role cannot add agents'],
-    ['[onclick*="submitAgent"]',           'Manage Accounting',  'Your role cannot save agents'],
-    ['[onclick*="openAddExpense"]',        'Manage Expenses',    'Your role cannot record expenses'],
-    ['[onclick*="deleteExpense"]',         'Manage Expenses',    'Your role cannot delete expenses'],
-    ['[onclick*="chargeExpenseToAgent"]',  'Manage Expenses',    'Your role cannot charge expenses'],
-    ['[onclick*="resetAllExpenses"]',      'Manage Accounting',  'Your role cannot reset expenses'],
-    ['[onclick*="openAddLedgerEntry"]',    'Manage Accounting',  'Your role cannot add ledger entries'],
-    ['[onclick*="deleteLedgerEntry"]',     'Manage Accounting',  'Your role cannot delete ledger entries'],
-    ['[onclick*="openOfficeAdjustment"]',  'Manage Accounting',  'Your role cannot adjust office funds'],
-    ['[onclick*="openNewInvoice"]',        'Manage Accounting',  'Your role cannot create invoices'],
-    ['[onclick*="saveCommissionRates"]',   'Manage Accounting',  'Your role cannot edit commission rates'],
-    ['[onclick*="submitCountryRule"]',     'Manage Accounting',  'Your role cannot manage country rules'],
-    ['[onclick*="openAddCountryRule"]',    'Manage Accounting',  'Your role cannot manage country rules'],
+    ['[onclick*="reverseCommission"]',    'Manage Accounting',    'Your role cannot manage accounting'],
     ['[onclick*="openOfficeAdjustment"]', 'Manage Accounting',    'Your role cannot manage accounting'],
     // Complaints
     ['[onclick*="openComplaintModal"]',   'Manage Complaints',    'Your role cannot create complaints'],
@@ -15942,133 +15085,71 @@ function openViewerScope(userEmail, userName) {
   if (DB.jobs.length === 0) {
     list.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">No job orders yet.</div>';
   } else {
-    // Group by employer
-    var groups = {};
-    var groupOrder = [];
-    DB.jobs.forEach(function(j) {
-      var key = (j.employer||'Unknown') + '||' + (j.country||'');
-      if (!groups[key]) { groups[key] = { employer:j.employer||'Unknown', country:j.country||'', jobs:[] }; groupOrder.push(key); }
-      groups[key].jobs.push(j);
-    });
-
-    list.innerHTML = groupOrder.map(function(key) {
-      var g = groups[key];
-      var allIds      = g.jobs.map(function(j){ return j.id; });
-      var checkedIds  = allIds.filter(function(id){ return assigned.indexOf(id) !== -1 || assigned.indexOf(g.jobs.find(function(j){return j.id===id;})?._dbId) !== -1; });
-      var allChecked  = checkedIds.length === allIds.length && allIds.length > 0;
-      var someChecked = checkedIds.length > 0 && !allChecked;
-      var totalSlots  = g.jobs.reduce(function(s,j){ return s+(j.slots||0); }, 0);
-      var totalFilled = g.jobs.reduce(function(s,j){ return s+(j.filled||0); }, 0);
-      var pct = totalSlots > 0 ? Math.round((totalFilled/totalSlots)*100) : 0;
-      var gid = 'vsgrp-' + key.replace(/[^a-zA-Z0-9]/g,'_');
-
-      var posRows = g.jobs.map(function(j) {
-        var ch = assigned.indexOf(j.id) !== -1 || (j._dbId && assigned.indexOf(j._dbId) !== -1);
-        var jPct = j.slots > 0 ? Math.round((j.filled/j.slots)*100) : 0;
-        return '<div style="display:flex;align-items:center;gap:8px;padding:6px 12px 6px 36px;border-top:1px solid var(--border)">'+
-          '<input type="checkbox" data-job-id="'+j.id+'" data-job-dbid="'+(j._dbId||j.id)+'"'+(ch?' checked':'')+
-          ' style="flex-shrink:0;accent-color:var(--brand)" onchange="vsUpdateGroup(\''+gid+'\')">'+
-          '<span style="font-size:12.5px;flex:1">'+j.title+'</span>'+
-          '<span style="font-size:11px;color:var(--muted)">'+j.filled+'/'+j.slots+'</span>'+
-          '<span style="font-size:11px;font-weight:700;color:var(--brand);min-width:30px;text-align:right">'+jPct+'%</span>'+
-        '</div>';
-      }).join('');
-
-      return '<div id="'+gid+'" style="border:1px solid var(--border);border-radius:10px;overflow:visible;margin-bottom:8px;background:var(--surface)">'+
-        // Employer header
-        '<label style="display:flex;align-items:center;gap:10px;padding:11px 14px;cursor:pointer;background:var(--s2);border-radius:10px '+(g.jobs.length?'0 0':'')+'">'+
-          '<input type="checkbox" class="vs-master-cb"'+(allChecked?' checked':'')+(someChecked?' data-indeterminate="true"':'')+
-          ' style="flex-shrink:0;width:16px;height:16px;accent-color:var(--brand)" onchange="vsToggleAll(this,\''+gid+'\')">'+
-          '<div style="flex:1;min-width:0">'+
-            '<div style="font-size:13px;font-weight:800">'+g.employer+' <span style="font-weight:400;font-size:11px;color:var(--muted)">· '+g.country+'</span></div>'+
-            '<div style="font-size:11px;color:var(--muted);margin-top:1px">'+g.jobs.length+' position(s) · '+totalFilled+'/'+totalSlots+' slots'+
-              ' · <span class="vs-sel-count" style="color:var(--brand);font-weight:600">'+checkedIds.length+'/'+allIds.length+' selected</span>'+
-            '</div>'+
-          '</div>'+
-          '<div style="font-size:11px;font-weight:700;color:var(--brand)">'+pct+'%</div>'+
-        '</label>'+
-        // Positions (always visible)
-        (g.jobs.length > 0 ? '<div class="vs-positions">'+posRows+'</div>' : '')+
-      '</div>';
+    list.innerHTML = DB.jobs.map(function(j) {
+      var checked = assigned.indexOf(j.id) !== -1;
+      var pct = j.slots > 0 ? Math.round((j.filled / j.slots) * 100) : 0;
+      var statusColor = j.status === 'Open' ? 'var(--green)' : 'var(--muted)';
+      return [
+        '<label style="display:flex;align-items:center;gap:12px;padding:10px 12px;',
+        'border-radius:8px;background:var(--s2);border:1px solid var(--border);cursor:pointer">',
+        '<input type="checkbox" data-job-id="', j.id, '" ', (checked ? 'checked' : ''),
+        ' style="width:16px;height:16px;accent-color:var(--brand);flex-shrink:0">',
+        '<div style="flex:1;min-width:0">',
+          '<div style="font-size:13px;font-weight:700">', j.title,
+          ' <span style="font-size:11px;color:var(--muted)">· ', j.country, '</span></div>',
+          '<div style="font-size:11.5px;color:var(--muted)">', j.employer,
+          ' · ', j.filled, '/', j.slots, ' slots',
+          ' · <span style="color:', statusColor, '">', j.status, '</span></div>',
+        '</div>',
+        '<div style="font-size:11px;font-weight:700;color:var(--brand)">', pct, '%</div>',
+        '</label>'
+      ].join('');
     }).join('');
-
-    // Apply indeterminate state
-    setTimeout(function() {
-      list.querySelectorAll('input.vs-master-cb[data-indeterminate="true"]').forEach(function(cb){ cb.indeterminate = true; });
-    }, 30);
   }
-
   openOverlay('overlay-viewer-scope');
-
-  // Chat rooms
+  // Populate chat rooms list
   var roomList = document.getElementById('vs-room-list');
   if (roomList) {
-    var assignedRooms = viewerScopes[_scopingUserEmail + ':chatRooms'] || [];
+    var assignedRooms = viewerScopes[(_scopingUserEmail) + ':chatRooms'] || [];
     var allRooms = getChatRooms();
-    roomList.innerHTML = allRooms.length ? allRooms.map(function(r) {
-      var checked = assignedRooms.indexOf(r.id) !== -1;
-      return '<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--s2);border-radius:7px;cursor:pointer">'+
-        '<input type="checkbox" data-room-id="'+r.id+'"'+(checked?' checked':'')+'>'+
-        '<span style="font-size:13px">'+(r.icon||'#')+' '+r.name+'</span>'+
-        '<span style="font-size:11px;color:var(--muted);margin-left:auto">'+(r.desc||'')+'</span>'+
-      '</label>';
-    }).join('') : '<div style="font-size:12px;color:var(--muted)">No channels created yet</div>';
+    if (!allRooms.length) {
+      roomList.innerHTML = '<div style="font-size:12px;color:var(--muted)">No channels created yet</div>';
+    } else {
+      roomList.innerHTML = allRooms.map(function(r) {
+        var checked = assignedRooms.indexOf(r.id) !== -1;
+        return '<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--s2);border-radius:7px;cursor:pointer">' +
+          '<input type="checkbox" data-room-id="' + r.id + '"' + (checked ? ' checked' : '') + '>' +
+          '<span style="font-size:13px">' + (r.icon||'#') + ' ' + r.name + '</span>' +
+          '<span style="font-size:11px;color:var(--muted);margin-left:auto">' + (r.desc||'') + '</span>' +
+        '</label>';
+      }).join('');
+    }
   }
-}
-
-function vsToggleAll(masterCb, gid) {
-  var grp = document.getElementById(gid);
-  if (!grp) return;
-  grp.querySelectorAll('input[data-job-id]').forEach(function(cb){ cb.checked = masterCb.checked; });
-  masterCb.indeterminate = false;
-  vsUpdateSelCount(gid);
-}
-function vsUpdateGroup(gid) {
-  var grp = document.getElementById(gid);
-  if (!grp) return;
-  var cbs    = Array.from(grp.querySelectorAll('input[data-job-id]'));
-  var master = grp.querySelector('.vs-master-cb');
-  var n = cbs.filter(function(cb){ return cb.checked; }).length;
-  if (master) { master.checked = n === cbs.length && cbs.length > 0; master.indeterminate = n > 0 && n < cbs.length; }
-  vsUpdateSelCount(gid);
-}
-function vsUpdateSelCount(gid) {
-  var grp = document.getElementById(gid);
-  if (!grp) return;
-  var cbs  = Array.from(grp.querySelectorAll('input[data-job-id]'));
-  var n    = cbs.filter(function(cb){ return cb.checked; }).length;
-  var span = grp.querySelector('.vs-sel-count');
-  if (span) span.textContent = n + '/' + cbs.length + ' selected';
 }
 
 
 function saveViewerScope() {
-  // Collect checked positions — store both local id and _dbId for reliable matching
-  var checked = document.querySelectorAll('#vs-job-list input[data-job-id]:checked');
-  var jobIds  = [];
-  checked.forEach(function(cb) {
-    if (cb.dataset.jobId)   jobIds.push(cb.dataset.jobId);
-    if (cb.dataset.jobDbid && cb.dataset.jobDbid !== cb.dataset.jobId) jobIds.push(cb.dataset.jobDbid);
-  });
-  // Deduplicate
-  jobIds = jobIds.filter(function(v,i,a){ return a.indexOf(v)===i; });
-
+  var checked = document.querySelectorAll('#vs-job-list input[type="checkbox"]:checked');
+  var jobIds = Array.from(checked).map(function(cb) { return cb.dataset.jobId; });
   var checkedRooms = document.querySelectorAll('#vs-room-list input[type="checkbox"]:checked');
-  var chatRoomIds  = Array.from(checkedRooms).map(function(cb){ return cb.dataset.roomId; });
-
+  var chatRoomIds = Array.from(checkedRooms).map(function(cb){ return cb.dataset.roomId; });
   viewerScopes[_scopingUserEmail] = jobIds;
   viewerScopes[_scopingUserEmail + ':chatRooms'] = chatRoomIds;
+  // Also store as object for getViewerAllowedRooms
+  if (typeof viewerScopes[_scopingUserEmail] === 'object' && !Array.isArray(viewerScopes[_scopingUserEmail])) {
+    // already object format
+  }
   saveViewerScopes();
-  addAudit('UPDATE','Viewer Scope','Updated scope for '+_scopingUserEmail+' — '+jobIds.length+' position(s), '+chatRoomIds.length+' room(s)');
+  addAudit('UPDATE', 'Viewer Scope', 'Updated access scope for ' + _scopingUserEmail + ' — ' + jobIds.length + ' job(s), ' + chatRoomIds.length + ' room(s)');
   closeOverlay('overlay-viewer-scope');
-  toast('Scope saved — '+(jobIds.length/2|0)+' job order(s) assigned', 'success');
+  toast('Scope saved — ' + jobIds.length + ' job order' + (jobIds.length !== 1 ? 's' : '') + ' assigned', 'success');
   var me = getCurrentUser();
   if (me && me.email && me.email.toLowerCase() === _scopingUserEmail) {
     filteredApps = [...getScopedApplicants()];
     if (currentPage === 'applicants') renderApplicants();
-    if (currentPage === 'jobs')       renderJobs();
-    if (currentPage === 'pipeline')   renderKanban();
-    if (currentPage === 'dashboard')  renderDashboard();
+    if (currentPage === 'jobs') renderJobs();
+    if (currentPage === 'pipeline') renderKanban();
+    if (currentPage === 'dashboard') renderDashboard();
   }
 }
 
@@ -16555,13 +15636,8 @@ async function apiCreateAgent(data) {
     data._dbId = r.data.id;
     data.id    = r.data.id;
   } else if (!r.ok) {
-    if (r.httpStatus === 409) {
-      // Code collision — auto-retry with next available code
-      data.code = _nextAgentCode() + '-' + Date.now().toString().slice(-4);
-      console.warn('[Agent create] Code collision, retrying with', data.code);
-      return apiCreateAgent(data);
-    }
-    var hint = r.httpStatus === 400 ? (r.error || 'Missing required field')
+    var hint = r.httpStatus === 409 ? 'Agent code already exists'
+             : r.httpStatus === 400 ? (r.error || 'Missing required field')
              : r.httpStatus === 500 ? ('Server error: ' + (r.error || 'check Railway logs'))
              : (r.error || 'Unknown error');
     console.error('[Agent create] HTTP', r.httpStatus, '—', r.error);
@@ -16728,8 +15804,20 @@ function stopChatPoll() {
 
 // ── Load permissions from shared Store (admin may have changed them) ──
 async function loadSharedPermissions() {
+  // Try backend first — only reliable cross-browser sync
+  var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
+  if (isLive) {
+    try {
+      var br = await apiFetch('/permissions');
+      if (br.ok && br.data && br.data.permissions && Array.isArray(br.data.permissions)) {
+        br.data.permissions.forEach(function(row,i){ if(PERMISSIONS[i]) PERMISSIONS[i]=row.slice(); });
+        if (br.data.rolesConfig) br.data.rolesConfig.forEach(function(rc,i){ if(ROLES_CONFIG[i]) Object.assign(ROLES_CONFIG[i],rc); });
+        return;
+      }
+    } catch(e) {}
+  }
   try {
-    // Try shared Store first (updated by admin)
+    // Fallback to shared Store (localStorage on GitHub Pages)
     var r = await Store.get('rams:shared:permissions', true);
     if (!r) r = await Store.get('rams:shared:permissions');
     if (!r) return;
@@ -17021,7 +16109,16 @@ async function loadSharedPermissions() {
           <label class="f-lbl">Guarantee Period (months)</label>
           <input class="f-inp" id="cr-guarantee" type="number" min="1" max="24" value="6">
         </div>
-
+        <div class="f-grp">
+          <label class="f-lbl">Commission Amount</label>
+          <div style="display:flex;gap:6px">
+            <select class="f-inp" id="cr-commission-currency" style="width:90px">
+              <option value="PHP">₱ PHP</option>
+              <option value="USD">$ USD</option>
+            </select>
+            <input class="f-inp" id="cr-commission" type="number" min="0" step="100" value="15000" style="flex:1">
+          </div>
+        </div>
       </div>
       <div class="f-row">
         <div class="f-grp">
@@ -17054,124 +16151,7 @@ async function loadSharedPermissions() {
   </div>
 </div>
 
-
-
-<!-- ══ INVOICE BUILDER MODAL ════════════════════════════════════════== -->
-<div class="overlay" id="overlay-invoice" onclick="closeOverlayIfBg(event,'overlay-invoice')" role="dialog" aria-modal="true">
-  <div class="modal" style="width:680px;max-width:97vw;max-height:92vh;overflow-y:auto">
-    <div class="modal-hdr">
-      <div class="modal-title" id="inv-modal-title">🧾 New Invoice</div>
-      <button class="modal-close" onclick="closeOverlay('overlay-invoice')">✕</button>
-    </div>
-    <div class="modal-body" style="display:grid;gap:14px">
-      <div style="background:var(--s2);border-radius:10px;padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        <div class="f-grp"><label class="f-lbl">Invoice No.</label><input class="f-inp" id="inv-number" placeholder="e.g. 137"></div>
-        <div class="f-grp"><label class="f-lbl">Date</label><input class="f-inp" id="inv-date" type="date"></div>
-        <div class="f-grp"><label class="f-lbl">Counter Part ID</label><input class="f-inp" id="inv-counterpart" placeholder="e.g. NM"></div>
-        <div class="f-grp"><label class="f-lbl">Charges For</label><input class="f-inp" id="inv-charges-for" value="APPLICANTS DEPLOYMENT"></div>
-      </div>
-      <div class="f-grp"><label class="f-lbl">Bill To (Employer)</label>
-        <select class="f-inp" id="inv-employer" onchange="loadInvoiceApplicants()">
-          <option value="">— Select employer —</option>
-        </select>
-      </div>
-      <div class="f-grp"><label class="f-lbl">Employer Address</label>
-        <input class="f-inp" id="inv-employer-address" placeholder="e.g. AL KHOBAR, SAUDI ARABIA">
-      </div>
-      <div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <label class="f-lbl" style="margin:0">Applicants / Line Items</label>
-          <button class="btn btn-s btn-sm" onclick="addInvoiceRow()">+ Add Row</button>
-        </div>
-        <div style="background:var(--s2);border-radius:8px;overflow:hidden">
-          <table style="width:100%;border-collapse:collapse;font-size:12.5px" id="inv-rows-table">
-            <thead><tr style="background:var(--border)">
-              <th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:700">APPLICANT</th>
-              <th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:700">PARTICULAR</th>
-              <th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:700">COMPANY</th>
-              <th style="padding:8px 6px;text-align:right;font-size:11px;font-weight:700">USD</th>
-              <th style="padding:8px 6px;text-align:right;font-size:11px;font-weight:700" id="inv-local-col-hdr">SAR</th>
-              <th style="width:30px"></th>
-            </tr></thead>
-            <tbody id="inv-rows"></tbody>
-          </table>
-        </div>
-        <div style="display:flex;justify-content:flex-end;gap:16px;margin-top:8px;font-size:13px;font-weight:700">
-          <span>Total USD: <span id="inv-total-usd" style="color:var(--brand)">$0.00</span></span>
-          <span style="color:var(--muted)" id="inv-total-local-wrap"><span id="inv-total-sar">SAR 0.00</span></span>
-        </div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        <div class="f-grp"><label class="f-lbl">Payment Received (USD)</label><input class="f-inp" id="inv-paid" type="number" value="0" min="0" oninput="recalcInvoice()"></div>
-        <div class="f-grp">
-          <label class="f-lbl">Local Currency (2nd column)</label>
-          <div style="display:flex;gap:6px">
-            <select class="f-inp" id="inv-local-currency" style="width:140px" onchange="onInvoiceCurrencyChange()">
-              <option value="">None (USD only)</option>
-              <option value="SAR" selected>SAR — Saudi Riyal</option>
-              <option value="AED">AED — UAE Dirham</option>
-              <option value="KWD">KWD — Kuwaiti Dinar</option>
-              <option value="QAR">QAR — Qatari Riyal</option>
-              <option value="BHD">BHD — Bahraini Dinar</option>
-              <option value="OMR">OMR — Omani Rial</option>
-              <option value="JOD">JOD — Jordanian Dinar</option>
-              <option value="EGP">EGP — Egyptian Pound</option>
-              <option value="LBP">LBP — Lebanese Pound</option>
-              <option value="MYR">MYR — Malaysian Ringgit</option>
-              <option value="SGD">SGD — Singapore Dollar</option>
-              <option value="HKD">HKD — Hong Kong Dollar</option>
-              <option value="JPY">JPY — Japanese Yen</option>
-              <option value="KRW">KRW — Korean Won</option>
-              <option value="EUR">EUR — Euro</option>
-              <option value="GBP">GBP — British Pound</option>
-              <option value="CAD">CAD — Canadian Dollar</option>
-              <option value="AUD">AUD — Australian Dollar</option>
-              <option value="PHP">PHP — Philippine Peso</option>
-              <option value="INR">INR — Indian Rupee</option>
-            </select>
-            <input class="f-inp" id="inv-sar-rate" type="number" value="3.75" step="0.0001" oninput="recalcInvoice()" placeholder="Rate" style="width:90px" title="Exchange rate: 1 USD = X local currency">
-            <span style="font-size:11px;color:var(--muted);align-self:center;white-space:nowrap">per USD</span>
-          </div>
-        </div>
-      </div>
-      <details open>
-        <summary style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;margin-bottom:10px">▸ Company &amp; Bank Details</summary>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
-          <div class="f-grp" style="grid-column:1/-1"><label class="f-lbl">Company Name</label><input class="f-inp" id="inv-co-name" value="GOLDEN FAITH INTERNATIONAL EMPLOYMENT SERVICES CO."></div>
-          <div class="f-grp" style="grid-column:1/-1"><label class="f-lbl">Address</label><input class="f-inp" id="inv-co-address" value="Unit A-102 to 105 LJHENSON BUILDING, 494 Soldado St. Ermita, Manila, Philippines"></div>
-          <div class="f-grp"><label class="f-lbl">Phone</label><input class="f-inp" id="inv-co-phone" value="(02) 562 8617"></div>
-          <div class="f-grp"><label class="f-lbl">Email</label><input class="f-inp" id="inv-co-email" value="goldenfaith.recruitment@gmail.com"></div>
-          <div class="f-grp" style="grid-column:1/-1"><label class="f-lbl">Account Name</label><input class="f-inp" id="inv-bank-acct-name" value="GOLDEN FAITH INTERNATIONAL EMPLOYMENT SERVICES CO."></div>
-          <div class="f-grp"><label class="f-lbl">Account No.</label><input class="f-inp" id="inv-bank-acct" value="105120734376"></div>
-          <div class="f-grp"><label class="f-lbl">Swift Code</label><input class="f-inp" id="inv-swift" value="BNORPHMM"></div>
-          <div class="f-grp"><label class="f-lbl">Bank</label><input class="f-inp" id="inv-bank" value="BDO — Banco de Oro"></div>
-          <div class="f-grp" style="grid-column:1/-1"><label class="f-lbl">Branch</label><input class="f-inp" id="inv-branch" value="ROXAS BLVD. - R SALAS Branch, Ermita, Manila, Philippines"></div>
-          <div class="f-grp" style="grid-column:1/-1"><label class="f-lbl">License / Footer Note</label><input class="f-inp" id="inv-license" value="POEA-009-LB-102121-R | Licensed Agency | POEA Accredited"></div>
-        </div>
-      </details>
-      <div class="f-grp"><label class="f-lbl">Notes</label><textarea class="f-inp" id="inv-notes" rows="2" placeholder="Additional notes (optional)"></textarea></div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeOverlay('overlay-invoice')">Cancel</button>
-      <button class="btn btn-s" onclick="previewInvoice()">👁 Preview</button>
-      <button class="btn btn-p" onclick="saveInvoice()">Save Invoice</button>
-    </div>
-  </div>
-</div>
-
-<!-- ══ INVOICE PRINT PREVIEW ══════════════════════════════════════════ -->
-<div class="overlay" id="overlay-invoice-print" onclick="closeOverlayIfBg(event,'overlay-invoice-print')" role="dialog" aria-modal="true">
-  <div class="modal" style="width:800px;max-width:97vw;max-height:95vh;overflow-y:auto;padding:0">
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:2">
-      <div style="font-weight:700;font-size:14px">Invoice Preview</div>
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-p btn-sm" onclick="printInvoice()">🖨 Print / Save PDF</button>
-        <button class="btn btn-ghost btn-sm" onclick="closeOverlay('overlay-invoice-print')">✕ Close</button>
-      </div>
-    </div>
-    <div id="invoice-print-area" style="padding:40px 48px;font-family:Arial,sans-serif;color:#000;background:#fff;min-height:1000px"></div>
-  </div>
-</div>
+<!-- Add Funds / Allocation Modal -->
 <div class="overlay" id="overlay-add-funds" onclick="closeOverlayIfBg(event,'overlay-add-funds')" role="dialog" aria-modal="true">
   <div class="modal modal-sm">
     <div class="modal-hdr">
