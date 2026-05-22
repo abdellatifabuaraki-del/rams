@@ -1631,6 +1631,7 @@ button[disabled][data-rbac-locked] {
         </select>
         <button class="btn btn-s btn-sm" onclick="exportEmployerFees()">⬇ Export</button>
         <button class="btn btn-s btn-sm" style="background:var(--abg);color:var(--amber);border:1px solid #fcd34d" onclick="backfillEmployerFees()" title="Scan all Visa/OWWA/Deployed applicants and show why fees are missing">⚡ Generate Missing Fees</button>
+        <button class="btn btn-s btn-sm" style="background:var(--rbg);color:var(--red);border:1px solid #fca5a5" onclick="autoWaiveBackoutFees()" title="Waive pending fees for all Backout/Repatriated applicants">↩ Auto-Waive Backouts</button>
         <button class="btn btn-p btn-sm" onclick="openManualFee(null)">+ Add Fee</button>
       </div>
     </div>
@@ -2960,6 +2961,7 @@ function mapApplicant(row) {
     _updatedAt:       row.updated_at || row.created_at || '',
     _statusUpdatedAt: row.status_updated_at || row.updated_at || row.created_at || '',
     _jobOrderId:      row.job_order_id || '',
+    deploymentDate:   row.deployment_date ? String(row.deployment_date).slice(0,10) : null,
     // Seed stage history from current status so gate works after page refresh
     // Full history is preserved in local Store; this ensures at least current stage is recorded
     _stageHistory: (function(){
@@ -11611,6 +11613,70 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
     }
   }
 
+  // ── AUTO-WAIVE PENDING EMPLOYER FEES on Backout / Repatriated ───────
+  // Backout: always waive — worker never deployed, employer owes nothing
+  // Repatriated: only waive if still within guarantee period — if post-guarantee, employer owes full fee
+  if (newStatus === 'Backout' || newStatus === 'Repatriated') {
+    var _today = new Date().toISOString().split('T')[0];
+
+    // For Repatriated: check guarantee period from T3 commission record
+    var _shouldWaiveRepatriated = false;
+    if (newStatus === 'Repatriated') {
+      var _t3 = DB.commissions.find(function(cm) {
+        return cm.tranche === 3 && cm.status !== 'Reversed' &&
+          (cm.applicantId === applicantId || cm.applicantId === app.id || cm.applicantName === app.name);
+      });
+      if (_t3 && _t3.guaranteeEnd) {
+        // Within guarantee if today <= guaranteeEnd
+        _shouldWaiveRepatriated = _today <= _t3.guaranteeEnd;
+      } else {
+        // No T3 commission found — worker might not have been properly deployed
+        // Fall back to country rule guarantee period from deployment date
+        var _country = app.job ? app.job.split('·').pop().trim() : '';
+        var _rule = DB.countryRules.find(function(r){ return r.country===_country && r.active; });
+        var _gp   = _rule ? (_rule.guaranteePeriod||6) : 6;
+        // Use date applied + deployment assumed — conservative: waive if no T3 record
+        _shouldWaiveRepatriated = true;
+      }
+    }
+
+    var _doWaive = (newStatus === 'Backout') || (newStatus === 'Repatriated' && _shouldWaiveRepatriated);
+
+    var pendingFees = DB.employerFees.filter(function(f) {
+      return f.status === 'Pending' &&
+        (f.applicantId === applicantId || f.applicantId === app.id ||
+         f.applicantName === app.name);
+    });
+
+    if (pendingFees.length) {
+      if (_doWaive) {
+        pendingFees.forEach(function(fee) {
+          fee.status    = 'Waived';
+          fee.settledBy = 'System';
+          fee.settledAt = _today;
+          fee._waiveReason = newStatus;
+          var feeDbId = fee._dbId || fee.id;
+          if (feeDbId && isUUID(feeDbId)) {
+            apiPatchEmployerFee(feeDbId, {
+              status:     'Waived',
+              settled_by: 'System (Auto-waived: ' + newStatus + ')',
+              settled_at: _today,
+            }).catch(function(){});
+          }
+        });
+        autosave('employerFees');
+        addAudit('UPDATE', 'Employer Fee',
+          pendingFees.length + ' fee(s) auto-waived — ' + app.name + ' (' + newStatus + ')');
+        toast('Employer fee auto-waived — ' + app.name + ' (' + newStatus + ')', 'info');
+      } else {
+        // Post-guarantee repatriation — fee stays pending, employer still owes
+        addAudit('INFO', 'Employer Fee',
+          app.name + ' repatriated AFTER guarantee period — employer fee remains pending');
+        toast('⚠️ ' + app.name + ' repatriated after guarantee period — employer fee kept pending', 'info');
+      }
+    }
+  }
+
   // ── 2. REVERSE OPEN COMMISSION if Repatriated or Rejected ────────
   // ── Release slot if reverting from Deployed (NOT on Repatriated — slot stays consumed) ──
   if (oldStatus === 'Deployed' && newStatus !== 'Deployed' && newStatus !== 'Repatriated') {
@@ -11741,8 +11807,37 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
     }
   }
 
-  // ── DEPLOYED → 60% (Tranche 3 ONLY — T1/T2 NOT auto-created) ────
+  // ── DEPLOYED → require deployment date before proceeding ─────────
   if (newStatus === 'Deployed' && oldStatus !== 'Deployed') {
+    // Intercept — show deployment date modal, then continue via confirmDeploymentDate()
+    window._pendingDeploy = { applicantId: applicantId, newStatus: newStatus, oldStatus: oldStatus };
+    var _appForDeploy = DB.applicants.find(function(a){ return a.id===applicantId; });
+    var _nameEl = document.getElementById('deploy-modal-name');
+    if (_nameEl) _nameEl.textContent = (_appForDeploy ? _appForDeploy.name : '') + ' — setting deployment date';
+    var _dateEl = document.getElementById('deploy-date-input');
+    if (_dateEl) _dateEl.value = (_appForDeploy && _appForDeploy.deploymentDate) || new Date().toISOString().split('T')[0];
+    // Show guarantee period info
+    var _country = _appForDeploy && _appForDeploy.job ? _appForDeploy.job.split('·').pop().trim() : '';
+    var _rule = DB.countryRules.find(function(r){ return r.country===_country && r.active; });
+    var _gp = _rule ? (_rule.guaranteePeriod||6) : 6;
+    var _giEl = document.getElementById('deploy-guarantee-info');
+    if (_giEl) {
+      var _gEnd = new Date(_dateEl ? _dateEl.value : new Date());
+      _gEnd.setMonth(_gEnd.getMonth() + _gp);
+      _giEl.innerHTML = _gp + ' months &nbsp;→&nbsp; <strong>ends ' + _gEnd.toISOString().split('T')[0] + '</strong>' +
+        '<span style="font-size:11px;color:var(--muted);margin-left:6px">(based on ' + (_country||'country') + ' rule)</span>';
+      // Update end date when date input changes
+      if (_dateEl) {
+        _dateEl.oninput = function() {
+          var d = new Date(this.value); d.setMonth(d.getMonth()+_gp);
+          _giEl.innerHTML = _gp + ' months &nbsp;→&nbsp; <strong>ends ' + d.toISOString().split('T')[0] + '</strong>' +
+            '<span style="font-size:11px;color:var(--muted);margin-left:6px">(based on ' + (_country||'country') + ' rule)</span>';
+        };
+      }
+    }
+    openOverlay('overlay-deployment-date');
+    return; // Wait for confirmDeploymentDate()
+  }
     if (_trancheFired(3)) {
       toast('\u2139\uFE0F Deployment commission for ' + app.name + ' already recorded — skipped', 'info');
     } else if (agent) {
@@ -11989,7 +12084,6 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
       addAudit('CREATE', 'Complaint', 'Auto-created complaint for ' + app.name + ' on status change');
     }
   }
-}
 
 
 // ── AGENT CRUD ────────────────────────────────────────────────────────
@@ -12579,6 +12673,198 @@ function submitManualFee() {
 }
 
 // ── Backfill with detailed diagnostic modal ───────────────────────────
+// Auto-waive pending employer fees for all Backout / Repatriated applicants
+function autoWaiveBackoutFees() {
+  var backoutIds = new Set(
+    DB.applicants
+      .filter(function(a){ return a.status==='Backout' || a.status==='Repatriated'; })
+      .map(function(a){ return a.id; })
+  );
+  var backoutNames = new Set(
+    DB.applicants
+      .filter(function(a){ return a.status==='Backout' || a.status==='Repatriated'; })
+      .map(function(a){ return a.name; })
+  );
+
+  var today = new Date().toISOString().split('T')[0];
+
+  // Build set of repatriated applicants still within guarantee period
+  var withinGuaranteeIds = new Set();
+  DB.applicants.filter(function(a){ return a.status==='Repatriated'; }).forEach(function(a){
+    var t3 = DB.commissions.find(function(cm){
+      return cm.tranche===3 && cm.status!=='Reversed' &&
+        (cm.applicantId===a.id || cm.applicantName===a.name);
+    });
+    // Waive if: no T3 found (never confirmed deployed) OR still within guarantee
+    if (!t3 || !t3.guaranteeEnd || today <= t3.guaranteeEnd) {
+      withinGuaranteeIds.add(a.id);
+      withinGuaranteeIds.add(a.name);
+    }
+  });
+
+  var toWaive = DB.employerFees.filter(function(f){
+    if (f.status !== 'Pending') return false;
+    var appId   = f.applicantId;
+    var appName = f.applicantName;
+    // Always waive Backout
+    if (backoutIds.has(appId) || backoutNames.has(appName)) return true;
+    // Repatriated: only if within guarantee
+    var repApp = DB.applicants.find(function(a){ return a.id===appId || a.name===appName; });
+    if (repApp && repApp.status==='Repatriated') {
+      return withinGuaranteeIds.has(appId) || withinGuaranteeIds.has(appName);
+    }
+    return false;
+  });
+
+  if (!toWaive.length) {
+    toast('✅ No fees to waive — all Repatriated workers are post-guarantee', 'success');
+    return;
+  }
+
+  if (!confirm('Auto-waive ' + toWaive.length + ' pending employer fee(s) for Backout/Repatriated applicants?\n\n' +
+      toWaive.map(function(f){ return '• '+f.applicantName+' — $'+f.feeUSD; }).join('\n'))) return;
+
+  toWaive.forEach(function(fee) {
+    fee.status    = 'Waived';
+    fee.settledBy = 'System';
+    fee.settledAt = today;
+    fee._waiveReason = 'Backout/Repatriated (batch)';
+    var dbId = fee._dbId || fee.id;
+    if (dbId && isUUID(dbId)) {
+      apiPatchEmployerFee(dbId, {
+        status:     'Waived',
+        settled_by: 'System (Auto-waived: Backout/Repatriated)',
+        settled_at: today,
+      }).catch(function(){});
+    }
+  });
+
+  autosave('employerFees');
+  try { _triggerImmediateSync(); } catch(e) {}
+  addAudit('UPDATE', 'Employer Fees',
+    'Auto-waived ' + toWaive.length + ' pending fee(s) for Backout/Repatriated applicants');
+  toast('✅ Waived ' + toWaive.length + ' employer fee(s) for Backout/Repatriated applicants', 'success');
+  renderEmployerFees();
+}
+
+// ── DEPLOYMENT DATE MODAL HANDLERS ────────────────────────────────────
+function cancelDeploymentDate() {
+  // Revert the applicant status back to previous
+  if (window._pendingDeploy) {
+    var app = DB.applicants.find(function(a){ return a.id===window._pendingDeploy.applicantId; });
+    if (app) {
+      app.status = window._pendingDeploy.oldStatus;
+      // Revert inline status cell if visible
+      var statusCell = document.querySelector('[data-app-id="'+app.id+'"] .inline-status');
+      if (statusCell) statusCell.textContent = window._pendingDeploy.oldStatus;
+      autosave('applicants');
+      if (currentPage==='applicants') renderApplicants();
+    }
+    window._pendingDeploy = null;
+  }
+  closeOverlay('overlay-deployment-date');
+  toast('Deployment cancelled — status reverted', 'info');
+}
+
+function confirmDeploymentDate() {
+  var deployDate = (document.getElementById('deploy-date-input')||{}).value;
+  if (!deployDate) { toast('Please enter a deployment date', 'error'); return; }
+
+  var pd = window._pendingDeploy;
+  if (!pd) { closeOverlay('overlay-deployment-date'); return; }
+  window._pendingDeploy = null;
+  closeOverlay('overlay-deployment-date');
+
+  // Save deployment date on applicant
+  var app = DB.applicants.find(function(a){ return a.id===pd.applicantId; });
+  if (app) {
+    app.deploymentDate = deployDate;
+    app.status = 'Deployed'; // ensure status is set
+    autosave('applicants');
+    // Patch to backend
+    var appDbId = app._dbId || app.id;
+    if (appDbId && isUUID(appDbId)) {
+      apiFetch('/applicants/'+appDbId, {
+        method:'PATCH',
+        body: JSON.stringify({ deployment_date: deployDate, status: 'Deployed' }),
+      }).catch(function(){});
+    }
+  }
+
+  // Continue with the full status change logic (T3 commission, slot, etc.)
+  _doStatusChangeDeployed(pd.applicantId, pd.oldStatus, deployDate);
+}
+
+function _doStatusChangeDeployed(applicantId, oldStatus, deployDate) {
+  var app = DB.applicants.find(function(a){ return a.id===applicantId; });
+  if (!app) return;
+
+  var agent = DB.agents.find(function(a) {
+    var aid = app._agentDbId || app._agentId || app.agentId || '';
+    return aid && (a.id===aid || a._dbId===aid);
+  }) || DB.agents.find(function(a){ return a.name && a.name===app.agent; });
+
+  // ── T3 commission using ACTUAL deployment date for guaranteeEnd ───
+  function _trancheFired3() {
+    return DB.commissions.some(function(c){
+      return c.tranche===3 && c.status!=='Reversed' &&
+        (c.applicantId===applicantId || c.applicantId===app.id || c.applicantName===app.name);
+    });
+  }
+
+  if (!_trancheFired3() && agent) {
+    var _dc = _resolveCommission();
+    var t3amt = Math.round(_dc.total * 0.60);
+    var _gp   = _dc.rule ? (_dc.rule.guaranteePeriod||6) : 6;
+    // Guarantee period calculated from ACTUAL deployment date
+    var _gEnd = new Date(deployDate);
+    _gEnd.setMonth(_gEnd.getMonth() + _gp);
+    var guaranteeEnd = _gEnd.toISOString().split('T')[0];
+
+    var _t3 = {
+      id: 'COM-'+Date.now()+'-T3', agentId: agent.id, applicantId: applicantId,
+      applicantName: app.name, country: _dc.country, amount: t3amt,
+      totalCommission: _dc.total, tranche: 3, trancheLabel: 'Deployment (60%)',
+      currency: _dc.currency, status: 'Pending Release', triggerStatus: 'Deployed',
+      triggerDate: deployDate, deploymentDate: deployDate,
+      guaranteeEnd: guaranteeEnd, releaseDate: null,
+    };
+    DB.commissions.push(_t3);
+    apiCreateCommission(_t3).then(function(r){
+      if (r&&r.ok&&r.data&&r.data.id){ _t3._dbId=r.data.id; _t3.id=r.data.id; autosave('commissions'); try{_triggerImmediateSync();}catch(e){} }
+    }).catch(function(){});
+    agent.totalDeployed = (agent.totalDeployed||0)+1;
+    autosave('agents');
+    addAudit('CREATE','Commission','T3 (60%) — '+(_dc.currency==='USD'?'$':'₱')+t3amt.toLocaleString()+
+      ' for '+app.name+' — deployed '+deployDate+' — guarantee ends '+guaranteeEnd);
+    toast('✅ Commission T3 created — guarantee ends '+guaranteeEnd, 'success');
+    autosave('commissions');
+  } else if (_trancheFired3()) {
+    toast('ℹ️ T3 commission already recorded for '+app.name, 'info');
+  }
+
+  // ── Consume job slot ──────────────────────────────────────────────
+  var linkedJob = app._jobOrderId
+    ? DB.jobs.find(function(j){ return j.id===app._jobOrderId||j._dbId===app._jobOrderId; })
+    : null;
+  if (!linkedJob && app.job) {
+    var jt = app.job.split('·')[0].trim().toLowerCase();
+    linkedJob = DB.jobs.find(function(j){ return j.title.toLowerCase()===jt && j.status==='Open'; });
+  }
+  if (linkedJob) {
+    linkedJob.filled = (linkedJob.filled||0)+1;
+    autosave('jobs');
+    apiFetch('/jobs/'+(linkedJob._dbId||linkedJob.id), {method:'PATCH',body:JSON.stringify({filled:linkedJob.filled})}).catch(function(){});
+  }
+
+  // Re-render
+  if (currentPage==='applicants') renderApplicants();
+  if (currentPage==='pipeline')   renderKanban();
+  if (currentPage==='dashboard')  renderDashboard();
+  try { _triggerImmediateSync(); } catch(e) {}
+}
+
+
 function backfillEmployerFees() {
   if (!DB.employerFees) DB.employerFees = [];
   var FEE_STATUSES = ['Visa','OWWA','Deployed'];
@@ -16151,7 +16437,35 @@ async function loadSharedPermissions() {
   </div>
 </div>
 
-<!-- Add Funds / Allocation Modal -->
+<!-- ══ DEPLOYMENT DATE MODAL ═══════════════════════════════════════════ -->
+<div class="overlay" id="overlay-deployment-date" onclick="closeOverlayIfBg(event,'overlay-deployment-date')" role="dialog" aria-modal="true">
+  <div class="modal modal-sm">
+    <div class="modal-hdr">
+      <div>
+        <div class="modal-title">🚀 Confirm Deployment</div>
+        <p id="deploy-modal-name" style="font-size:12px;color:var(--muted);margin:2px 0 0"></p>
+      </div>
+      <button class="modal-close" onclick="cancelDeploymentDate()">✕</button>
+    </div>
+    <div class="modal-body" style="display:grid;gap:14px">
+      <div style="background:var(--brand-l);border-radius:8px;padding:12px;font-size:12.5px;color:var(--brand)">
+        The deployment date is used to calculate the <strong>guarantee period end date</strong>. Employer fees will only be waived on repatriation if the worker is still within this period.
+      </div>
+      <div class="f-grp">
+        <label class="f-lbl">Deployment Date <span style="color:var(--red)">*</span></label>
+        <input class="f-inp" id="deploy-date-input" type="date">
+      </div>
+      <div class="f-grp">
+        <label class="f-lbl">Guarantee Period</label>
+        <div id="deploy-guarantee-info" style="font-size:13px;color:var(--muted);padding:6px 0"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="cancelDeploymentDate()">Cancel</button>
+      <button class="btn btn-p" onclick="confirmDeploymentDate()">Confirm Deployment</button>
+    </div>
+  </div>
+</div>
 <div class="overlay" id="overlay-add-funds" onclick="closeOverlayIfBg(event,'overlay-add-funds')" role="dialog" aria-modal="true">
   <div class="modal modal-sm">
     <div class="modal-hdr">
