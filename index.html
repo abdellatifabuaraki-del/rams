@@ -10950,10 +10950,19 @@ function renderCommissions() {
     }).join('');
   }
 
-  // Pending commissions
+  // Pending commissions — exclude Backout/Rejected applicants
   var pendEl = document.getElementById('pending-commissions');
   if (pendEl) {
-    var pending = DB.commissions.filter(function(c){ return c.status==='Pending Release'; });
+    var _badStatuses = new Set(['Backout','Rejected']);
+    var pending = DB.commissions.filter(function(c) {
+      if (c.status !== 'Pending Release') return false;
+      // Exclude applicants who have backed out or been rejected
+      var linkedApp = DB.applicants.find(function(a){
+        return a.id === c.applicantId || a._dbId === c.applicantId || a.name === c.applicantName;
+      });
+      if (linkedApp && _badStatuses.has(linkedApp.status)) return false;
+      return true;
+    });
     pendEl.innerHTML = pending.length ? pending.map(function(c) {
       var agent = DB.agents.find(function(a){ return a.id===c.agentId; });
       var end   = new Date(c.guaranteeEnd);
@@ -11752,6 +11761,35 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
 
   // ── 2. REVERSE OPEN COMMISSION if Repatriated or Rejected ────────
   // ── Release slot if reverting from Deployed (NOT on Repatriated — slot stays consumed) ──
+  // ── AUTO-REVERSE PENDING COMMISSIONS on Backout / Rejected ──────
+  // Backout or Rejected = applicant never fully deployed or failed.
+  // All pending (unreleased) commissions must be reversed.
+  if (newStatus === 'Backout' || newStatus === 'Rejected') {
+    var _appId = app.id || app._dbId || '';
+    var _pendingComms = DB.commissions.filter(function(cm) {
+      return (cm.applicantId === _appId || cm.applicantName === app.name) &&
+             (cm.status === 'Pending Release' || cm.status === 'In Guarantee');
+    });
+    if (_pendingComms.length) {
+      _pendingComms.forEach(function(cm) {
+        cm.status = 'Reversed';
+        var cmDbId = cm._dbId || cm.id;
+        if (cmDbId && isUUID(cmDbId)) {
+          apiFetch('/commissions/' + cmDbId, {
+            method: 'PATCH',
+            body: JSON.stringify({ status: 'Reversed' }),
+          }).catch(function(){});
+        }
+      });
+      autosave('commissions');
+      try { _triggerImmediateSync(); } catch(e) {}
+      addAudit('UPDATE', 'Commission',
+        _pendingComms.length + ' pending commission(s) auto-reversed — ' +
+        app.name + ' marked as ' + newStatus);
+      toast(_pendingComms.length + ' pending commission(s) reversed for ' + app.name, 'info');
+    }
+  }
+
   // ── Release slot when status moves back from Deployed ────────────────────────
   // When leaving Deployed → free the slot so a replacement can be placed
   // EXCLUDED: Repatriated (worker completed deployment, slot was legitimately used)
