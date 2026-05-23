@@ -9937,13 +9937,21 @@ function go(page, el) {
       // Verify token is still valid with server (non-blocking)
       if (token !== 'demo') {
         apiFetch('/auth/me').then(function(r) {
-          if (!r.ok) {
-            // Token expired — clear and show login
-            window._ramsSessionToken = null;
-            window._ramsSessionUser  = null;
-            Store.remove('rams:session:token');
-            Store.remove('rams:session:user');
-            _showLogin();
+          if (!r.ok && r.httpStatus === 401) {
+            // Token definitely expired — clear and redirect to login after brief delay
+            // (delay avoids false logout when backend is cold-starting on Railway)
+            setTimeout(function() {
+              // Re-check before logging out — network might have been momentarily down
+              apiFetch('/auth/me').then(function(r2) {
+                if (!r2.ok && r2.httpStatus === 401) {
+                  window._ramsSessionToken = null;
+                  window._ramsSessionUser  = null;
+                  Store.remove('rams:session:token').catch(function(){});
+                  Store.remove('rams:session:user').catch(function(){});
+                  _showLogin();
+                }
+              }).catch(function(){});
+            }, 3000);
           } else {
             // Update user data from server — re-evaluate banner with confirmed role
             window._ramsSessionUser = r.data.user || user;
