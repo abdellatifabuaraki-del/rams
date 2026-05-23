@@ -12307,6 +12307,10 @@ function openManualAdjustment() {
     sel.innerHTML = DB.agents.map(function(a){
       return '<option value="'+a.id+'">'+a.name+' ('+a.code+')</option>';
     }).join('');
+    // Pre-select the agent currently open in the ledger
+    if (currentLedgerAgent) {
+      sel.value = currentLedgerAgent;
+    }
   }
   // Ensure agent names are resolved on all applicants before filtering
   if (typeof _resolveAgentNames === 'function') _resolveAgentNames();
