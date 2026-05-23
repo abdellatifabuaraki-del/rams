@@ -11972,7 +11972,6 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
     }
 
     if (currentPage === 'accounting') renderCommissions();
-  }
 
   // ── 4. MEDICALLY UNFIT extra charge (on any status change) ───────
   if (app.medical === 'Unfit' && shouldChargeAll && agent) {
@@ -12156,6 +12155,7 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
   }
 
 
+}
 // ── AGENT CRUD ────────────────────────────────────────────────────────
 function openAddAgent() {
   editingAgentIdx = -1;
