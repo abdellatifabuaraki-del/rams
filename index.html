@@ -11752,6 +11752,9 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
 
   // ── 2. REVERSE OPEN COMMISSION if Repatriated or Rejected ────────
   // ── Release slot if reverting from Deployed (NOT on Repatriated — slot stays consumed) ──
+  // ── Release slot when status moves back from Deployed ────────────────────────
+  // When leaving Deployed → free the slot so a replacement can be placed
+  // EXCLUDED: Repatriated (worker completed deployment, slot was legitimately used)
   if (oldStatus === 'Deployed' && newStatus !== 'Deployed' && newStatus !== 'Repatriated') {
     var _relJob = app._jobOrderId
       ? DB.jobs.find(function(j){ return j.id === app._jobOrderId || j._dbId === app._jobOrderId; })
@@ -11765,19 +11768,30 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
       // Re-open job if it was Filled
       if (_relJob.status === 'Filled' && _relJob.filled < _relJob.slots) {
         _relJob.status = 'Open';
-        addAudit('UPDATE', 'Job Order', _relJob.title + ' re-opened — slot released by ' + app.name);
+        addAudit('UPDATE', 'Job Order', _relJob.title + ' re-opened — slot released by ' + app.name + ' (' + newStatus + ')');
+      }
+      autosave('jobs');
+      var _relDbId = _relJob._dbId || _relJob.id;
+      if (_relDbId && isUUID(_relDbId)) {
+        apiFetch('/jobs/' + _relDbId, {
+          method: 'PATCH',
+          body: JSON.stringify({ filled: _relJob.filled, status: _relJob.status }),
+        }).then(function(r){ if(r&&r.ok){ try{_triggerImmediateSync();}catch(e){} } }).catch(function(){});
+      }
       } else {
-        addAudit('UPDATE', 'Job Order', _relJob.title + ': slot released by ' + app.name + ' (' + _relJob.filled + '/' + _relJob.slots + ')');
+        addAudit('UPDATE', 'Job Order', _relJob.title + ': slot released — ' + app.name + ' → ' + newStatus + ' (' + _relJob.filled + '/' + _relJob.slots + ')');
       }
       autosave('jobs');
       if (isUUID(_relJob._dbId || _relJob.id) && window._ramsSessionToken !== 'demo') {
-        apiUpdateJob(_relJob).catch(function(){});
+        apiUpdateJob(_relJob).then(function(r){
+          if (r && r.ok) { try{_triggerImmediateSync();}catch(e){} }
+        }).catch(function(){});
       }
       if (currentPage === 'jobs') renderJobs();
     }
-  }
 
-  if ((newStatus === 'Repatriated' || newStatus === 'Rejected') && agent) {
+
+    if ((newStatus === 'Repatriated' || newStatus === 'Rejected') && agent) {
     // Clear session fired-map so commissions can be re-triggered if applicant is re-processed
     if (window._commissionFired) {
       [1,2,3].forEach(function(n){ delete window._commissionFired[applicantId+':T'+n]; });
