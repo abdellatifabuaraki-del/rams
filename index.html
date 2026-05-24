@@ -5065,7 +5065,7 @@ function nav(page) {
         // Re-render after fresh data arrives
         if (page === 'dashboard')   renderDashboard();
         if (page === 'pipeline')    renderKanban();
-        if (page === 'applicants')  { renderApplicants(); setTimeout(_restoreApplicantFilters, 50); }
+        if (page === 'applicants')  { renderApplicants(); setTimeout(_restoreApplicantFilters, 150); }
         if (page === 'documents')   renderDocs();
         if (page === 'accounting')  renderAccounting();
         if (page === 'complaints')  renderComplaints();
@@ -6810,7 +6810,10 @@ function _restoreApplicantFilters() {
     el = document.getElementById('app-agent-filter');  if (el && f.a)  el.value = f.a;
     el = document.getElementById('app-medical-filter');if (el && f.m)  el.value = f.m;
     el = document.getElementById('app-joborder-filter');if(el && f.jo) el.value = f.jo;
-    return !!(f.q || f.s || f.a || f.m || f.jo);
+    var hasFilter = !!(f.q || f.s || f.a || f.m || f.jo);
+    // Re-apply the filter so the list updates — not just the dropdowns
+    if (hasFilter) filterApplicants();
+    return hasFilter;
   } catch(e){ return false; }
 }
 function clearFilters() {
@@ -7009,10 +7012,26 @@ function _inlineSaveMedical(appId, newMedical) {
 }
 
 function renderApplicants() {
+  // ── Restore persisted filters FIRST so they're applied on nav/refresh ──
+  try {
+    var _sf = localStorage.getItem('rams:filters:applicants');
+    if (_sf) {
+      var _ff = JSON.parse(_sf);
+      var _se = document.getElementById('app-search');          if (_se && _ff.q && !_se.value) _se.value = _ff.q;
+      var _ste= document.getElementById('app-status-filter');   if (_ste && _ff.s && !_ste.value) _ste.value = _ff.s;
+      var _me = document.getElementById('app-medical-filter');  if (_me && _ff.m && !_me.value) _me.value = _ff.m;
+      // Agent + job order dropdowns are repopulated below — set after repopulation
+    }
+  } catch(e) {}
+
   const agentFilter = document.getElementById('app-agent-filter');
   const agents = [...new Set(getScopedApplicants().map(a=>a.agent).filter(Boolean))];
   // Always repopulate — agents may load async after initial render
   var _agentPrevVal = agentFilter.value;
+  // If no current value, try restoring from saved filters
+  if (!_agentPrevVal) {
+    try { var _s=JSON.parse(localStorage.getItem('rams:filters:applicants')||'{}'); _agentPrevVal=_s.a||''; } catch(e){}
+  }
   agentFilter.innerHTML = '<option value="">All Agents</option>';
   agents.forEach(a => { const o = document.createElement('option'); o.value = a; o.text = a; agentFilter.appendChild(o); });
   if (_agentPrevVal) agentFilter.value = _agentPrevVal;
@@ -7021,6 +7040,10 @@ function renderApplicants() {
   // Repopulate job order filter — group by employer (show employer once, not every position)
   if (joFilter) {
     var prevJo = joFilter.value;
+    // If no current value, try restoring from saved filters
+    if (!prevJo) {
+      try { var _sj=JSON.parse(localStorage.getItem('rams:filters:applicants')||'{}'); prevJo=_sj.jo||''; } catch(e){}
+    }
     var usedJobIds = new Set(getScopedApplicants().map(function(a){ return a._jobOrderId; }).filter(Boolean));
     var usedJobs = DB.jobs.filter(function(j){ return usedJobIds.has(j.id) || usedJobIds.has(j._dbId); });
     // Group by employer so each employer appears once in the dropdown
