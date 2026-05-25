@@ -11221,32 +11221,6 @@ function releaseCommission(commId) {
   try{_triggerImmediateSync();}catch(e){}
   renderCommissions();
 }
-  var sym = currency === 'USD' ? '$' : '₱';
-  var fx  = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
-  var phpAmt = currency === 'USD' ? Math.round(c.amount * fx) : c.amount;
-  var usdNote = currency === 'USD' ? ' ['+sym+c.amount.toLocaleString()+' USD @ ₱'+fx+']' : '';
-
-  if (!confirm('Release '+(c.trancheLabel||'commission')+' of '+sym+c.amount.toLocaleString()+' '+currency+
-    (currency==='USD'?' (≈ ₱'+phpAmt.toLocaleString()+' PHP)':'')+' for '+c.applicantName+'?')) return;
-
-  c.status = 'Released';
-  c.releaseDate = new Date().toISOString().split('T')[0];
-  var agent = DB.agents.find(function(a){ return a.id===c.agentId; });
-  if (agent) {
-    agent.balance += phpAmt;
-    agent.totalCommission += phpAmt;
-  }
-  addLedgerEntry(c.agentId, 'commission',
-    'Commission released — '+c.applicantName+' ('+c.country+') T'+c.tranche+usdNote,
-    phpAmt, c.applicantId);
-  autosave('commissions');
-  autosave('agents');
-  apiUpdateCommission(c, { status: 'Released', release_date: c.releaseDate }).catch(function(){});
-  addAudit('UPDATE','Commission','Released T'+c.tranche+' '+sym+c.amount.toLocaleString()+' '+currency+' for '+c.applicantName);
-  toast('Commission T'+c.tranche+' of '+sym+c.amount.toLocaleString()+' '+currency+' released to '+(agent?agent.name:'agent'),'success');
-  try{_triggerImmediateSync();}catch(e){}
-  renderCommissions();
-
 function reverseCommission(commId) {
   var c = DB.commissions.find(function(x){ return x.id===commId; });
   if (!c) return;
