@@ -11172,10 +11172,9 @@ function releaseCommission(commId) {
     toast('This commission cannot be released (status: '+c.status+')', 'error'); return;
   }
 
-  // Block if this tranche was already released for this applicant (prevents double payment)
+  // Block duplicate release for same tranche + applicant
   var alreadyReleased = DB.commissions.some(function(x) {
-    return x.id !== c.id
-        && x.tranche === c.tranche
+    return x.id !== c.id && x.tranche === c.tranche
         && (x.applicantId === c.applicantId || x.applicantName === c.applicantName)
         && x.status === 'Released';
   });
@@ -11186,6 +11185,42 @@ function releaseCommission(commId) {
   }
 
   var currency = c.currency || 'PHP';
+  var sym      = currency === 'USD' ? '$' : '₱';
+  var fx       = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
+  // PHP amount: convert USD → PHP using current rate, or use PHP directly
+  var phpAmt   = currency === 'USD' ? Math.round(c.amount * fx) : c.amount;
+  var usdNote  = currency === 'USD'
+    ? ' ['+sym+c.amount.toLocaleString()+' USD @ ₱'+fx+']'
+    : '';
+
+  if (!confirm('Release '+(c.trancheLabel||'commission')+' of '+sym+c.amount.toLocaleString()+' '+currency+
+    (currency==='USD'?' (≈ ₱'+phpAmt.toLocaleString()+' PHP)':'')+' for '+c.applicantName+'?')) return;
+
+  c.status      = 'Released';
+  c.releaseDate = new Date().toISOString().split('T')[0];
+  c.fxRate      = fx;      // ← store FX rate used so reversal mirrors it exactly
+  c.phpAmount   = phpAmt;  // ← store PHP payout amount for accurate reversal
+
+  // addLedgerEntry manages agent.balance internally — do NOT update here too
+  addLedgerEntry(c.agentId, 'commission',
+    'Commission released — '+c.applicantName+' ('+c.country+') T'+c.tranche+usdNote,
+    phpAmt, c.applicantId);
+
+  var agent = DB.agents.find(function(a){ return a.id===c.agentId; });
+  if (agent) agent.totalCommission = (agent.totalCommission||0) + phpAmt;
+
+  autosave('commissions');
+  autosave('agents');
+  apiUpdateCommission(c, {
+    status: 'Released', release_date: c.releaseDate, fx_rate: fx, php_amount: phpAmt,
+  }).catch(function(){});
+  addAudit('UPDATE','Commission',
+    'Released T'+c.tranche+' '+sym+c.amount.toLocaleString()+' '+currency+' for '+c.applicantName);
+  toast('Commission T'+c.tranche+' of '+sym+c.amount.toLocaleString()+' '+currency+
+    ' released to '+(agent?agent.name:'agent'),'success');
+  try{_triggerImmediateSync();}catch(e){}
+  renderCommissions();
+}
   var sym = currency === 'USD' ? '$' : '₱';
   var fx  = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
   var phpAmt = currency === 'USD' ? Math.round(c.amount * fx) : c.amount;
@@ -11211,67 +11246,76 @@ function releaseCommission(commId) {
   toast('Commission T'+c.tranche+' of '+sym+c.amount.toLocaleString()+' '+currency+' released to '+(agent?agent.name:'agent'),'success');
   try{_triggerImmediateSync();}catch(e){}
   renderCommissions();
-}
 
 function reverseCommission(commId) {
   var c = DB.commissions.find(function(x){ return x.id===commId; });
   if (!c) return;
 
-  // Calculate the PHP amount the same way releaseCommission did
-  var fxRate    = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
-  var phpAmount = c.currency === 'USD' ? Math.round(c.amount * fxRate) : c.amount;
+  // Use the EXACT PHP amount that was paid out (stored at release time)
+  // Falls back to re-computing using stored fxRate, then current rate
+  var fx        = c.fxRate || (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
+  var phpAmount = c.phpAmount
+    || (c.currency === 'USD' ? Math.round(c.amount * fx) : c.amount);
 
-  if (!confirm('Reverse commission of ₱'+phpAmount.toLocaleString()+' for '+c.applicantName+'?\n\nThis will remove the credit from the agent ledger.')) return;
+  var sym = c.currency === 'USD' ? '$' : '₱';
+  var usdNote = c.currency === 'USD'
+    ? ' ['+sym+c.amount+' USD @ ₱'+Math.round(fx)+']'
+    : '';
+
+  if (!confirm('Reverse commission of ₱'+phpAmount.toLocaleString()+' for '+c.applicantName+'?\n'+
+    'Original amount: '+sym+c.amount+' '+c.currency+usdNote+'\n\nThis debits the agent ledger.')) return;
 
   var prev = c.status;
   c.status = 'Reversed';
 
-  var agent = DB.agents.find(function(a){ return a.id===c.agentId; });
-  if (agent && prev==='Released') {
-    agent.balance         = (agent.balance||0) - phpAmount;
-    agent.totalCommission = Math.max(0, (agent.totalCommission||0) - phpAmount);
-  }
-
-  // Remove the original commission release ledger entry for this applicant
-  // so the ledger is clean (no orphaned credit sitting against the reversal)
+  // Remove ONLY the specific ledger entry that matches this commission's tranche + amount
   var before = (DB.agentLedger || []).length;
+  var trancheKey = 'T' + c.tranche;
   DB.agentLedger = (DB.agentLedger || []).filter(function(e) {
-    return !(
-      e.agentId === c.agentId &&
-      e.type === 'commission' &&
-      (e.applicantId === c.applicantId || e.applicantId === c.applicantName ||
-       (e.desc && e.desc.toLowerCase().includes((c.applicantName||'').toLowerCase()))) &&
-      e.amount > 0
-    );
+    if (e.agentId !== c.agentId) return true;
+    if (e.type !== 'commission')  return true;
+    if (e.amount <= 0)            return true;
+    var descLower = (e.desc || '').toLowerCase();
+    var nameMatch = descLower.includes((c.applicantName || '').toLowerCase());
+    var tMatch    = descLower.includes('t'+c.tranche) || descLower.includes(trancheKey.toLowerCase());
+    var amtMatch  = Math.abs(e.amount - phpAmount) < 100; // within ₱100 tolerance for rounding
+    return !(nameMatch && (tMatch || amtMatch));
   });
   var removed = before - DB.agentLedger.length;
 
-  // Add a single reversal entry with the correct PHP amount
+  // addLedgerEntry manages agent.balance internally — do NOT update agent.balance separately
+  var agent = DB.agents.find(function(a){ return a.id===c.agentId; });
+  if (agent && prev === 'Released') {
+    agent.totalCommission = Math.max(0, (agent.totalCommission||0) - phpAmount);
+  }
+
   addLedgerEntry(c.agentId, 'reversal',
-    'Commission reversed — ' + c.applicantName +
-    (c.currency==='USD' ? ' [$'+c.amount+' USD @ ₱'+Math.round(fxRate)+']' : '') +
-    (removed ? ' ('+removed+' ledger entry removed)' : ''),
+    'Commission reversed — '+c.applicantName+' ('+c.country+') T'+c.tranche+usdNote,
     -phpAmount, c.applicantId);
 
   autosave('commissions');
   autosave('agents');
   autosave('agentLedger');
+
   apiUpdateCommission(c, { status: 'Reversed' }).then(function(r){
     if (r&&r.ok) { try{_triggerImmediateSync();}catch(e){} }
   }).catch(function(){});
-  // Sync ledger deletions to backend
+
   if (removed) {
     apiFetch('/agent-ledger/batch-delete', {
       method: 'POST',
-      body: JSON.stringify({ agentId: c.agentId, applicantName: c.applicantName, type: 'commission' }),
+      body: JSON.stringify({ agentId: c.agentId, applicantName: c.applicantName,
+        tranche: c.tranche, amount: phpAmount, type: 'commission' }),
     }).catch(function(){});
   }
-  addAudit('UPDATE','Commission','Reversed ₱'+phpAmount.toLocaleString()+' for '+c.applicantName);
-  toast('Commission reversed — ₱'+phpAmount.toLocaleString()+' removed from ledger','success');
+
+  addAudit('UPDATE','Commission',
+    'Reversed T'+c.tranche+' '+sym+c.amount+' '+c.currency+
+    ' (₱'+phpAmount.toLocaleString()+') for '+c.applicantName);
+  toast('Commission T'+c.tranche+' reversed — ₱'+phpAmount.toLocaleString()+' debited','success');
   renderCommissions();
 }
 
-// ── COUNTRY RULES ─────────────────────────────────────────────────────
 function renderCountryRules() {
   var grid = document.getElementById('rules-grid');
   if (!grid) return;
@@ -11374,26 +11418,35 @@ function renderReports() {
 function addLedgerEntry(agentId, type, desc, amount, applicantId) {
   var agent = DB.agents.find(function(a){ return a.id===agentId; });
   if (!agent) return;
-  var newBalance = agent.balance + amount;
+
+  // Recompute running balance from ALL existing ledger entries for this agent
+  // This ensures balance is always correct regardless of prior state
+  var existingSum = (DB.agentLedger || []).reduce(function(sum, e){
+    return e.agentId === agentId ? sum + (e.amount || 0) : sum;
+  }, 0);
+  var newBalance = existingSum + amount;
+
+  // Update agent.balance to match
   agent.balance = newBalance;
+
   var newEntry = {
-    id: 'LDG-' + String(DB.agentLedger.length+1).padStart(3,'0'),
-    agentId: agentId,
-    applicantId: applicantId || null,
-    type: type,
-    desc: desc,
-    amount: amount,
-    date: new Date().toISOString().split('T')[0],
+    id:             'LDG-' + String((DB.agentLedger||[]).length+1).padStart(3,'0'),
+    agentId:        agentId,
+    applicantId:    applicantId || null,
+    type:           type,
+    desc:           desc,
+    amount:         amount,
+    date:           new Date().toISOString().split('T')[0],
     runningBalance: newBalance,
   };
+  if (!DB.agentLedger) DB.agentLedger = [];
   DB.agentLedger.unshift(newEntry);
+
   autosave('agents');
   autosave('agentLedger');
-  // Persist to PostgreSQL
   apiCreateLedgerEntry(newEntry).catch(function(){});
-  // Persist agent balance to PostgreSQL
   apiUpdateAgent(agent).catch(function(){});
-  // Sync to shared storage so all users see the new entry immediately on next poll
+
   if (Store) {
     var _ts = String(Date.now());
     Store.set('rams:shared:agentLedger',    DB.agentLedger, true).catch(function(){});
