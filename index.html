@@ -11968,8 +11968,10 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
   // All pending (unreleased) commissions must be reversed.
   if (newStatus === 'Backout' || newStatus === 'Rejected') {
     var _appId = app.id || app._dbId || '';
+    var _appNameLower = (app.name || '').toLowerCase();
     var _pendingComms = DB.commissions.filter(function(cm) {
-      return (cm.applicantId === _appId || cm.applicantName === app.name) &&
+      return (cm.applicantId === _appId ||
+              (cm.applicantName && cm.applicantName.toLowerCase() === _appNameLower)) &&
              (cm.status === 'Pending Release' || cm.status === 'In Guarantee');
     });
     if (_pendingComms.length) {
@@ -13090,6 +13092,7 @@ function _doStatusChangeDeployed(applicantId, oldStatus, deployDate) {
     var _gEnd = new Date(deployDate);
     _gEnd.setMonth(_gEnd.getMonth() + _gp);
     var guaranteeEnd = _gEnd.toISOString().split('T')[0];
+    var _fx = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
 
     var _t3 = {
       id: 'COM-'+Date.now()+'-T3', agentId: agent.id, applicantId: applicantId,
@@ -13098,6 +13101,7 @@ function _doStatusChangeDeployed(applicantId, oldStatus, deployDate) {
       currency: _dc.currency, status: 'Pending Release', triggerStatus: 'Deployed',
       triggerDate: deployDate, deploymentDate: deployDate,
       guaranteeEnd: guaranteeEnd, releaseDate: null,
+      fxRate: _fx,  // store at creation so reversal uses correct rate even before release
     };
     DB.commissions.push(_t3);
     apiCreateCommission(_t3).then(function(r){
