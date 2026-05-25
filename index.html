@@ -4136,6 +4136,12 @@ function startPolling() {
         var localReadMap = {};
         (DB.notifications||[]).forEach(function(n){ if (n.read) localReadMap[n.id] = true; });
 
+        // Apply server is_read=true (sticky: once read always read)
+        r.data.forEach(function(row) {
+          var sid = row.id;
+          if (sid && (row.is_read || localReadMap[sid])) row.is_read = true;
+        });
+
   // Dedup merged notifications: same title+body = same event.
   // Prefer the copy with a richer link (local NTF- wins over server copy with null link).
   function _dedupeNotifs(arr) {
@@ -5225,9 +5231,10 @@ function renderNotifications() {
       var color     = typeColor[n.type] || 'var(--muted)';
       var actionLbl = _actionLabel(n);
       return '<div class="notif-item ' + (n.read ? '' : 'unread') + '" data-nid="' + n.id + '" ' +
+             'onclick="markRead(\'' + n.id + '\')" ' +
              'style="display:flex;align-items:flex-start;gap:10px;padding:11px 14px;' +
              'border-bottom:1px solid var(--border);' +
-             'cursor:' + (hasLink ? 'pointer' : 'default') + ';' +
+             'cursor:pointer;' +
              'background:' + (n.read ? 'transparent' : 'var(--brand-l)') + ';' +
              'transition:background .15s,box-shadow .15s">' +
         '<div style="width:34px;height:34px;border-radius:50%;background:' + color + '22;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;margin-top:1px">' + icon + '</div>' +
@@ -12276,6 +12283,10 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
     openOverlay('overlay-deployment-date');
     return; // Wait for confirmDeploymentDate()
   }
+
+  // ── NOTIFY all users of significant status changes ───────────────────
+  if (typeof _pushStatusChangeNotif === 'function') _pushStatusChangeNotif(app, newStatus, oldStatus);
+
   // ── 4. MEDICALLY UNFIT extra charge (on any status change) ───────
   if (app.medical === 'Unfit' && shouldChargeAll && agent) {
     addAudit('UPDATE', 'Medical',
@@ -13236,6 +13247,12 @@ function _doStatusChangeDeployed(applicantId, oldStatus, deployDate) {
   }
   if (linkedJob) {
     linkedJob.filled = (linkedJob.filled||0)+1;
+    if (linkedJob.slots && linkedJob.filled >= linkedJob.slots) {
+      linkedJob.status = 'Filled';
+      pushNotif('📋 Job Order Filled',
+        linkedJob.title + ' @ ' + (linkedJob.employer||'') + ' — all ' + linkedJob.slots + ' slots filled',
+        'job', { page: 'jobs' });
+    }
     autosave('jobs');
     apiFetch('/jobs/'+(linkedJob._dbId||linkedJob.id), {method:'PATCH',body:JSON.stringify({filled:linkedJob.filled})}).catch(function(){});
   }
@@ -14128,6 +14145,40 @@ function _usdWords(n) { n=Math.abs(Math.round(parseFloat(n)||0)); if(!n) return 
 function printInvoice() { var area=document.getElementById('invoice-print-area'); if(!area) return; var w=window.open('','_blank'); var html='<html><head><title>Invoice</title><style>body{font-family:Arial,sans-serif;margin:32px;color:#000;}table{border-collapse:collapse;}</style></head><body>'; html+=area.innerHTML; html+='</bo'+'dy></ht'+'ml>'; w.document.write(html); w.document.close(); w.focus(); setTimeout(function(){w.print();},400); }
 
 // ── BACKFILL COMMISSIONS ───────────────────────────────────────────
+// Map server notification row to local format
+function mapNotification(row) {
+  return {
+    id:    row.id,
+    _dbId: row.id,
+    title: row.title || '',
+    body:  row.body  || row.message || '',
+    type:  row.type  || 'info',
+    link:  row.link  || null,
+    read:  !!(row.is_read || row.read),
+    createdAt: row.created_at || new Date().toISOString(),
+  };
+}
+
+// Status change notifications — push to all users
+function _pushStatusChangeNotif(app, newStatus, oldStatus) {
+  var key_statuses = {
+    'Deployed':    { title:'Worker Deployed', type:'applicant', emoji:'🚀' },
+    'Visa':        { title:'Visa Approved',   type:'applicant', emoji:'📄' },
+    'OWWA':        { title:'OWWA Cleared',    type:'applicant', emoji:'✅' },
+    'Backout':     { title:'Worker Backed Out', type:'warning', emoji:'⚠️' },
+    'Repatriated': { title:'Worker Repatriated', type:'warning', emoji:'↩️' },
+    'Rejected':    { title:'Application Rejected', type:'warning', emoji:'❌' },
+  };
+  var meta = key_statuses[newStatus];
+  if (!meta) return; // don't notify for routine stage changes
+  pushNotif(
+    meta.emoji + ' ' + meta.title,
+    app.name + ' — ' + (oldStatus||'') + ' → ' + newStatus,
+    meta.type,
+    { page: 'applicants', id: app.id }
+  );
+}
+
 function backfillCommissions() {
   if (!confirm('Scan all applicants with agents and create missing T1/T2/T3 commission records?\n\nExisting records will NOT be duplicated. Proceed?')) return;
   var created={T1:[],T2:[],T3:[]}, skipped=0, today=new Date().toISOString().split('T')[0];
