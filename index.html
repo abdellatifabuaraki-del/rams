@@ -4236,6 +4236,11 @@ function startPolling() {
     apiFetchComplaints().catch(function(){});
     apiFetchDocuments().catch(function(){});
     apiFetchInvoices().catch(function(){});
+    // Refresh inquiries every ~60s so staff see new website inquiries promptly
+    if (!window._lastInqFetch || Date.now()-window._lastInqFetch > 60000) {
+      window._lastInqFetch = Date.now();
+      if (currentPage==='inquiries') renderInquiries();
+    }
     apiFetchOfficeLedger().then(function() {
       if (currentPage === 'accounting') {
         if (typeof renderOffice === 'function') renderOffice();
@@ -10976,19 +10981,39 @@ function renderCommissions() {
     }).join('');
   }
 
-  // Pending commissions — exclude Backout/Rejected applicants
+  // Pending commissions — exclude AND auto-reverse commissions for Backout/Rejected applicants
   var pendEl = document.getElementById('pending-commissions');
   if (pendEl) {
     var _badStatuses = new Set(['Backout','Rejected']);
-    var pending = DB.commissions.filter(function(c) {
-      if (c.status !== 'Pending Release') return false;
-      // Exclude applicants who have backed out or been rejected
+    var _toAutoReverse = [];
+    var pending = DB.commissions.filter(function(cm) {
+      if (cm.status !== 'Pending Release') return false;
+      // Lookup applicant by ID or name (case-insensitive)
       var linkedApp = DB.applicants.find(function(a){
-        return a.id === c.applicantId || a._dbId === c.applicantId || a.name === c.applicantName;
+        return a.id === cm.applicantId ||
+               a._dbId === cm.applicantId ||
+               (a.name && cm.applicantName && a.name.toLowerCase() === cm.applicantName.toLowerCase());
       });
-      if (linkedApp && _badStatuses.has(linkedApp.status)) return false;
+      if (linkedApp && _badStatuses.has(linkedApp.status)) {
+        _toAutoReverse.push(cm); // queue for reversal
+        return false; // exclude from display
+      }
       return true;
     });
+    // Auto-reverse stale commissions for Backout/Rejected applicants
+    if (_toAutoReverse.length) {
+      _toAutoReverse.forEach(function(cm) {
+        cm.status = 'Reversed';
+        var dbId = cm._dbId || cm.id;
+        if (dbId && isUUID(dbId)) {
+          apiFetch('/commissions/' + dbId, {
+            method: 'PATCH', body: JSON.stringify({ status: 'Reversed' }),
+          }).catch(function(){});
+        }
+      });
+      autosave('commissions');
+      try { _triggerImmediateSync(); } catch(e) {}
+    }
     pendEl.innerHTML = pending.length ? pending.map(function(c) {
       var agent = DB.agents.find(function(a){ return a.id===c.agentId; });
       var end   = new Date(c.guaranteeEnd);
