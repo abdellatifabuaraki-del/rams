@@ -3349,6 +3349,21 @@ async function apiDeleteOfficeLedgerEntry(id) {
   if (!isLive || !id || !isUUID(id)) return { ok: true };
   return await apiFetch('/office-ledger/' + id, { method: 'DELETE' });
 }
+async function apiFetchOfficeFunds() {
+  var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
+  if (!isLive) return;
+  try {
+    var r = await apiFetch('/office-funds');
+    if (r.ok && r.data) {
+      var fresh = typeof r.data === 'string' ? JSON.parse(r.data) : r.data;
+      if (fresh && typeof fresh === 'object') {
+        Object.assign(DB.officeFunds, fresh);
+        autosave('officeFunds');
+      }
+    }
+  } catch(e) { console.warn('[apiFetchOfficeFunds]', e.message); }
+}
+
 async function apiUpdateOfficeFunds(funds) {
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
   if (!isLive) return { ok: true };
@@ -3827,9 +3842,10 @@ function _resolveExpenseApplicants() {
 async function syncAllFromAPI() {
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
   if (!isLive) return;
-  var [apps, jobs, expenses, users, audit, agentsR, efR, alR, commR, crR, olR, compR] = await Promise.all([
+  var [apps, jobs, expenses, users, audit, agentsR, efR, alR, commR, crR, olR, compR, ofR] = await Promise.all([
     apiFetch('/applicants?limit=500'),
     apiFetch('/jobs?limit=200'),
+    apiFetch('/office-funds'),
     apiFetch('/expenses?limit=500'),
     apiFetch('/users'),
     apiFetch('/audit?limit=100'),
@@ -3919,6 +3935,10 @@ async function syncAllFromAPI() {
   if (crR && crR.ok && Array.isArray(crR.data)) {
     DB.countryRules = crR.data.map(mapCountryRule);
     autosave('countryRules');
+  }
+  if (ofR && ofR.ok && ofR.data) {
+    var _ofFresh = typeof ofR.data==='string' ? JSON.parse(ofR.data) : ofR.data;
+    if (_ofFresh && typeof _ofFresh==='object') Object.assign(DB.officeFunds, _ofFresh);
   }
   if (olR && olR.ok && Array.isArray(olR.data)) {
     DB.officeLedger = olR.data.map(mapOfficeLedgerRow);
@@ -4270,6 +4290,7 @@ function startPolling() {
       if (currentPage==='inquiries') renderInquiries();
     }
     apiFetchOfficeLedger().then(function() {
+      apiFetchOfficeFunds().catch(function(){});
       if (currentPage === 'accounting') {
         if (typeof renderOffice === 'function') renderOffice();
       }
@@ -4823,6 +4844,7 @@ async function loadDB() {
       await apiFetchDocuments();
       await loadSharedPermissions().catch(function(){});
       await apiFetchInvoices().catch(function(){});
+      await apiFetchOfficeFunds().catch(function(){});
       await loadViewerScopes().catch(function(){});
       await loadSharedPermissions().catch(function(){});
       // Fetch notifications from backend
@@ -14178,63 +14200,92 @@ function recalcOfficeLedgerBalances() {
 // ── CASH CARDS ────────────────────────────────────────────────────────
 function renderOfficeCashCards() {
   var f     = DB.officeFunds;
+  var fx    = f.fxRate || 57.5;
+
+  // Cash IN: only explicit add-fund entries from office ledger
   var phpIn = DB.officeLedger.filter(function(e){ return e.currency==='PHP' && e.amount>0; }).reduce(function(s,e){ return s+e.amount; },0);
-  var phpOut= DB.officeLedger.filter(function(e){ return e.currency==='PHP' && e.amount<0; }).reduce(function(s,e){ return s+Math.abs(e.amount); },0);
   var usdIn = DB.officeLedger.filter(function(e){ return e.currency==='USD' && e.amount>0; }).reduce(function(s,e){ return s+e.amount; },0);
-  var usdOut= DB.officeLedger.filter(function(e){ return e.currency==='USD' && e.amount<0; }).reduce(function(s,e){ return s+Math.abs(e.amount); },0);
+
+  // Cash OUT: office ledger negative entries + ALL expenses from DB.expenses
+  // (Office fund pays for all expenses before agents reimburse)
+  var phpLedgerOut = Math.abs(DB.officeLedger.filter(function(e){ return e.currency==='PHP' && e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0));
+  var usdLedgerOut = Math.abs(DB.officeLedger.filter(function(e){ return e.currency==='USD' && e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0));
+
+  // Include expenses from DB.expenses that aren't already in officeLedger
+  var dbExpTotal = (DB.expenses||[]).filter(function(e){ return e.status !== 'Rejected'; }).reduce(function(s,e){ return s+(parseFloat(e.amount)||0); },0);
+  // Only add the gap (avoid double-counting entries already in officeLedger)
+  var phpOut = Math.max(phpLedgerOut, dbExpTotal);
+
+  var phpBalance = phpIn - phpOut;
+  var usdBalance = usdIn  - usdLedgerOut;
+
+  // Keep stored value in sync — persist to Store + backend
+  f.balancePHP = phpBalance;
+  f.balanceUSD = usdBalance;
+  autosave('officeFunds');
+  apiUpdateOfficeFunds(f).catch(function(){});
+  // Sync to shared Store so other users see updated balance
+  if (typeof Store !== 'undefined') {
+    Store.set('rams:shared:officeFunds', f, true).catch(function(){});
+    Store.set('rams:shared:officeFunds:ts', String(Date.now()), true).catch(function(){});
+  }
+
   var phpCnt= DB.officeLedger.filter(function(e){ return e.currency==='PHP'; }).length;
   var usdCnt= DB.officeLedger.filter(function(e){ return e.currency==='USD'; }).length;
 
-  var phpClass = f.balancePHP < 0 ? 'cash-balance-negative' : f.balancePHP < f.lowThresholdPHP ? 'cash-balance-warning' : 'cash-balance-positive';
-  var usdClass = f.balanceUSD < 0 ? 'cash-balance-negative' : f.balanceUSD < f.lowThresholdUSD ? 'cash-balance-warning' : 'cash-balance-positive';
+  var phpClass = phpBalance < 0 ? 'cash-balance-negative' : phpBalance < f.lowThresholdPHP ? 'cash-balance-warning' : 'cash-balance-positive';
+  var usdClass = usdBalance < 0 ? 'cash-balance-negative' : usdBalance < f.lowThresholdUSD ? 'cash-balance-warning' : 'cash-balance-positive';
 
   var phpEl = document.getElementById('cash-php-balance');
   var usdEl = document.getElementById('cash-usd-balance');
-  if (phpEl) { phpEl.textContent = '₱'+f.balancePHP.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); phpEl.className = 'cash-card-balance '+phpClass; }
-  if (usdEl) { usdEl.textContent = '$'+f.balanceUSD.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); usdEl.className = 'cash-card-balance '+usdClass; }
+  if (phpEl) { phpEl.textContent = '₱'+phpBalance.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); phpEl.className = 'cash-card-balance '+phpClass; }
+  if (usdEl) { usdEl.textContent = '$'+usdBalance.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); usdEl.className = 'cash-card-balance '+usdClass; }
 
   var setTxt = function(id, val) { var el=document.getElementById(id); if(el) el.textContent=val; };
   setTxt('cash-php-in',  '₱'+phpIn.toLocaleString());
-  setTxt('cash-php-out', '₱'+phpOut.toLocaleString());
+  setTxt('cash-php-out', '₱'+Math.round(phpOut).toLocaleString());
   setTxt('cash-php-count', phpCnt);
   setTxt('cash-usd-in',  '$'+usdIn.toLocaleString());
-  setTxt('cash-usd-out', '$'+usdOut.toLocaleString());
+  setTxt('cash-usd-out', '$'+Math.round(usdLedgerOut).toLocaleString());
   setTxt('cash-usd-count', usdCnt);
 }
 
 // ── FLOW ROW ──────────────────────────────────────────────────────────
 function renderOfficeFlowRow() {
-  var f    = DB.officeFunds;
-  var fx   = f.fxRate;
+  var f   = DB.officeFunds;
+  var fx  = f.fxRate || 57.5;
+
+  // Cash IN from office ledger
   var phpIn  = DB.officeLedger.filter(function(e){ return e.currency==='PHP'&&e.amount>0; }).reduce(function(s,e){ return s+e.amount; },0);
-  var phpOut = Math.abs(DB.officeLedger.filter(function(e){ return e.currency==='PHP'&&e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0));
   var usdIn  = DB.officeLedger.filter(function(e){ return e.currency==='USD'&&e.amount>0; }).reduce(function(s,e){ return s+e.amount; },0);
-  var usdOut = Math.abs(DB.officeLedger.filter(function(e){ return e.currency==='USD'&&e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0));
 
-  // Agency-absorbed = applicant expenses NOT charged to agents (status !== 'Charged')
-  var agencyAbsorbed = DB.expenses
-    .filter(function(e){ return e.status !== 'Charged'; })
-    .reduce(function(s,e){ return s + (e.amount||0); }, 0);
+  // Cash OUT: office ledger entries + all expenses (office fund pays for all expenses)
+  var phpLedgerOut = Math.abs(DB.officeLedger.filter(function(e){ return e.currency==='PHP'&&e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0));
+  var usdLedgerOut = Math.abs(DB.officeLedger.filter(function(e){ return e.currency==='USD'&&e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0));
+  var dbExpTotal   = (DB.expenses||[]).filter(function(e){ return e.status!=='Rejected'; }).reduce(function(s,e){ return s+(parseFloat(e.amount)||0); },0);
 
+  // Use whichever is higher (prevents double-count if expenses already in ledger)
+  var phpOut = Math.max(phpLedgerOut, dbExpTotal);
+
+  // Total In / Net Balance — consistent with PHP card
   var totalInPHP  = phpIn  + usdIn  * fx;
-  var totalOutPHP = phpOut + usdOut * fx + agencyAbsorbed;  // include agency-absorbed
-  var totalBalPHP = f.balancePHP + f.balanceUSD * fx - agencyAbsorbed;
+  var totalOutPHP = phpOut + usdLedgerOut * fx;
+  var totalBalPHP = totalInPHP - totalOutPHP;
+
   var el = document.getElementById('office-flow-row');
   if (!el) return;
   el.innerHTML = [
-    { lbl:'Total Cash In',  val:'₱'+Math.round(totalInPHP).toLocaleString(),  color:'var(--green)'  },
+    { lbl:'Total Cash In',           val:'₱'+Math.round(totalInPHP).toLocaleString(),  color:'var(--green)' },
     { lbl:'arrow', val:'→', color:'var(--muted)' },
-    { lbl:'Total Expenses', val:'₱'+Math.round(totalOutPHP).toLocaleString(), color:'var(--red)'    },
+    { lbl:'Total Expenses',          val:'₱'+Math.round(totalOutPHP).toLocaleString(), color:'var(--red)'   },
     { lbl:'arrow', val:'=', color:'var(--muted)' },
-    { lbl:'Net Balance (PHP equiv)', val:'₱'+Math.round(totalBalPHP).toLocaleString(), color: totalBalPHP>=0?'var(--green)':'var(--red)' },
+    { lbl:'Net Balance (PHP equiv)', val:(totalBalPHP>=0?'₱':'-₱')+Math.round(Math.abs(totalBalPHP)).toLocaleString(), color: totalBalPHP>=0?'var(--green)':'var(--red)' },
     { lbl:'FX Rate', val:'$1 = ₱'+fx, color:'var(--brand)' },
   ].map(function(item) {
     if (item.lbl==='arrow') return '<div class="flow-arrow" style="color:'+item.color+';font-size:20px;font-weight:300">'+item.val+'</div>';
     return '<div class="flow-item"><div class="flow-val" style="color:'+item.color+'">'+item.val+'</div><div class="flow-lbl">'+item.lbl+'</div></div>';
   }).join('');
 }
-
-// ── LEDGER RENDER ─────────────────────────────────────────────────────
 function renderOfficeLedger() {
   var currFilter = document.getElementById('office-ledger-currency') ? document.getElementById('office-ledger-currency').value : 'all';
   var typeFilter = document.getElementById('office-ledger-type')     ? document.getElementById('office-ledger-type').value     : 'all';
