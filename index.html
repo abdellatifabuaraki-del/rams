@@ -1628,6 +1628,7 @@ button[disabled][data-rbac-locked] {
             <option value="">All Agents</option>
           </select>
           <button class="btn btn-ghost btn-sm" onclick="clearCommissionFilters()" style="font-size:11.5px">Clear</button>
+          <button class="btn btn-ghost btn-sm" onclick="resetCommissions()" style="font-size:11.5px;color:var(--red);border-color:var(--red)" title="Remove pending commissions that don't match the applicant's current status">🔄 Fix Mismatches</button>
           <span id="comm-filter-count" style="font-size:11px;color:var(--muted);margin-left:auto;white-space:nowrap"></span>
         </div>
       </div>
@@ -11172,6 +11173,114 @@ function renderCommissions() {
       '</tr>';
         }).join('') : '<tr><td colspan="9" style="text-align:center;padding:40px 20px;color:var(--muted)">No commissions match the current filters</td></tr>';
   }
+}
+
+// ── RESET COMMISSIONS — remove pending comms that don't match applicant status ──
+function resetCommissions() {
+  // Valid statuses for each tranche:
+  // T1 (Medical Cleared 20%): applicant.medical === 'Passed' AND status not terminal-bad
+  // T2 (OWWA/Processing 20%): applicant.status in OWWA/Processing/Visa/Deployed/Repatriated
+  // T3 (Deployment 60%):     applicant.status === 'Deployed' OR 'Repatriated'
+  var TERMINAL_BAD = new Set(['Backout','Rejected']);
+  var T2_VALID = new Set(['Processing','Visa','OWWA','Deployed','Repatriated','With Complaint']);
+  var T3_VALID = new Set(['Deployed','Repatriated']);
+
+  var mismatches = [];
+
+  DB.commissions.forEach(function(cm) {
+    if (cm.status !== 'Pending Release' && cm.status !== 'In Guarantee') return; // already resolved
+
+    var app = DB.applicants.find(function(a){
+      return a.id === cm.applicantId || a._dbId === cm.applicantId ||
+             (a.name && cm.applicantName && a.name.toLowerCase() === (cm.applicantName||'').toLowerCase());
+    });
+
+    if (!app) {
+      mismatches.push({ cm: cm, reason: 'Applicant not found (orphaned commission)', action: 'Reverse' });
+      return;
+    }
+
+    if (TERMINAL_BAD.has(app.status)) {
+      mismatches.push({ cm: cm, app: app, reason: 'Applicant is ' + app.status, action: 'Reverse' });
+      return;
+    }
+
+    if (cm.tranche === 1) {
+      if (app.medical !== 'Passed') {
+        mismatches.push({ cm: cm, app: app, reason: 'T1 requires Medical=Passed but is "' + (app.medical||'Pending') + '"', action: 'Reverse' });
+      }
+    } else if (cm.tranche === 2) {
+      if (!T2_VALID.has(app.status)) {
+        mismatches.push({ cm: cm, app: app, reason: 'T2 requires OWWA/Processing/Visa or beyond but status is "' + app.status + '"', action: 'Reverse' });
+      }
+    } else if (cm.tranche === 3) {
+      if (!T3_VALID.has(app.status)) {
+        mismatches.push({ cm: cm, app: app, reason: 'T3 requires Deployed/Repatriated but status is "' + app.status + '"', action: 'Reverse' });
+      }
+    }
+  });
+
+  if (!mismatches.length) {
+    toast('✅ All pending commissions match applicant status — nothing to fix', 'success');
+    return;
+  }
+
+  // Build preview list
+  var preview = mismatches.slice(0, 20).map(function(m){
+    return '• ' + (m.app ? m.app.name : (m.cm.applicantName||'Unknown')) +
+           ' T' + m.cm.tranche + ' — ' + m.reason;
+  }).join('\n');
+  if (mismatches.length > 20) preview += '\n... and ' + (mismatches.length - 20) + ' more';
+
+  if (!confirm(
+    'Found ' + mismatches.length + ' mismatched pending commission(s) to reverse:\n\n' +
+    preview + '\n\n' +
+    'Proceed? This will set them to Reversed and remove ledger entries.'
+  )) return;
+
+  var today = new Date().toISOString().split('T')[0];
+  mismatches.forEach(function(m) {
+    var cm = m.cm;
+    cm.status = 'Reversed';
+
+    // Reverse ledger entry if it exists (commission was released)
+    var dbId = cm._dbId || cm.id;
+    if (dbId && isUUID(dbId)) {
+      apiFetch('/commissions/' + dbId, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'Reversed' }),
+      }).catch(function(){});
+
+      // Remove any release ledger entry for this commission
+      var trancheKey = 'T' + cm.tranche;
+      var nameLower  = (cm.applicantName || '').toLowerCase();
+      var had = DB.agentLedger.filter(function(e){
+        return e.agentId === cm.agentId &&
+               e.type === 'commission' &&
+               e.amount > 0 &&
+               (e.desc||'').toLowerCase().includes(nameLower) &&
+               (e.desc||'').toLowerCase().includes('t' + cm.tranche);
+      });
+      if (had.length) {
+        DB.agentLedger = DB.agentLedger.filter(function(e){
+          return !had.some(function(h){ return h.id === e.id; });
+        });
+        // Tell backend to clean up too
+        apiFetch('/agent-ledger/batch-delete', {
+          method: 'POST',
+          body: JSON.stringify({ agentId: cm.agentId, applicantName: cm.applicantName, tranche: cm.tranche, type: 'commission' }),
+        }).catch(function(){});
+      }
+    }
+  });
+
+  autosave('commissions');
+  autosave('agentLedger');
+  try { _triggerImmediateSync(); } catch(e) {}
+  addAudit('UPDATE', 'Commissions',
+    'Reset: ' + mismatches.length + ' mismatched pending commission(s) reversed');
+  toast('✅ Reversed ' + mismatches.length + ' mismatched commission(s)', 'success');
+  renderCommissions();
 }
 
 function clearCommissionFilters() {
