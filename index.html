@@ -1602,7 +1602,35 @@ button[disabled][data-rbac-locked] {
       </div>
     </div>
     <div class="card" style="margin-top:16px">
-      <div style="padding:16px 18px;border-bottom:1px solid var(--border);font-size:14px;font-weight:800">Commission History</div>
+      <div style="border-bottom:1px solid var(--border);padding:12px 16px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <div style="font-size:14px;font-weight:800;margin-right:4px">Commission History</div>
+          <!-- Search -->
+          <input class="f-inp" id="comm-search" placeholder="🔍  Search agent or applicant…"
+            oninput="renderCommissions()" style="flex:1;min-width:150px;max-width:240px;padding:6px 10px;font-size:12.5px">
+          <!-- Tranche filter -->
+          <select class="f-inp" id="comm-filter-tranche" onchange="renderCommissions()" style="width:150px;font-size:12.5px;padding:6px 8px">
+            <option value="">All Tranches</option>
+            <option value="1">T1 — Medical</option>
+            <option value="2">T2 — OWWA / Processing</option>
+            <option value="3">T3 — Deployed</option>
+          </select>
+          <!-- Status filter -->
+          <select class="f-inp" id="comm-filter-status" onchange="renderCommissions()" style="width:140px;font-size:12.5px;padding:6px 8px">
+            <option value="">All Status</option>
+            <option value="Pending Release">Pending</option>
+            <option value="In Guarantee">In Guarantee</option>
+            <option value="Released">Released</option>
+            <option value="Reversed">Reversed</option>
+          </select>
+          <!-- Agent filter -->
+          <select class="f-inp" id="comm-filter-agent" onchange="renderCommissions()" style="width:150px;font-size:12.5px;padding:6px 8px">
+            <option value="">All Agents</option>
+          </select>
+          <button class="btn btn-ghost btn-sm" onclick="clearCommissionFilters()" style="font-size:11.5px">Clear</button>
+          <span id="comm-filter-count" style="font-size:11px;color:var(--muted);margin-left:auto;white-space:nowrap"></span>
+        </div>
+      </div>
       <table style="width:100%;border-collapse:collapse">
         <thead>
           <tr><th>Date</th><th>Agent</th><th>Applicant</th><th>Country</th>
@@ -11034,11 +11062,47 @@ function renderCommissions() {
     }).join('') : '<div class="empty-state" style="padding:20px"><div class="empty-icon">✅</div><div class="empty-title" style="font-size:13px">No pending commissions</div></div>';
   }
 
-  // Commission history table
+  // Commission history table with search + filters
   var tbody = document.getElementById('commission-tbody');
   if (tbody) {
+    // Populate agent filter dropdown
+    var agSel = document.getElementById('comm-filter-agent');
+    if (agSel && agSel.options.length <= 1) {
+      var agentNames = [...new Set(DB.commissions.map(function(cm){
+        var ag = DB.agents.find(function(a){ return a.id===cm.agentId; });
+        return ag ? ag.name : null;
+      }).filter(Boolean))].sort();
+      agentNames.forEach(function(n){ var o=document.createElement('option'); o.value=n; o.text=n; agSel.appendChild(o); });
+    }
+
+    var srch    = ((document.getElementById('comm-search')||{}).value||'').toLowerCase().trim();
+    var fTranche= (document.getElementById('comm-filter-tranche')||{}).value||'';
+    var fStatus = (document.getElementById('comm-filter-status')||{}).value||'';
+    var fAgent  = (document.getElementById('comm-filter-agent')||{}).value||'';
+
+    var filtered = DB.commissions.filter(function(cm) {
+      if (fTranche && String(cm.tranche) !== fTranche) return false;
+      if (fStatus  && cm.status !== fStatus) return false;
+      if (fAgent) {
+        var ag = DB.agents.find(function(a){ return a.id===cm.agentId; });
+        if (!ag || ag.name !== fAgent) return false;
+      }
+      if (srch) {
+        var ag = DB.agents.find(function(a){ return a.id===cm.agentId; });
+        var agName = ag ? ag.name.toLowerCase() : '';
+        var appName = (cm.applicantName||'').toLowerCase();
+        var trLabel = (cm.trancheLabel||'').toLowerCase();
+        var status  = (cm.status||'').toLowerCase();
+        if (!agName.includes(srch) && !appName.includes(srch) && !trLabel.includes(srch) && !status.includes(srch)) return false;
+      }
+      return true;
+    }).sort(function(a,b){ return (b.triggerDate||'').localeCompare(a.triggerDate||''); });
+
+    var countEl = document.getElementById('comm-filter-count');
+    if (countEl) countEl.textContent = filtered.length + ' of ' + DB.commissions.length + ' records';
+
     var trancheColors = { 1:'var(--teal)', 2:'var(--amber)', 3:'var(--brand)' };
-    tbody.innerHTML = DB.commissions.map(function(c) {
+    tbody.innerHTML = filtered.length ? filtered.map(function(c) {
       var agent      = DB.agents.find(function(a){ return a.id===c.agentId; });
       var tColor     = trancheColors[c.tranche] || 'var(--muted)';
       var tLabel     = c.trancheLabel || (c.tranche ? 'Tranche '+c.tranche : 'Commission');
@@ -11084,11 +11148,11 @@ function renderCommissions() {
           })()+
         '</td>'+
       '</tr>';
-    }).join('');
+        }).join('') : '<tr><td colspan="9" style="text-align:center;padding:40px 20px;color:var(--muted)">No commissions match the current filters</td></tr>';
   }
 }
 
-function saveCommissionRates() {
+function clearCommissionFilters() {
   DB.countryRules.forEach(function(r) {
     var rateEl = document.getElementById('crate-'+r.id);
     var withEl = document.getElementById('cwith-'+r.id);
