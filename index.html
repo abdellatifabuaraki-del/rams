@@ -4168,7 +4168,7 @@ function startPolling() {
         var _fromServer = r.data.map(function(n) {
           return { id: n.id, _dbId: n.id, title: n.title, body: n.body||'',
             type: n.type||'system',
-            read: localReadMap[n.id] || !!n.read,
+            read: !!(n.is_read || n.read || localReadMap[n.id]),  // is_read = server field, read = local
             ts:   new Date(n.created_at||Date.now()).getTime(),
             time: new Date(n.created_at||Date.now()).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),
             link: n.link ? (typeof n.link==='string'?JSON.parse(n.link):n.link) : null };
@@ -4883,7 +4883,7 @@ async function loadDB() {
   }
         var _nrFromServer = _nr.data.map(function(n) {
           return { id: n.id, _dbId: n.id, title: n.title, body: n.body||'',
-            type: n.type||'system', read: !!n.read, ts: new Date(n.created_at||Date.now()).getTime(),
+            type: n.type||'system', read: !!(n.is_read || n.read), ts: new Date(n.created_at||Date.now()).getTime(),
             time: new Date(n.created_at||Date.now()).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),
             link: n.link ? (typeof n.link==='string' ? JSON.parse(n.link) : n.link) : null };
         });
