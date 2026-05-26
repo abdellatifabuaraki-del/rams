@@ -3858,7 +3858,6 @@ async function syncAllFromAPI() {
   var [apps, jobs, expenses, users, audit, agentsR, efR, alR, commR, crR, olR, compR, ofR] = await Promise.all([
     apiFetch('/applicants?limit=500'),
     apiFetch('/jobs?limit=200'),
-    apiFetch('/office-funds'),
     apiFetch('/expenses?limit=500'),
     apiFetch('/users'),
     apiFetch('/audit?limit=100'),
@@ -3869,6 +3868,7 @@ async function syncAllFromAPI() {
     apiFetch('/country-rules'),
     apiFetch('/office-ledger'),
     apiFetch('/complaints'),
+    apiFetch('/office-funds'),
   ]);
   if (apps.ok) {
     var _freshApps = (apps.data.data || apps.data).map(mapApplicant);
