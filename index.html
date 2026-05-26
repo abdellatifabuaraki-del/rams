@@ -1652,7 +1652,7 @@ button[disabled][data-rbac-locked] {
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <select class="f-inp" id="ef-status-filter" onchange="renderEmployerFees()" style="width:160px">
           <option value="all">All Status</option>
-          <option value="Pending">Pending</option>
+          <option value="Paid">Paid</option>
           <option value="Settled">Settled</option>
           <option value="Waived">Waived</option>
         </select>
@@ -2612,7 +2612,7 @@ button[disabled][data-rbac-locked] {
         <div class="f-grp">
           <label class="f-lbl">Status</label>
           <select class="f-inp" id="d-status">
-            <option value="Pending">Pending Review</option>
+            <option value="Paid">Paid (Awaiting Recovery)</option>
             <option value="Approved">Approved</option>
             <option value="Rejected">Rejected</option>
           </select>
@@ -3203,7 +3203,7 @@ async function apiCreateExpense(data) {
     description:  data.desc || data.description || '',
     amount:       parseFloat(data.amount) || 0,
     category:     data.category || 'Other',
-    status:       data.status || 'Pending',
+    status:       data.status || 'Paid',
     expense_date: data.date || data.expense_date || new Date().toISOString().slice(0,10),
     applicant_id: (data.applicantId && isUUID(data.applicantId)) ? data.applicantId : null,
     notes:        data.ref || data.notes || null,
@@ -10952,7 +10952,7 @@ function _renderExpensesTabInner(search) {
   if (kpisEl) {
     var total   = expenses.reduce(function(s,e){ return s+e.amount; }, 0);
     var charged = expenses.filter(function(e){ return e.status==='Charged'; }).reduce(function(s,e){ return s+e.amount; }, 0);
-    var agency  = expenses.filter(function(e){ return e.status==='Agency'||e.status==='Pending'; }).reduce(function(s,e){ return s+e.amount; }, 0);
+    var agency  = expenses.filter(function(e){ return e.status==='Agency'; }).reduce(function(s,e){ return s+e.amount; }, 0);
     kpisEl.innerHTML = [
       { label:'Total Expenses', val:'₱'+total.toLocaleString(),   icon:'📊', bg:'var(--brand-l)', c:'var(--brand)' },
       { label:'Charged to Agents', val:'₱'+charged.toLocaleString(), icon:'💸', bg:'var(--rbg)',  c:'var(--red)' },
@@ -11593,14 +11593,14 @@ function resetAgentBalanceToZero(agentId) {
 
   // 1. Revert all Charged expenses back to Pending and clear agent assignment
   chargedExpenses.forEach(function(exp) {
-    exp.status    = 'Pending';
+    exp.status    = 'Paid';
     exp.agentId   = '';
     exp.agentName = '';
     var dbId = exp._dbId || exp.id;
     if (dbId && isUUID(dbId)) {
       apiFetch('/expenses/' + dbId, {
         method: 'PATCH',
-        body: JSON.stringify({ status: 'Pending' }),
+        body: JSON.stringify({ status: 'Paid' }),
       }).catch(function(){});
     }
     if (window._chargedExpenseIds) {
@@ -11720,7 +11720,7 @@ function deleteLedgerEntry(entryId) {
              (ex.desc === entry.desc || entry.desc.indexOf(ex.desc) !== -1);
     });
     if (linkedExp) {
-      linkedExp.status    = 'Pending';
+      linkedExp.status    = 'Paid';
       linkedExp.agentId   = '';
       linkedExp.agentName = '';
       // Persist reversal to PostgreSQL
@@ -12006,7 +12006,7 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
           && e.status !== 'Charged';
     });
     if (unchargedNoAgent.length > 0) {
-      unchargedNoAgent.forEach(function(e) { e.status = 'Agency'; });
+      unchargedNoAgent.forEach(function(e) { e.status = 'Paid'; }); // no agent — stays Paid until manually charged or absorbed
       addAudit('UPDATE', 'Expense',
         newStatus + ': expenses absorbed by agency (no agent) — ' + app.name);
       toast('No agent assigned — ' + unchargedNoAgent.length + ' expense(s) marked as Agency', 'info');
@@ -12311,7 +12311,7 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
       var nameMatch = e.applicant && e.applicant.toLowerCase() === _appNameLower;
       var idMatch   = e.applicantId && (e.applicantId === applicantId || e.applicantId === _appDbId ||
                       e.applicantId === (app._dbId||'') || e.applicantId === (app.id||''));
-      return (nameMatch || idMatch) && e.status === 'Pending';
+      return (nameMatch || idMatch) && (e.status === 'Paid' || e.status === 'Pending'); // Paid = agency paid upfront
     });
 
     if (_pendingExps.length > 0) {
