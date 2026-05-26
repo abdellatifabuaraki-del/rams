@@ -12625,6 +12625,8 @@ function openManualAdjustment() {
   // Populate applicant list filtered to this agent (called after agent select is populated)
   _filterAdjApplicants();
   ['adj-amount','adj-desc'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
+  var _adjDate = document.getElementById('adj-date');
+  if (_adjDate) _adjDate.value = new Date().toISOString().split('T')[0];
   var cur = document.getElementById('adj-currency'); if (cur) cur.value = 'PHP';
   var hint = document.getElementById('adj-php-equiv'); if (hint) hint.style.display = 'none';
   _updateAdjCurrencyLabel();
@@ -12692,8 +12694,10 @@ function submitAdjustment() {
   var amount   = parseFloat(document.getElementById('adj-amount').value)||0;
   var desc     = (document.getElementById('adj-desc').value||'').trim();
   var appId    = document.getElementById('adj-applicant').value||null;
+  var adjDate  = (document.getElementById('adj-date')||{}).value || new Date().toISOString().split('T')[0];
 
   if (!agentId||!desc||amount<=0) { toast('Agent, description and amount are required','error'); return; }
+  if (!adjDate) { toast('Please enter a date for this adjustment','error'); return; }
 
   var finalAmt = (type==='credit') ? amount : -amount;
 
@@ -12707,9 +12711,29 @@ function submitAdjustment() {
   // Pass currency info through desc if USD
   var fullDesc = desc + (currency === 'USD' ? ' [USD ' + (finalAmt > 0 ? '+' : '') + finalAmt.toFixed(2) + ']' : '');
 
-  addLedgerEntry(agentId, type, fullDesc, phpEquiv, appId);
+  // addLedgerEntry with custom date
+  var newEntry = {
+    id:             'LDG-' + String((DB.agentLedger||[]).length+1).padStart(3,'0'),
+    agentId:        agentId,
+    applicantId:    appId || null,
+    type:           type,
+    desc:           fullDesc,
+    amount:         phpEquiv,
+    date:           adjDate,
+    runningBalance: (function(){
+      var existingSum = (DB.agentLedger||[]).reduce(function(s,e){ return e.agentId===agentId ? s+(e.amount||0) : s; }, 0);
+      return existingSum + phpEquiv;
+    })(),
+  };
+  var agent = DB.agents.find(function(a){ return a.id===agentId; });
+  if (agent) agent.balance = newEntry.runningBalance;
+  if (!DB.agentLedger) DB.agentLedger = [];
+  DB.agentLedger.unshift(newEntry);
+
   autosave('agentLedger');
   autosave('agents');
+  apiCreateLedgerEntry(newEntry).catch(function(){});
+  if (agent) apiUpdateAgent(agent).catch(function(){});
   if (Store) {
     var _ats = String(Date.now());
     Store.set('rams:shared:agentLedger',    DB.agentLedger, true).catch(function(){});
@@ -16991,12 +17015,16 @@ async function loadSharedPermissions() {
           </select>
         </div>
         <div class="f-grp">
-          <label class="f-lbl">Currency</label>
-          <select class="f-inp" id="adj-currency" onchange="_updateAdjCurrencyLabel()">
-            <option value="PHP">₱ PHP</option>
-            <option value="USD">$ USD</option>
-          </select>
+          <label class="f-lbl">Date <span class="req">*</span></label>
+          <input class="f-inp" id="adj-date" type="date">
         </div>
+      </div>
+      <div class="f-grp">
+        <label class="f-lbl">Currency</label>
+        <select class="f-inp" id="adj-currency" onchange="_updateAdjCurrencyLabel()">
+          <option value="PHP">₱ PHP</option>
+          <option value="USD">$ USD</option>
+        </select>
       </div>
       <div class="f-grp">
         <label class="f-lbl" id="adj-amount-label">Amount (₱) <span class="req">*</span></label>
