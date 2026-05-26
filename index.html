@@ -12293,9 +12293,9 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
       'Medically unfit applicant ' + app.name + ' — expenses charged to agent ' + agent.name);
   }
 
-  // ── 4b. BACKOUT / REPATRIATED → apply country expense rule to existing pending expenses ──
-  if ((newStatus === 'Backout' || newStatus === 'Repatriated') &&
-      oldStatus !== 'Backout' && oldStatus !== 'Repatriated') {
+  // ── 4b. BACKOUT / REJECTED / REPATRIATED → apply country expense rule ─────
+  if ((newStatus === 'Backout' || newStatus === 'Rejected' || newStatus === 'Repatriated') &&
+      oldStatus !== 'Backout' && oldStatus !== 'Rejected' && oldStatus !== 'Repatriated') {
 
     // Resolve the expense rule for this applicant's destination country
     var _eCountry = app.job ? app.job.split('·').pop().trim() : '';
@@ -12304,8 +12304,14 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
     var _ruleLabel = {full:'Full recovery',partial:'50% recovery',medical:'Medical only',none:'Agency absorbs'}[_eRuleVal] || _eRuleVal;
 
     // Get all Pending expenses for this applicant
+    // Get all Pending expenses for this applicant — case-insensitive name + all ID variants
+    var _appNameLower = (app.name || '').toLowerCase();
+    var _appDbId      = app._dbId || app.id || '';
     var _pendingExps = DB.expenses.filter(function(e){
-      return (e.applicant === app.name || e.applicantId === applicantId) && e.status === 'Pending';
+      var nameMatch = e.applicant && e.applicant.toLowerCase() === _appNameLower;
+      var idMatch   = e.applicantId && (e.applicantId === applicantId || e.applicantId === _appDbId ||
+                      e.applicantId === (app._dbId||'') || e.applicantId === (app.id||''));
+      return (nameMatch || idMatch) && e.status === 'Pending';
     });
 
     if (_pendingExps.length > 0) {
@@ -12346,12 +12352,15 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
 
         } else {
           // full
-          e.status = 'Charged';
           if (agent) {
+            e.status = 'Charged';
             agent.totalExpenses = (agent.totalExpenses||0) + _amt;
             if (typeof addLedgerEntry === 'function')
               addLedgerEntry(agent.id, 'expense',
                 newStatus+': '+e.category+' — '+app.name, -_amt, applicantId);
+          } else {
+            // No agent assigned — company absorbs
+            e.status = 'Agency';
           }
         }
 
@@ -12367,6 +12376,8 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
 
       autosave('expenses');
       autosave('agents');
+      autosave('agentLedger');
+      try { _triggerImmediateSync(); } catch(e) {}
       addAudit('UPDATE', 'Expenses',
         newStatus+' — '+_pendingExps.length+' expense(s) processed under "'+_ruleLabel+'" rule for '+app.name+
         (_eCountry ? ' ('+_eCountry+')' : ''));
