@@ -2360,10 +2360,19 @@ button[disabled][data-rbac-locked] {
           </select>
         </div>
         <div class="form-group">
+          <label class="form-label">Category</label>
+          <select class="form-input" id="a-category">
+            <option value="">— Select —</option>
+            <option value="Skilled">Skilled</option>
+            <option value="Household">Household</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
           <label class="form-label">Passport Number</label>
           <input type="text" class="form-input" id="a-passport" placeholder="e.g. P1234567A" style="font-family:'IBM Plex Mono',monospace;letter-spacing:.05em">
         </div>
-      </div>
       <div class="form-row">
         <div class="form-group">
           <label class="form-label">Destination Country</label>
@@ -2997,6 +3006,8 @@ function mapApplicant(row) {
     _statusUpdatedAt: row.status_updated_at || row.updated_at || row.created_at || '',
     _jobOrderId:      row.job_order_id || '',
     deploymentDate:   row.deployment_date ? String(row.deployment_date).slice(0,10) : null,
+    category:         row.category || '',
+    category:         row.category || '',
     // Seed stage history from current status so gate works after page refresh
     // Full history is preserved in local Store; this ensures at least current stage is recorded
     _stageHistory: (function(){
@@ -6199,6 +6210,7 @@ function switchDrawerTab(tab, btn) {
       ? [['Status',pillHtml(app.status)],['Medical',pillHtml(app.medical,'medical')],
          ['Position',`<span style="font-size:13px">${(app.job||'').split('·')[0]||'—'}</span>`],
          ['Destination',app.destination || ((app.job||'').split('·')[1]||'—').trim()],
+         ['Category', app.category ? '<span style="background:var(--brand-l);color:var(--brand);padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700">' + app.category + '</span>' : '—'],
          ['Gender',app.gender||'—'],
          ['Passport',`<span style="font-family:monospace;font-size:12px">${app.passport||'—'}</span>`]]
       : [['Status',pillHtml(app.status)],['Medical',pillHtml(app.medical,'medical')],
@@ -6208,6 +6220,7 @@ function switchDrawerTab(tab, btn) {
            ? `<span style="font-family:monospace;font-size:12px;color:var(--green);font-weight:700">${app.deploymentDate}</span>`
            : `<span style="color:var(--muted);font-size:12px">—</span>`],
          ['Contact',app.contact],['Email',app.email],
+         ['Category', app.category ? '<span style="background:var(--brand-l);color:var(--brand);padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700">' + app.category + '</span>' : '—'],
          ['Gender',app.gender||'—'],
          ['Passport',`<span style="font-family:monospace;font-size:12px">${app.passport||'—'}</span>`],
          ['Destination',app.destination||'—']];
@@ -7333,6 +7346,7 @@ function editApplicant(id) {
   document.getElementById('a-notes').value = a.notes;
   document.getElementById('a-gender').value = a.gender || '';
   document.getElementById('a-passport').value = a.passport || '';
+  var _aCat = document.getElementById('a-category'); if (_aCat) _aCat.value = a.category || '';
   document.getElementById('a-destination').value = a.destination || '';
   var _joid = document.getElementById('a-job-order-id'); if(_joid) _joid.value = a._jobOrderId || '';
   // _populateJobOrderSelect called last so _onJobOrderSelect can override a-job with the resolved title
@@ -7373,7 +7387,8 @@ function saveApplicant() {
     date: editId ? DB.applicants.find(a=>a.id===editId).date : new Date().toISOString().split('T')[0],
     notes: document.getElementById('a-notes').value,
     gender: document.getElementById('a-gender').value,
-    passport: document.getElementById('a-passport').value.trim().toUpperCase(),
+    passport:  document.getElementById('a-passport').value.trim().toUpperCase(),
+    category:  (document.getElementById('a-category')||{}).value||'',
     destination: document.getElementById('a-destination').value,
   };
   if (editId) {
@@ -7494,6 +7509,7 @@ function saveApplicant() {
         var serverData = mapApplicant(r.data);
         // Preserve non-server fields only
         if (!serverData.passport    && data.passport)    serverData.passport    = data.passport;
+        if (data.category !== undefined)              serverData.category    = data.category;
         if (!serverData.gender      && data.gender)      serverData.gender      = data.gender;
         // Job order merge: user's explicit clear wins over whatever the server echoes back
         if (data._jobOrderId === '') {
