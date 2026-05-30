@@ -11332,15 +11332,49 @@ function releaseCommission(commId) {
   }
 
   // Block duplicate release for same tranche + applicant
-  var alreadyReleased = DB.commissions.some(function(x) {
+  var existingReleased = DB.commissions.find(function(x) {
     return x.id !== c.id && x.tranche === c.tranche
-        && (x.applicantId === c.applicantId || x.applicantName === c.applicantName)
+        && (x.applicantId === c.applicantId ||
+            (x.applicantName && c.applicantName &&
+             x.applicantName.toLowerCase() === c.applicantName.toLowerCase()))
         && x.status === 'Released';
   });
-  if (alreadyReleased) {
-    toast('⚠️ Tranche ' + c.tranche + ' commission for ' + c.applicantName +
-      ' was already released. Reverse the duplicate record first.', 'error');
-    return;
+  if (existingReleased) {
+    var fix = confirm(
+      '⚠️ Duplicate: T' + c.tranche + ' commission for ' + c.applicantName + ' was already released.\n\n' +
+      'Released record: ₱' + (existingReleased.phpAmount || existingReleased.amount || 0).toLocaleString() +
+      ' on ' + (existingReleased.releaseDate || '—') + '\n\n' +
+      'Click OK to auto-reverse the old record and release this one.\n' +
+      'Click Cancel to review manually in Commission History.'
+    );
+    if (!fix) return;
+    // Auto-reverse the old duplicate
+    existingReleased.status = 'Reversed';
+    var oldDbId = existingReleased._dbId || existingReleased.id;
+    if (oldDbId && isUUID(oldDbId)) {
+      apiFetch('/commissions/' + oldDbId, {
+        method: 'PATCH', body: JSON.stringify({ status: 'Reversed' }),
+      }).catch(function(){});
+      // Also remove the ledger entry for the old release
+      var oldNameLower = (existingReleased.applicantName || '').toLowerCase();
+      DB.agentLedger = (DB.agentLedger || []).filter(function(e) {
+        return !(e.agentId === existingReleased.agentId &&
+                 e.type === 'commission' && e.amount > 0 &&
+                 (e.desc || '').toLowerCase().includes(oldNameLower) &&
+                 (e.desc || '').toLowerCase().includes('t' + existingReleased.tranche));
+      });
+      apiFetch('/agent-ledger/batch-delete', {
+        method: 'POST',
+        body: JSON.stringify({ agentId: existingReleased.agentId,
+          applicantName: existingReleased.applicantName,
+          tranche: existingReleased.tranche, type: 'commission' }),
+      }).catch(function(){});
+    }
+    autosave('commissions');
+    autosave('agentLedger');
+    addAudit('UPDATE', 'Commission',
+      'Auto-reversed duplicate T' + c.tranche + ' for ' + c.applicantName + ' before re-release');
+    // Fall through to release the current record
   }
 
   var currency = c.currency || 'PHP';
