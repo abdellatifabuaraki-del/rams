@@ -13294,7 +13294,12 @@ function _doStatusChangeDeployed(applicantId, oldStatus, deployDate) {
     });
   }
 
-  if (!_trancheFired3() && agent) {
+  if (!_trancheFired3()) {
+    if (!agent) {
+      // Agent not found — warn admin and skip T3 (user must assign agent first or use Backfill)
+      toast('⚠️ Deployed: No agent found for ' + app.name +
+        ' — T3 commission skipped. Assign an agent then use ⚡ Backfill Commissions.', 'error');
+    } else {
     var _dc = _resolveCommission();
     var t3amt = Math.round(_dc.total * 0.60);
     var _gp   = _dc.rule ? (_dc.rule.guaranteePeriod||6) : 6;
@@ -13323,6 +13328,7 @@ function _doStatusChangeDeployed(applicantId, oldStatus, deployDate) {
       ' for '+app.name+' — deployed '+deployDate+' — guarantee ends '+guaranteeEnd);
     toast('✅ Commission T3 created — guarantee ends '+guaranteeEnd, 'success');
     autosave('commissions');
+    }  // end else (agent found)
   } else if (_trancheFired3()) {
     toast('ℹ️ T3 commission already recorded for '+app.name, 'info');
   }
@@ -14284,7 +14290,17 @@ function backfillCommissions() {
     function _makeT(n,label,pct,trigger){ var amt=Math.round(total*pct); return {id:'COM-BF-'+Date.now()+'-'+String(appId).slice(-4)+'-T'+n,agentId:agent.id,applicantId:appId,applicantName:app.name,country:country||'Philippines',amount:amt,totalCommission:total,tranche:n,trancheLabel:label,currency:currency,status:'Pending Release',triggerStatus:trigger,triggerDate:today,guaranteeEnd:gEnd,releaseDate:null,_backfilled:true}; }
     if (app.medical==='Passed'&&!_hasT(1)){ var t1=_makeT(1,'Medical Cleared (20%)',0.20,'Medical Passed'); DB.commissions.push(t1); created.T1.push(app.name); apiCreateCommission(t1).then(function(r){if(r&&r.ok&&r.data&&r.data.id){t1._dbId=r.data.id;t1.id=r.data.id;autosave('commissions');}}).catch(function(){}); }
     if ((app.status==='OWWA'||app.status==='Processing')&&!_hasT(2)){ var t2=_makeT(2,app.status+' (20%)',0.20,app.status); DB.commissions.push(t2); created.T2.push(app.name); apiCreateCommission(t2).then(function(r){if(r&&r.ok&&r.data&&r.data.id){t2._dbId=r.data.id;t2.id=r.data.id;autosave('commissions');}}).catch(function(){}); }
-    if (app.status==='Deployed'&&!_hasT(3)){ var t3=_makeT(3,'Deployment (60%)',0.60,'Deployed'); DB.commissions.push(t3); created.T3.push(app.name); apiCreateCommission(t3).then(function(r){if(r&&r.ok&&r.data&&r.data.id){t3._dbId=r.data.id;t3.id=r.data.id;autosave('commissions');}}).catch(function(){}); }
+    if (app.status==='Deployed'&&!_hasT(3)){
+      // Use actual deployment date if stored, otherwise today
+      var _depDate = app.deploymentDate || today;
+      var _gEnd3 = new Date(_depDate); _gEnd3.setMonth(_gEnd3.getMonth()+_gp);
+      var t3 = _makeT(3,'Deployment (60%)',0.60,'Deployed');
+      t3.triggerDate      = _depDate;
+      t3.deploymentDate   = _depDate;
+      t3.guaranteeEnd     = _gEnd3.toISOString().split('T')[0];
+      DB.commissions.push(t3); created.T3.push(app.name);
+      apiCreateCommission(t3).then(function(r){if(r&&r.ok&&r.data&&r.data.id){t3._dbId=r.data.id;t3.id=r.data.id;autosave('commissions');}}).catch(function(){});
+    }
   });
   autosave('commissions'); try{_triggerImmediateSync();}catch(e){}
   var total_created=created.T1.length+created.T2.length+created.T3.length;
