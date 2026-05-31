@@ -11311,22 +11311,55 @@ function resetCommissions() {
   renderCommissions();
 }
 
-function clearCommissionFilters() {
-  DB.countryRules.forEach(function(r) {
-    var rateEl = document.getElementById('crate-'+r.id);
-    var withEl = document.getElementById('cwith-'+r.id);
-    if (rateEl && rateEl.value !== '') r.commissionAmt  = parseFloat(rateEl.value);
-    if (withEl && withEl.value !== '') r.withholdPct    = parseFloat(withEl.value);
-    apiSaveCountryRule(r).catch(function(){});
+function saveCommissionRates() {
+  var updated = 0;
+  var promises = [];
+
+  DB.countryRules.filter(function(r){ return r.active; }).forEach(function(r) {
+    var amtEl  = document.getElementById('crate-' + r.id);
+    var witEl  = document.getElementById('cwith-' + r.id);
+    if (!amtEl) return;
+
+    var newAmt  = parseInt(amtEl.value)  || 0;
+    var newWith = parseInt((witEl||{}).value) || 0;
+
+    if (newAmt === r.commissionAmt && newWith === r.withholdPct) return; // unchanged
+
+    r.commissionAmt = newAmt;
+    r.withholdPct   = newWith;
+    updated++;
+
+    // Persist to backend
+    var dbId = r._dbId || r.id;
+    if (dbId) {
+      var p = apiFetch('/country-rules/' + dbId, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          commission_amt:   newAmt,
+          withhold_pct:     newWith,
+          commission_amount: newAmt,
+        }),
+      }).catch(function(e){ console.warn('[saveCommissionRates] PATCH failed:', e.message); });
+      promises.push(p);
+    }
   });
+
+  if (!updated) { toast('No changes to save', 'info'); return; }
+
   autosave('countryRules');
-  addAudit('UPDATE','Commissions','Commission rates updated');
-  toast('Commission rates saved','success');
+  // Trigger sync so other users get updated rates
+  Promise.all(promises).then(function(){
+    try { _triggerImmediateSync(); } catch(e) {}
+    addAudit('UPDATE', 'Country Rules', updated + ' commission rate(s) updated');
+    toast('✅ Commission rates saved for ' + updated + ' country rule(s)', 'success');
+  });
 }
 
 function releaseCommission(commId) {
   var c = DB.commissions.find(function(x){ return x.id===commId; });
   if (!c) return;
+
+
   if (c.status !== 'Pending Release' && c.status !== 'In Guarantee') {
     toast('This commission cannot be released (status: '+c.status+')', 'error'); return;
   }
