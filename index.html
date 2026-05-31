@@ -10813,13 +10813,7 @@ function renderAgentGrid(query) {
 function filterAgents(q) { renderAgentGrid(q); }
 
 // Called from applicant drawer — closes drawer then goes straight to agent ledger
-function _viewAgentLedger(agentId) {
-  closeDrawer();
-  nav('accounting');
-  setTimeout(function() {
-    viewAgentLedger(agentId);
-  }, 200);
-}
+// _viewAgentLedger defined below (near drawer code)
 
 function viewAgentLedger(agentId) {
   currentLedgerAgent = agentId;
@@ -15352,21 +15346,22 @@ function getApplicantAgent(app) {
 // Navigate to Accounting → Ledger tab with a specific agent pre-selected
 function _viewAgentLedger(agentId) {
   closeDrawer();
+  // Set agent BEFORE navigation so initLedgerTab picks it up immediately
+  currentLedgerAgent = agentId;
   nav('accounting');
-  setTimeout(function() {
-    var ledgerTab = document.querySelector('.acc-tab[onclick*="ledger"]');
+  // switchAccTab triggers initLedgerTab which fetches fresh data then renders with currentLedgerAgent
+  var _doSwitch = function() {
+    var ledgerTab = document.querySelector('.acc-tab[onclick*=\'ledger\']');
     switchAccTab('ledger', ledgerTab);
-    setTimeout(function() {
-      if (typeof renderAgentLedger === 'function') {
-        renderAgentLedger(agentId);
-      } else {
-        currentLedgerAgent = agentId;
-        var sel = document.getElementById('ledger-agent-select');
-        if (sel) sel.value = agentId;
-        if (typeof renderLedger === 'function') renderLedger();
-      }
-    }, 200);
-  }, 150);
+    // Fallback: if dropdown already populated, set it directly
+    var sel = document.getElementById('ledger-agent-select');
+    if (sel && sel.options.length > 1) {
+      sel.value = agentId;
+      renderLedger();
+    }
+  };
+  // Small delay to let nav() render the accounting page DOM
+  setTimeout(_doSwitch, 120);
 }
 
 function renderAgentSummaryInDrawer(app) {
@@ -15426,7 +15421,7 @@ function renderAgentSummaryInDrawer(app) {
               '</div></div>';
           }).join('') +
         '</div>' : '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">No transactions linked to this applicant yet.</div>') +
-      '<button class="btn btn-s btn-sm" style="width:100%" onclick="viewAgentLedger(\'' + agent.id + '\')">📒 View in Accounting → Ledger</button>' +
+      '<button class="btn btn-s btn-sm" style="width:100%" onclick="_viewAgentLedger(\'' + agent.id + '\')">📒 View in Accounting → Ledger</button>' +
     '</div>'
   );
 }
