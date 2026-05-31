@@ -10812,6 +10812,15 @@ function renderAgentGrid(query) {
 
 function filterAgents(q) { renderAgentGrid(q); }
 
+// Called from applicant drawer — closes drawer then goes straight to agent ledger
+function _viewAgentLedger(agentId) {
+  closeDrawer();
+  nav('accounting');
+  setTimeout(function() {
+    viewAgentLedger(agentId);
+  }, 200);
+}
+
 function viewAgentLedger(agentId) {
   currentLedgerAgent = agentId;
   switchAccTab('ledger', document.querySelectorAll('.acc-tab')[2]);
@@ -15288,7 +15297,7 @@ function renderDrawerAgentPanel(app) {
 
   // Link to full ledger
   html += '<div style="margin-top:14px">' +
-    '<button class="btn btn-s btn-sm" style="width:100%" onclick="viewAgentLedger(\'' + agent.id + '\');nav(\'accounting\')">📒 View Agent Full Ledger</button>' +
+    '<button class="btn btn-s btn-sm" style="width:100%" onclick="_viewAgentLedger(\'' + agent.id + '\')">📒 View in Accounting → Ledger</button>' +
   '</div>';
 
   return html;
@@ -15340,6 +15349,26 @@ function getApplicantAgent(app) {
 }
 
 // ── renderAgentSummaryInDrawer — mini agent card in drawer ───────────
+// Navigate to Accounting → Ledger tab with a specific agent pre-selected
+function _viewAgentLedger(agentId) {
+  closeDrawer();
+  nav('accounting');
+  setTimeout(function() {
+    var ledgerTab = document.querySelector('.acc-tab[onclick*="ledger"]');
+    switchAccTab('ledger', ledgerTab);
+    setTimeout(function() {
+      if (typeof renderAgentLedger === 'function') {
+        renderAgentLedger(agentId);
+      } else {
+        currentLedgerAgent = agentId;
+        var sel = document.getElementById('ledger-agent-select');
+        if (sel) sel.value = agentId;
+        if (typeof renderLedger === 'function') renderLedger();
+      }
+    }, 200);
+  }, 150);
+}
+
 function renderAgentSummaryInDrawer(app) {
   var agent = getApplicantAgent(app);
   if (!agent) return '<div style="color:var(--muted);font-size:12.5px;padding:12px 0">No agent linked.</div>';
@@ -15397,9 +15426,7 @@ function renderAgentSummaryInDrawer(app) {
               '</div></div>';
           }).join('') +
         '</div>' : '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">No transactions linked to this applicant yet.</div>') +
-      '<button class="btn btn-s btn-sm" style="width:100%" onclick="switchAccTab(\'agents\',document.querySelectorAll(\'.acc-tab\')[1]);nav(\'accounting\')">📒 View in Accounting</button>' +
-        '📒 Open Full Agent Ledger →' +
-      '</button>' +
+      '<button class="btn btn-s btn-sm" style="width:100%" onclick="viewAgentLedger(\'' + agent.id + '\')">📒 View in Accounting → Ledger</button>' +
     '</div>'
   );
 }
@@ -16139,7 +16166,7 @@ function openViewerScope(userEmail, userName) {
       return [
         '<label style="display:flex;align-items:center;gap:12px;padding:10px 12px;',
         'border-radius:8px;background:var(--s2);border:1px solid var(--border);cursor:pointer">',
-        '<input type="checkbox" data-job-id="', j.id, '" data-job-dbid="', (j._dbId||j.id), '" ', (checked ? 'checked' : ''),
+        '<input type="checkbox" data-job-id="', j.id, '" ', (checked ? 'checked' : ''),
         ' style="width:16px;height:16px;accent-color:var(--brand);flex-shrink:0">',
         '<div style="flex:1;min-width:0">',
           '<div style="font-size:13px;font-weight:700">', j.title,
@@ -16176,13 +16203,8 @@ function openViewerScope(userEmail, userName) {
 
 
 function saveViewerScope() {
-  var checked = document.querySelectorAll('#vs-job-list input[data-job-id]:checked');
-  var jobIds = [];
-  Array.from(checked).forEach(function(cb) {
-    if (cb.dataset.jobId) jobIds.push(cb.dataset.jobId);
-    if (cb.dataset.jobDbid && cb.dataset.jobDbid !== cb.dataset.jobId) jobIds.push(cb.dataset.jobDbid);
-  });
-  jobIds = jobIds.filter(function(v,i,a){ return a.indexOf(v)===i; });
+  var checked = document.querySelectorAll('#vs-job-list input[type="checkbox"]:checked');
+  var jobIds = Array.from(checked).map(function(cb) { return cb.dataset.jobId; });
   var checkedRooms = document.querySelectorAll('#vs-room-list input[type="checkbox"]:checked');
   var chatRoomIds = Array.from(checkedRooms).map(function(cb){ return cb.dataset.roomId; });
   viewerScopes[_scopingUserEmail] = jobIds;
@@ -16856,20 +16878,8 @@ function stopChatPoll() {
 
 // ── Load permissions from shared Store (admin may have changed them) ──
 async function loadSharedPermissions() {
-  // Try backend first — only reliable cross-browser sync
-  var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
-  if (isLive) {
-    try {
-      var br = await apiFetch('/permissions');
-      if (br.ok && br.data && br.data.permissions && Array.isArray(br.data.permissions)) {
-        br.data.permissions.forEach(function(row,i){ if(PERMISSIONS[i]) PERMISSIONS[i]=row.slice(); });
-        if (br.data.rolesConfig) br.data.rolesConfig.forEach(function(rc,i){ if(ROLES_CONFIG[i]) Object.assign(ROLES_CONFIG[i],rc); });
-        return;
-      }
-    } catch(e) {}
-  }
   try {
-    // Fallback to shared Store (localStorage on GitHub Pages)
+    // Try shared Store first (updated by admin)
     var r = await Store.get('rams:shared:permissions', true);
     if (!r) r = await Store.get('rams:shared:permissions');
     if (!r) return;
@@ -16894,47 +16904,6 @@ async function loadSharedPermissions() {
 }
 
 </script>
-<!-- ══ INVOICE BUILDER MODAL ════════════════════════════════════════════ -->
-<div class="overlay" id="overlay-invoice" onclick="closeOverlayIfBg(event,'overlay-invoice')" role="dialog" aria-modal="true">
-  <div class="modal" style="width:680px;max-width:97vw;max-height:92vh;overflow-y:auto">
-    <div class="modal-hdr"><div class="modal-title" id="inv-modal-title">🧾 New Invoice</div><button class="modal-close" onclick="closeOverlay('overlay-invoice')">✕</button></div>
-    <div class="modal-body" style="display:grid;gap:14px">
-      <div style="background:var(--s2);border-radius:10px;padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        <div class="f-grp"><label class="f-lbl">Invoice No.</label><input class="f-inp" id="inv-number" placeholder="e.g. 137"></div>
-        <div class="f-grp"><label class="f-lbl">Date</label><input class="f-inp" id="inv-date" type="date"></div>
-        <div class="f-grp"><label class="f-lbl">Counter Part ID</label><input class="f-inp" id="inv-counterpart" placeholder="e.g. NM"></div>
-        <div class="f-grp"><label class="f-lbl">Charges For</label><input class="f-inp" id="inv-charges-for" value="APPLICANTS DEPLOYMENT"></div>
-      </div>
-      <div class="f-grp"><label class="f-lbl">Bill To (Employer)</label><select class="f-inp" id="inv-employer" onchange="loadInvoiceApplicants()"><option value="">— Select employer —</option></select></div>
-      <div class="f-grp"><label class="f-lbl">Employer Address</label><input class="f-inp" id="inv-employer-address" placeholder="e.g. AL KHOBAR, SAUDI ARABIA"></div>
-      <div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><label class="f-lbl" style="margin:0">Line Items</label><button class="btn btn-s btn-sm" onclick="addInvoiceRow()">+ Add Row</button></div>
-        <div style="background:var(--s2);border-radius:8px;overflow:hidden">
-          <table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="background:var(--border)"><th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:700">APPLICANT</th><th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:700">PARTICULAR</th><th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:700">COMPANY</th><th style="padding:8px 6px;text-align:right;font-size:11px;font-weight:700">USD</th><th style="padding:8px 6px;text-align:right;font-size:11px;font-weight:700" id="inv-local-col-hdr">SAR</th><th style="width:30px"></th></tr></thead><tbody id="inv-rows"></tbody></table>
-        </div>
-        <div style="display:flex;justify-content:flex-end;gap:16px;margin-top:8px;font-size:13px;font-weight:700"><span>Total: <span id="inv-total-usd" style="color:var(--brand)">$0.00</span></span><span style="color:var(--muted)" id="inv-total-local-wrap"><span id="inv-total-sar">SAR 0.00</span></span></div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        <div class="f-grp"><label class="f-lbl">Payment Received (USD)</label><input class="f-inp" id="inv-paid" type="number" value="0" min="0" oninput="recalcInvoice()"></div>
-        <div class="f-grp"><label class="f-lbl">Local Currency</label><div style="display:flex;gap:6px"><select class="f-inp" id="inv-local-currency" style="width:110px"><option value="">None</option><option value="SAR" selected>SAR</option><option value="AED">AED</option><option value="KWD">KWD</option><option value="QAR">QAR</option><option value="BHD">BHD</option><option value="OMR">OMR</option><option value="EUR">EUR</option><option value="GBP">GBP</option><option value="PHP">PHP</option></select><input class="f-inp" id="inv-sar-rate" type="number" value="3.75" step="0.0001" oninput="recalcInvoice()" style="width:80px"></div></div>
-      </div>
-      <div class="f-grp"><label class="f-lbl">Notes</label><textarea class="f-inp" id="inv-notes" rows="2" placeholder="Additional notes"></textarea></div>
-    </div>
-    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeOverlay('overlay-invoice')">Cancel</button><button class="btn btn-s" onclick="previewInvoice()">👁 Preview</button><button class="btn btn-p" onclick="saveInvoice()">Save Invoice</button></div>
-  </div>
-</div>
-<!-- ══ INVOICE PRINT PREVIEW ══════════════════════════════════════════ -->
-<div class="overlay" id="overlay-invoice-print" onclick="closeOverlayIfBg(event,'overlay-invoice-print')" role="dialog" aria-modal="true">
-  <div class="modal" style="width:800px;max-width:97vw;max-height:95vh;overflow-y:auto;padding:0">
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:2">
-      <div style="font-weight:700;font-size:14px">Invoice Preview</div>
-      <div style="display:flex;gap:8px"><button class="btn btn-p btn-sm" onclick="printInvoice()">🖨 Print / Save PDF</button><button class="btn btn-ghost btn-sm" onclick="closeOverlay('overlay-invoice-print')">✕ Close</button></div>
-    </div>
-    <div id="invoice-print-area" style="padding:40px 48px;font-family:Arial,sans-serif;color:#000;background:#fff;min-height:1000px"></div>
-  </div>
-</div>
-</body></html>'); w.document.close(); w.focus(); setTimeout(function(){w.print();},400); }
-
 
 <!-- Change Password Modal -->
 <div class="overlay" id="overlay-change-password" onclick="closeOverlayIfBg(event,'overlay-change-password')" role="dialog" aria-modal="true">
@@ -17155,16 +17124,12 @@ async function loadSharedPermissions() {
           </select>
         </div>
         <div class="f-grp">
-          <label class="f-lbl">Date <span class="req">*</span></label>
-          <input class="f-inp" id="adj-date" type="date">
+          <label class="f-lbl">Currency</label>
+          <select class="f-inp" id="adj-currency" onchange="_updateAdjCurrencyLabel()">
+            <option value="PHP">₱ PHP</option>
+            <option value="USD">$ USD</option>
+          </select>
         </div>
-      </div>
-      <div class="f-grp">
-        <label class="f-lbl">Currency</label>
-        <select class="f-inp" id="adj-currency" onchange="_updateAdjCurrencyLabel()">
-          <option value="PHP">₱ PHP</option>
-          <option value="USD">$ USD</option>
-        </select>
       </div>
       <div class="f-grp">
         <label class="f-lbl" id="adj-amount-label">Amount (₱) <span class="req">*</span></label>
@@ -17248,35 +17213,7 @@ async function loadSharedPermissions() {
   </div>
 </div>
 
-<!-- ══ DEPLOYMENT DATE MODAL ═══════════════════════════════════════════ -->
-<div class="overlay" id="overlay-deployment-date" onclick="closeOverlayIfBg(event,'overlay-deployment-date')" role="dialog" aria-modal="true">
-  <div class="modal modal-sm">
-    <div class="modal-hdr">
-      <div>
-        <div class="modal-title">🚀 Confirm Deployment</div>
-        <p id="deploy-modal-name" style="font-size:12px;color:var(--muted);margin:2px 0 0"></p>
-      </div>
-      <button class="modal-close" onclick="cancelDeploymentDate()">✕</button>
-    </div>
-    <div class="modal-body" style="display:grid;gap:14px">
-      <div style="background:var(--brand-l);border-radius:8px;padding:12px;font-size:12.5px;color:var(--brand)">
-        The deployment date is used to calculate the <strong>guarantee period end date</strong>. Employer fees will only be waived on repatriation if the worker is still within this period.
-      </div>
-      <div class="f-grp">
-        <label class="f-lbl">Deployment Date <span style="color:var(--red)">*</span></label>
-        <input class="f-inp" id="deploy-date-input" type="date">
-      </div>
-      <div class="f-grp">
-        <label class="f-lbl">Guarantee Period</label>
-        <div id="deploy-guarantee-info" style="font-size:13px;color:var(--muted);padding:6px 0"></div>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="cancelDeploymentDate()">Cancel</button>
-      <button class="btn btn-p" onclick="confirmDeploymentDate()">Confirm Deployment</button>
-    </div>
-  </div>
-</div>
+<!-- Add Funds / Allocation Modal -->
 <div class="overlay" id="overlay-add-funds" onclick="closeOverlayIfBg(event,'overlay-add-funds')" role="dialog" aria-modal="true">
   <div class="modal modal-sm">
     <div class="modal-hdr">
@@ -17635,45 +17572,5 @@ async function loadSharedPermissions() {
   </div>
 </div>
 
-
-<!-- ══ INVOICE BUILDER MODAL ════════════════════════════════════════════ -->
-<div class="overlay" id="overlay-invoice" onclick="closeOverlayIfBg(event,'overlay-invoice')" role="dialog" aria-modal="true">
-  <div class="modal" style="width:680px;max-width:97vw;max-height:92vh;overflow-y:auto">
-    <div class="modal-hdr"><div class="modal-title" id="inv-modal-title">🧾 New Invoice</div><button class="modal-close" onclick="closeOverlay('overlay-invoice')">✕</button></div>
-    <div class="modal-body" style="display:grid;gap:14px">
-      <div style="background:var(--s2);border-radius:10px;padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        <div class="f-grp"><label class="f-lbl">Invoice No.</label><input class="f-inp" id="inv-number" placeholder="e.g. 137"></div>
-        <div class="f-grp"><label class="f-lbl">Date</label><input class="f-inp" id="inv-date" type="date"></div>
-        <div class="f-grp"><label class="f-lbl">Counter Part ID</label><input class="f-inp" id="inv-counterpart" placeholder="e.g. NM"></div>
-        <div class="f-grp"><label class="f-lbl">Charges For</label><input class="f-inp" id="inv-charges-for" value="APPLICANTS DEPLOYMENT"></div>
-      </div>
-      <div class="f-grp"><label class="f-lbl">Bill To (Employer)</label><select class="f-inp" id="inv-employer" onchange="loadInvoiceApplicants()"><option value="">— Select employer —</option></select></div>
-      <div class="f-grp"><label class="f-lbl">Employer Address</label><input class="f-inp" id="inv-employer-address" placeholder="e.g. AL KHOBAR, SAUDI ARABIA"></div>
-      <div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><label class="f-lbl" style="margin:0">Line Items</label><button class="btn btn-s btn-sm" onclick="addInvoiceRow()">+ Add Row</button></div>
-        <div style="background:var(--s2);border-radius:8px;overflow:hidden">
-          <table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="background:var(--border)"><th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:700">APPLICANT</th><th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:700">PARTICULAR</th><th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:700">COMPANY</th><th style="padding:8px 6px;text-align:right;font-size:11px;font-weight:700">USD</th><th style="padding:8px 6px;text-align:right;font-size:11px;font-weight:700" id="inv-local-col-hdr">SAR</th><th style="width:30px"></th></tr></thead><tbody id="inv-rows"></tbody></table>
-        </div>
-        <div style="display:flex;justify-content:flex-end;gap:16px;margin-top:8px;font-size:13px;font-weight:700"><span>Total: <span id="inv-total-usd" style="color:var(--brand)">$0.00</span></span><span style="color:var(--muted)" id="inv-total-local-wrap"><span id="inv-total-sar">SAR 0.00</span></span></div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        <div class="f-grp"><label class="f-lbl">Payment Received (USD)</label><input class="f-inp" id="inv-paid" type="number" value="0" min="0" oninput="recalcInvoice()"></div>
-        <div class="f-grp"><label class="f-lbl">Local Currency</label><div style="display:flex;gap:6px"><select class="f-inp" id="inv-local-currency" style="width:110px"><option value="">None</option><option value="SAR" selected>SAR</option><option value="AED">AED</option><option value="KWD">KWD</option><option value="QAR">QAR</option><option value="BHD">BHD</option><option value="OMR">OMR</option><option value="EUR">EUR</option><option value="GBP">GBP</option><option value="PHP">PHP</option></select><input class="f-inp" id="inv-sar-rate" type="number" value="3.75" step="0.0001" oninput="recalcInvoice()" style="width:80px"></div></div>
-      </div>
-      <div class="f-grp"><label class="f-lbl">Notes</label><textarea class="f-inp" id="inv-notes" rows="2" placeholder="Additional notes"></textarea></div>
-    </div>
-    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeOverlay('overlay-invoice')">Cancel</button><button class="btn btn-s" onclick="previewInvoice()">👁 Preview</button><button class="btn btn-p" onclick="saveInvoice()">Save Invoice</button></div>
-  </div>
-</div>
-<!-- ══ INVOICE PRINT PREVIEW ══════════════════════════════════════════ -->
-<div class="overlay" id="overlay-invoice-print" onclick="closeOverlayIfBg(event,'overlay-invoice-print')" role="dialog" aria-modal="true">
-  <div class="modal" style="width:800px;max-width:97vw;max-height:95vh;overflow-y:auto;padding:0">
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:2">
-      <div style="font-weight:700;font-size:14px">Invoice Preview</div>
-      <div style="display:flex;gap:8px"><button class="btn btn-p btn-sm" onclick="printInvoice()">🖨 Print / Save PDF</button><button class="btn btn-ghost btn-sm" onclick="closeOverlay('overlay-invoice-print')">✕ Close</button></div>
-    </div>
-    <div id="invoice-print-area" style="padding:40px 48px;font-family:Arial,sans-serif;color:#000;background:#fff;min-height:1000px"></div>
-  </div>
-</div>
 </body>
 </html>
