@@ -14332,6 +14332,18 @@ function _pushStatusChangeNotif(app, newStatus, oldStatus) {
   );
 }
 
+function clearCommissionFilters() {
+  var fields = ['comm-search','comm-filter-tranche','comm-filter-status','comm-filter-agent'];
+  fields.forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  // Reset agent dropdown so it repopulates fresh on next render
+  var agSel = document.getElementById('comm-filter-agent');
+  if (agSel) agSel.innerHTML = '<option value="">All Agents</option>';
+  renderCommissions();
+}
+
 function backfillCommissions() {
   if (!confirm('Scan all applicants with agents and create missing T1/T2/T3 commission records?\n\nExisting records will NOT be duplicated. Proceed?')) return;
   var created={T1:[],T2:[],T3:[]}, skipped=0, today=new Date().toISOString().split('T')[0];
