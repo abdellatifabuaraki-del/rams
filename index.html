@@ -1587,6 +1587,10 @@ button[disabled][data-rbac-locked] {
 
   <!-- COMMISSIONS TAB -->
   <div class="acc-section" id="acc-commissions">
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px">
+      <button class="btn btn-s btn-sm" onclick="backfillCommissions()" style="font-size:12px;border-color:var(--brand);color:var(--brand)">⚡ Backfill Commissions</button>
+      <button class="btn btn-s btn-sm" onclick="resetCommissions()" style="font-size:12px;border-color:var(--red);color:var(--red)">🔄 Fix Mismatches</button>
+    </div>
     <div class="stat-grid" id="commission-kpis"></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div class="card cp">
@@ -3468,7 +3472,26 @@ async function apiFetchCountryRules() {
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
   if (!isLive) return;
   var r = await apiFetch('/country-rules');
-  if (r.ok && Array.isArray(r.data)) { DB.countryRules = r.data.map(mapCountryRule); autosave('countryRules'); }
+  if (r.ok && Array.isArray(r.data) && r.data.length > 0) {
+    // Only overwrite if server returned actual data — never wipe with empty
+    DB.countryRules = r.data.map(mapCountryRule);
+    autosave('countryRules');
+  } else if (r.ok && Array.isArray(r.data) && r.data.length === 0 && DB.countryRules.length > 0) {
+    // Server returned empty but we have local rules — push them up instead
+    DB.countryRules.forEach(function(rule) {
+      var dbId = rule._dbId || rule.id;
+      if (dbId && isUUID(dbId)) {
+        apiFetch('/country-rules/' + dbId, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            commission_amt: rule.commissionAmt,
+            withhold_pct:   rule.withholdPct,
+            active:         rule.active,
+          }),
+        }).catch(function(){});
+      }
+    });
+  }
 }
 async function apiSaveCountryRule(rule) {
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
