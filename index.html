@@ -3540,17 +3540,44 @@ async function apiFetchDocuments() {
   if (!isLive) return;
   var r = await apiFetch('/documents');
   if (r.ok && Array.isArray(r.data)) {
-    // Merge: keep local docs not yet on server, add server docs
-    var serverIds = new Set(r.data.map(function(d){ return d.id; }));
-    var localOnly = (DB.documents||[]).filter(function(d){ return !serverIds.has(d.id) && !serverIds.has(d._dbId); });
-    DB.documents = r.data.map(mapDocument).concat(localOnly);
+    // Build set of all server IDs to avoid duplicates
+    var serverIds = new Set();
+    r.data.forEach(function(d){ if (d.id) serverIds.add(String(d.id)); });
+
+    // Keep only local docs that aren't yet on server (pending upload)
+    var localOnly = (DB.documents||[]).filter(function(d){
+      return !serverIds.has(String(d.id)) && !serverIds.has(String(d._dbId));
+    });
+
+    // Map server docs — keep local dataUrl/mimeType if we have it (they're stored locally)
+    var serverDocs = r.data.map(function(row) {
+      var mapped = mapDocument(row);
+      var local  = (DB.documents||[]).find(function(d){
+        return d._dbId === mapped._dbId || d.id === mapped._dbId;
+      });
+      if (local && local.dataUrl)  mapped.dataUrl  = local.dataUrl;
+      if (local && local.mimeType) mapped.mimeType = local.mimeType;
+      return mapped;
+    });
+
+    DB.documents = serverDocs.concat(localOnly);
+
     // Filter out permanently deleted
     if (window._deletedDocumentIds) {
       DB.documents = DB.documents.filter(function(d){
-        return !window._deletedDocumentIds.has(d.id) && !window._deletedDocumentIds.has(d._dbId);
+        return !window._deletedDocumentIds.has(String(d.id)) &&
+               !window._deletedDocumentIds.has(String(d._dbId));
       });
     }
     autosave('documents');
+    // Re-render if on documents page or drawer docs tab is open
+    if (currentPage === 'documents') renderDocs();
+    if (currentDrawerApplicant) {
+      var activePanel = document.getElementById('dtab-docs');
+      if (activePanel && activePanel.classList.contains('active')) {
+        switchDrawerTab('docs', null);
+      }
+    }
   }
 }
 async function apiUploadDocument(doc, fileBlob) {
@@ -8007,13 +8034,39 @@ function saveDoc() {
     autosave('documents');
     addAudit('CREATE', 'Document', 'Uploaded ' + name + ' for ' + applicant);
 
-    // Sync to backend if a real file was attached
+    // Always persist to backend — with or without file
     if (_docFile && _docFile._dataUrl) {
+      // Upload file + metadata via multipart
       fetch(_docFile._dataUrl).then(function(res){ return res.blob(); }).then(function(blob) {
         return apiUploadDocument(doc, blob);
       }).then(function(r) {
-        if (r && r.ok) autosave('documents');
-      }).catch(function(){});;
+        if (r && r.ok && r.data && r.data.id) {
+          doc._dbId = r.data.id;
+          autosave('documents');
+          try { _triggerImmediateSync(); } catch(e) {}
+        }
+      }).catch(function(){});
+    } else {
+      // Metadata-only document — POST to backend
+      apiFetch('/documents', {
+        method: 'POST',
+        body: JSON.stringify({
+          name:      doc.name,
+          type:      doc.type,
+          applicant: doc.applicant,
+          status:    doc.status,
+          notes:     doc.notes,
+          date:      doc.date,
+          size:      doc.size,
+          file_name: doc.fileName || null,
+        }),
+      }).then(function(r) {
+        if (r && r.ok && r.data && r.data.id) {
+          doc._dbId = r.data.id;
+          autosave('documents');
+        }
+        try { _triggerImmediateSync(); } catch(e) {}
+      }).catch(function(){});
     }
   pushNotif('Document Uploaded', name + ' uploaded for ' + applicant + ' — awaiting review', 'document',
     { page: 'documents', id: doc.id });
