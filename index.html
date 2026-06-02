@@ -15700,15 +15700,58 @@ function navigateDocPreview(dir) {
 
 function downloadDoc() {
   var doc = DB.documents.find(function(d) { return d.id === _previewDocId; });
-  if (!doc || !doc.dataUrl) { toast('No file available to download', 'info'); return; }
-  var a = document.createElement('a');
-  a.href = doc.dataUrl;
-  a.download = doc.fileName || (doc.name + '.' + (doc.ext || 'pdf'));
-  a.click();
-  toast('Download started — ' + (doc.fileName || doc.name), 'success');
-}
+  if (!doc) { toast('Document not found', 'error'); return; }
 
-function approveDocFromPreview() {
+  // If we have a local data URL (just uploaded this session), use it directly
+  if (doc.dataUrl) {
+    var a = document.createElement('a');
+    a.href = doc.dataUrl;
+    a.download = doc.fileName || (doc.name + '.' + (doc.ext || 'pdf'));
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    toast('Download started — ' + (doc.fileName || doc.name), 'success');
+    return;
+  }
+
+  // Otherwise fetch from backend download endpoint
+  var dbId = doc._dbId || doc.id;
+  if (!dbId || !(typeof isUUID === 'function' ? isUUID(dbId) : /^[0-9a-f-]{36}$/.test(dbId))) {
+    toast('No file available to download', 'info'); return;
+  }
+
+  var BACKEND = typeof RAILWAY_URL !== 'undefined' ? RAILWAY_URL : '';
+  var dlUrl   = BACKEND + '/documents/' + dbId + '/download';
+  var token   = window._ramsSessionToken || '';
+
+  toast('Preparing download…', 'info');
+  fetch(dlUrl, { headers: { 'Authorization': 'Bearer ' + token }, redirect: 'follow' })
+    .then(function(r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      var ct = r.headers.get('Content-Type') || '';
+      // If backend returns a redirect URL (S3/cloud)
+      if (ct.includes('application/json')) {
+        return r.json().then(function(j) {
+          if (j.url) { window.open(j.url, '_blank'); }
+          else { throw new Error('No URL in response'); }
+        });
+      }
+      // Stream the blob directly
+      return r.blob().then(function(blob) {
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url; a.download = doc.fileName || (doc.name + '.' + (doc.ext || 'bin'));
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        setTimeout(function(){ URL.revokeObjectURL(url); }, 10000);
+        // Cache for preview
+        doc.dataUrl = url;
+        doc.ext = doc.ext || (blob.type ? blob.type.split('/')[1] : '');
+        toast('Download started — ' + (doc.fileName || doc.name), 'success');
+      });
+    })
+    .catch(function(err) {
+      console.error('[downloadDoc]', err.message);
+      toast('Download failed — the file may no longer be stored on the server', 'error');
+    });
+}
   if (!_previewDocId) return;
   approveDoc(_previewDocId);
   // Refresh the preview header status
@@ -15719,7 +15762,6 @@ function approveDocFromPreview() {
     var btn = document.getElementById('doc-preview-approve-btn');
     if (btn) btn.style.display = 'none';
   }
-}
 
 function deleteDocFromPreview() {
   var doc = DB.documents.find(function(d) { return d.id === _previewDocId; });
@@ -16720,7 +16762,7 @@ function getPasswordStrength(password) {
 }
 
 // ════════════════════════════════════════════════════════
-// 🧑‍💼  AGENT API — PostgreSQL backed
+// Agent  AGENT API — PostgreSQL backed
 // ════════════════════════════════════════════════════════
 
 function mapAgent(row) {
