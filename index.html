@@ -15753,6 +15753,8 @@ function downloadDoc() {
       toast('Download failed — the file may no longer be stored on the server', 'error');
     });
 }
+
+function approveDocFromPreview() {
   if (!_previewDocId) return;
   approveDoc(_previewDocId);
   // Refresh the preview header status
@@ -15763,6 +15765,7 @@ function downloadDoc() {
     var btn = document.getElementById('doc-preview-approve-btn');
     if (btn) btn.style.display = 'none';
   }
+}
 
 function deleteDocFromPreview() {
   var doc = DB.documents.find(function(d) { return d.id === _previewDocId; });
