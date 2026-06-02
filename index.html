@@ -8034,39 +8034,32 @@ function saveDoc() {
     autosave('documents');
     addAudit('CREATE', 'Document', 'Uploaded ' + name + ' for ' + applicant);
 
-    // Always persist to backend — with or without file
-    if (_docFile && _docFile._dataUrl) {
-      // Upload file + metadata via multipart
-      fetch(_docFile._dataUrl).then(function(res){ return res.blob(); }).then(function(blob) {
-        return apiUploadDocument(doc, blob);
-      }).then(function(r) {
-        if (r && r.ok && r.data && r.data.id) {
-          doc._dbId = r.data.id;
-          autosave('documents');
+    // Always persist to backend via /documents/upload (works with or without file)
+    var _doBackendSave = function(blob) {
+      var form = new FormData();
+      form.append('name',           doc.name      || '');
+      form.append('type',           doc.type      || 'Other');
+      form.append('applicant_name', doc.applicant || '');
+      form.append('notes',          doc.notes     || '');
+      form.append('status',         doc.status    || 'Pending');
+      form.append('date',           doc.date      || '');
+      if (blob) form.append('file', blob, doc.fileName || doc.name || 'document');
+      return apiFetch('/documents/upload', { method: 'POST', body: form, _noContentType: true })
+        .then(function(r) {
+          if (r && r.ok && r.data && r.data.id) {
+            doc._dbId = r.data.id; doc.id = r.data.id;
+            autosave('documents');
+          }
           try { _triggerImmediateSync(); } catch(e) {}
-        }
-      }).catch(function(){});
+        }).catch(function(){});
+    };
+
+    if (_docFile && _docFile._dataUrl) {
+      fetch(_docFile._dataUrl).then(function(res){ return res.blob(); })
+        .then(function(blob){ return _doBackendSave(blob); })
+        .catch(function(){ _doBackendSave(null); }); // fallback: save metadata at least
     } else {
-      // Metadata-only document — POST to backend
-      apiFetch('/documents', {
-        method: 'POST',
-        body: JSON.stringify({
-          name:      doc.name,
-          type:      doc.type,
-          applicant: doc.applicant,
-          status:    doc.status,
-          notes:     doc.notes,
-          date:      doc.date,
-          size:      doc.size,
-          file_name: doc.fileName || null,
-        }),
-      }).then(function(r) {
-        if (r && r.ok && r.data && r.data.id) {
-          doc._dbId = r.data.id;
-          autosave('documents');
-        }
-        try { _triggerImmediateSync(); } catch(e) {}
-      }).catch(function(){});
+      _doBackendSave(null);
     }
   pushNotif('Document Uploaded', name + ' uploaded for ' + applicant + ' — awaiting review', 'document',
     { page: 'documents', id: doc.id });
