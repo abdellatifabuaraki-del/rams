@@ -1034,7 +1034,8 @@ button[disabled][data-rbac-locked] {
       <input class="li" id="li-totp" type="text" placeholder="000 000" maxlength="7" autocomplete="one-time-code"
              style="letter-spacing:4px;font-size:20px;text-align:center;font-family:'IBM Plex Mono',monospace"
              oninput="this.value=this.value.replace(/[^0-9 ]/g,'');"
-             onkeydown="if(event.key==='Enter'){event.preventDefault();_doLogin();}">\n    </div>
+             onkeydown="if(event.key==='Enter'){event.preventDefault();_doLogin();}">
+    </div>
     <button class="lb" id="li-btn">Sign In</button>
 
     <hr class="ldiv">
