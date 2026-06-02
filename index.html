@@ -3521,18 +3521,20 @@ async function apiDeleteCountryRule(id) {
 
 // ── DOCUMENT API ──────────────────────────────────────────────────────
 function mapDocument(row) {
+  var clean = function(v) { return (v && v !== 'undefined' && v !== 'null') ? v : ''; };
   return {
     id:          row.id, _dbId: row.id,
-    name:        row.name        || row.file_name || '',
-    type:        row.type        || row.doc_type  || 'Other',
-    status:      row.status      || 'Pending',
-    applicant:   row.applicant_name || row.applicant || '',
-    applicantId: row.applicant_id   || '',
-    notes:       row.notes       || '',
-    date:        row.created_at  ? String(row.created_at).slice(0,10) : '',
-    fileName:    row.file_name   || row.name || '',
-    mimeType:    row.mime_type   || '',
-    downloadUrl: row.download_url || null,
+    name:        clean(row.name)         || clean(row.file_name) || '',
+    type:        clean(row.type)         || clean(row.doc_type)  || 'Other',
+    status:      clean(row.status)       || 'Pending',
+    applicant:   clean(row.applicant_name) || clean(row.applicant) || '',
+    applicantId: clean(row.applicant_id)   || '',
+    notes:       clean(row.notes)        || '',
+    date:        row.created_at  ? String(row.created_at).slice(0,10) : (row.date||''),
+    size:        clean(row.size)         || '',
+    fileName:    clean(row.file_name)    || clean(row.name) || '',
+    mimeType:    clean(row.mime_type)    || '',
+    downloadUrl: row.download_url        || null,
   };
 }
 async function apiFetchDocuments() {
@@ -15511,9 +15513,9 @@ function _renderPreviewModal(doc) {
   var typeKey = doc.type ? doc.type.split(' ')[0] : 'Other';
   var icon    = DOC_TYPE_ICONS[typeKey] || '📄';
   document.getElementById('doc-preview-icon').textContent = icon;
-  document.getElementById('doc-preview-name').textContent = doc.name;
+  document.getElementById('doc-preview-name').textContent = doc.name || '(Unnamed document)';
   document.getElementById('doc-preview-meta').textContent =
-    doc.applicant + ' · ' + doc.type + ' · ' + doc.date + ' · ' + doc.size;
+    [doc.applicant, doc.type, doc.date, doc.size].filter(function(v){ return v && v !== 'undefined'; }).join(' · ');
 
   // Status pill + approve btn
   var statPill = document.getElementById('doc-preview-status-pill');
@@ -15535,11 +15537,32 @@ function _renderPreviewModal(doc) {
   if (doc.dataUrl) {
     // File was uploaded in this session — we have the data URL
     _loadPreviewFromDataUrl(doc);
-  } else if (doc.fileName) {
-    // Has filename but no data — show fallback with details
-    _showDocFallback(doc);
+  } else if (doc._dbId || (doc.downloadUrl)) {
+    // Fetch file from backend using the download endpoint
+    var _dlUrl = (typeof RAILWAY_URL !== 'undefined' ? RAILWAY_URL : '') +
+                 '/documents/' + (doc._dbId || doc.id) + '/download';
+    var _previewEl = document.getElementById('doc-preview-area') ||
+                     document.getElementById('doc-preview-pane');
+    if (_previewEl) {
+      _previewEl.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:200px;color:var(--muted);font-size:13px">Loading preview…</div>';
+    }
+    fetch(_dlUrl, { headers: { 'Authorization': 'Bearer ' + (window._ramsSessionToken || '') } })
+      .then(function(r) {
+        if (!r.ok) throw new Error('Download failed');
+        return r.blob();
+      })
+      .then(function(blob) {
+        var blobUrl = URL.createObjectURL(blob);
+        if (_previewBlobUrl) URL.revokeObjectURL(_previewBlobUrl);
+        _previewBlobUrl = blobUrl;
+        var ext = (doc.fileName||'').split('.').pop().toLowerCase() || (blob.type.split('/')[1]||'');
+        doc.dataUrl = blobUrl;
+        doc.ext     = ext;
+        _loadPreviewFromDataUrl(doc);
+      })
+      .catch(function() { _showDocFallback(doc); });
   } else {
-    // Seeded doc — no file data, show details panel
+    // No file — show metadata only
     _showDocFallback(doc);
   }
 
