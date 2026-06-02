@@ -15537,32 +15537,54 @@ function _renderPreviewModal(doc) {
   if (doc.dataUrl) {
     // File was uploaded in this session — we have the data URL
     _loadPreviewFromDataUrl(doc);
-  } else if (doc._dbId || (doc.downloadUrl)) {
-    // Fetch file from backend using the download endpoint
-    var _dlUrl = (typeof RAILWAY_URL !== 'undefined' ? RAILWAY_URL : '') +
-                 '/documents/' + (doc._dbId || doc.id) + '/download';
-    var _previewEl = document.getElementById('doc-preview-area') ||
-                     document.getElementById('doc-preview-pane');
-    if (_previewEl) {
-      _previewEl.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:200px;color:var(--muted);font-size:13px">Loading preview…</div>';
-    }
-    fetch(_dlUrl, { headers: { 'Authorization': 'Bearer ' + (window._ramsSessionToken || '') } })
-      .then(function(r) {
-        if (!r.ok) throw new Error('Download failed');
-        return r.blob();
-      })
-      .then(function(blob) {
-        var blobUrl = URL.createObjectURL(blob);
+  } else if (doc._dbId || doc.id) {
+    // Fetch file from backend download endpoint
+    var _dbid  = doc._dbId || doc.id;
+    var _isUUID = typeof isUUID === 'function' ? isUUID(_dbid) : /^[0-9a-f-]{36}$/.test(_dbid);
+    if (!_isUUID) { _showDocFallback(doc); return; }
+
+    var _previewPane = document.getElementById('doc-preview-pane') ||
+                       document.getElementById('doc-preview-area');
+    if (_previewPane) _previewPane.innerHTML =
+      '<div style="display:flex;align-items:center;justify-content:center;height:200px;color:var(--muted);font-size:13px">⏳ Loading preview…</div>';
+
+    var BACKEND = typeof RAILWAY_URL !== 'undefined' ? RAILWAY_URL : '';
+    var _dlUrl  = BACKEND + '/documents/' + _dbid + '/download';
+    var _token  = window._ramsSessionToken || '';
+
+    fetch(_dlUrl, {
+      headers: { 'Authorization': 'Bearer ' + _token },
+      redirect: 'follow',
+    })
+    .then(function(r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      // Check if server returned a redirect URL (cloud storage)
+      var ct = r.headers.get('Content-Type') || '';
+      if (ct.includes('application/json')) {
+        return r.json().then(function(j) {
+          if (j.url) {
+            // Redirect to cloud storage URL
+            doc.dataUrl = j.url;
+            doc.ext = (doc.fileName||'').split('.').pop().toLowerCase() || 'pdf';
+            _loadPreviewFromDataUrl(doc);
+          } else { _showDocFallback(doc); }
+        });
+      }
+      return r.blob().then(function(blob) {
         if (_previewBlobUrl) URL.revokeObjectURL(_previewBlobUrl);
-        _previewBlobUrl = blobUrl;
-        var ext = (doc.fileName||'').split('.').pop().toLowerCase() || (blob.type.split('/')[1]||'');
-        doc.dataUrl = blobUrl;
-        doc.ext     = ext;
+        _previewBlobUrl = URL.createObjectURL(blob);
+        doc.dataUrl = _previewBlobUrl;
+        doc.ext     = (doc.fileName||'').split('.').pop().toLowerCase() ||
+                      (blob.type ? blob.type.split('/')[1] : 'pdf');
         _loadPreviewFromDataUrl(doc);
-      })
-      .catch(function() { _showDocFallback(doc); });
+      });
+    })
+    .catch(function(err) {
+      console.warn('[doc preview] download failed:', err.message);
+      _showDocFallback(doc);
+    });
   } else {
-    // No file — show metadata only
+    // No file at all
     _showDocFallback(doc);
   }
 
@@ -15642,11 +15664,10 @@ function _showDocFallback(doc) {
   if (fallIcon) fallIcon.textContent = extIcons[ext] || DOC_TYPE_ICONS[typeKey] || '📄';
   if (fallName) fallName.textContent = doc.name;
 
-  var canPreview = doc.dataUrl && ['jpg','jpeg','png','pdf'].includes(ext);
-  if (fallInfo) fallInfo.textContent = canPreview
-    ? 'This file type cannot be previewed in the browser.'
-    : doc.dataUrl
-      ? 'Preview not available for .' + ext.toUpperCase() + ' files — click Download to open.'
+  if (fallInfo) fallInfo.textContent = doc.dataUrl
+    ? 'Preview not available for .' + (ext||'').toUpperCase() + ' files — click Download to open.'
+    : (doc._dbId || doc.fileName)
+      ? 'Could not load preview — click Download to open the file.'
       : 'No file uploaded yet. This is a metadata record only.';
 
   if (fallDets) {
@@ -15664,7 +15685,7 @@ function _showDocFallback(doc) {
     }).join('');
   }
 
-  if (dlBtn) dlBtn.style.display = doc.dataUrl ? '' : 'none';
+  if (dlBtn) dlBtn.style.display = (doc.dataUrl || doc._dbId) ? '' : 'none';
   _showPreviewPane('fallback');
 }
 
