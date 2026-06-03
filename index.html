@@ -3513,76 +3513,31 @@ function mapDocument(row) {
   var clean = function(v) { return (v && v !== 'undefined' && v !== 'null') ? v : ''; };
   return {
     id:          row.id, _dbId: row.id,
-    name:        clean(row.name)           || clean(row.file_name) || '',
-    type:        clean(row.type)           || clean(row.doc_type)  || 'Other',
-    status:      clean(row.status)         || 'Pending',
+    name:        clean(row.name)         || clean(row.file_name) || '',
+    type:        clean(row.type)         || clean(row.doc_type)  || 'Other',
+    status:      clean(row.status)       || 'Pending',
     applicant:   clean(row.applicant_name) || clean(row.applicant) || '',
     applicantId: clean(row.applicant_id)   || '',
-    notes:       clean(row.notes)          || '',
-    date:        row.created_at ? String(row.created_at).slice(0,10) : (row.date||''),
-    size:        clean(row.file_size ? String(row.file_size) : '') || clean(row.size) || '',
-    fileName:    clean(row.file_name)      || clean(row.name) || '',
-    mimeType:    clean(row.mime_type)      || '',
-    file_key:    clean(row.file_key)       || '',   // R2 object key — needed for preview/download
-    downloadUrl: row.download_url          || null,
-    hasFile:     !!(row.file_key || row.has_file || row.download_url),
+    notes:       clean(row.notes)        || '',
+    date:        row.created_at  ? String(row.created_at).slice(0,10) : (row.date||''),
+    size:        clean(row.size)         || '',
+    fileName:    clean(row.file_name)    || clean(row.name) || '',
+    mimeType:    clean(row.mime_type)    || '',
+    downloadUrl: row.download_url        || null,
   };
 }
 async function apiFetchDocuments() {
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
   if (!isLive) return;
-  // Check shared Store timestamp — another user uploaded = bust cache + load from Store immediately
+  // Check shared Store timestamp — if another user uploaded recently, bust our cache
   try {
     var tsRaw = await Store.get('rams:shared:documents:ts', true);
-    var serverTs = tsRaw ? parseInt(tsRaw.value || tsRaw) : 0;
+    var serverTs = tsRaw ? parseInt(tsRaw.value) : 0;
     var lastSeen = window._lastDocumentStoreTs || 0;
     if (serverTs > lastSeen) {
-      window._lastDocumentStoreTs = serverTs;
-      // Bust in-memory cache AND in-flight dedup
       Object.keys(_cache || {}).forEach(function(k) { if (k.includes('/documents')) delete _cache[k]; });
-      if (typeof _inFlight !== 'undefined') {
-        Object.keys(_inFlight || {}).forEach(function(k) { if (k.includes('/documents')) delete _inFlight[k]; });
-      }
       if (typeof _lastFetch !== 'undefined') _lastFetch['documents'] = 0;
-      // Immediately show docs from shared Store — don't wait for backend round-trip
-      try {
-        var storeDocsRaw = await Store.get('rams:shared:documents', true);
-        if (storeDocsRaw) {
-          var storeDocs = storeDocsRaw.value !== undefined ? storeDocsRaw.value : storeDocsRaw;
-          if (typeof storeDocs === 'string') { try { storeDocs = JSON.parse(storeDocs); } catch(e) { storeDocs = null; } }
-          if (Array.isArray(storeDocs) && storeDocs.length > 0) {
-            var storeIds = new Set(storeDocs.map(function(d){ return String(d.id || ''); }));
-            var _localPending = (DB.documents||[]).filter(function(d){
-              return d._pendingUpload || (d._localCreatedAt && d._localCreatedAt > Date.now()-60000);
-            }).filter(function(d){ return !storeIds.has(String(d.id)); });
-            DB.documents = storeDocs.concat(_localPending);
-            autosave('documents');
-            if (currentPage === 'documents') renderDocs();
-          }
-        }
-      } catch(e) {}
-    }
-  } catch(e) {}
-  // Also check for shared deletions from other users
-  try {
-    var delTsRaw = await Store.get('rams:shared:deleted:documents:ts', true);
-    var delTs = delTsRaw ? parseInt(delTsRaw.value || delTsRaw) : 0;
-    if (delTs > (window._lastDelDocTs || 0)) {
-      window._lastDelDocTs = delTs;
-      var sharedDel = await Store.get('rams:shared:deleted:documents', true);
-      if (sharedDel) {
-        var sharedDelArr2 = sharedDel.value !== undefined ? sharedDel.value : sharedDel;
-        if (typeof sharedDelArr2 === 'string') { try { sharedDelArr2 = JSON.parse(sharedDelArr2); } catch(e) { sharedDelArr2 = []; } }
-        if (Array.isArray(sharedDelArr2)) {
-          if (!window._deletedDocumentIds) window._deletedDocumentIds = new Set();
-          sharedDelArr2.forEach(function(id){ window._deletedDocumentIds.add(id); });
-          // Remove from local DB immediately
-          DB.documents = (DB.documents||[]).filter(function(d){
-            return !window._deletedDocumentIds.has(String(d.id)) && !window._deletedDocumentIds.has(String(d._dbId));
-          });
-          if (currentPage === 'documents') renderDocs();
-        }
-      }
+      window._lastDocumentStoreTs = serverTs;
     }
   } catch(e) {}
   var r = await apiFetch('/documents');
@@ -3591,12 +3546,13 @@ async function apiFetchDocuments() {
     var serverIds = new Set();
     r.data.forEach(function(d){ if (d.id) serverIds.add(String(d.id)); });
 
-    // Keep only local docs not yet confirmed by server
-    // Also keep any doc created in the last 60s as extra safety net
-    var _sixtySecsAgo = Date.now() - 60000;
+    // Keep only local docs that aren't yet on server (pending upload)
+    // Also always keep docs that are currently being uploaded (_pendingUpload flag)
+    var _uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     var localOnly = (DB.documents||[]).filter(function(d){
       if (d._pendingUpload) return true; // never drop a doc mid-upload
-      if (d._localCreatedAt && d._localCreatedAt > _sixtySecsAgo) return true; // recent upload
+      // If the doc still has a local generated id (not a UUID), the server hasn't confirmed it yet
+      if (d.id && !_uuidRe.test(String(d.id)) && !(d._dbId && _uuidRe.test(String(d._dbId)))) return true;
       var idMatch   = d.id    && serverIds.has(String(d.id));
       var dbIdMatch = d._dbId && d._dbId !== 'null' && serverIds.has(String(d._dbId));
       return !idMatch && !dbIdMatch;
@@ -4801,13 +4757,11 @@ async function saveDB(collection) {
 }
 
 async function loadDB() {
-  // Load permanently deleted document IDs — check shared Store too (other users' deletions)
+  // Load permanently deleted document IDs
   try {
     var storedDelDocs = await Store.get('rams:deleted:documents');
-    var ownDelArr = storedDelDocs ? JSON.parse(typeof storedDelDocs === 'string' ? storedDelDocs : (storedDelDocs.value || '[]')) : [];
-    var sharedDelDocs = await Store.get('rams:shared:deleted:documents', true);
-    var sharedDelArr = sharedDelDocs ? JSON.parse(typeof sharedDelDocs === 'string' ? sharedDelDocs : (sharedDelDocs.value || '[]')) : [];
-    window._deletedDocumentIds = new Set([...ownDelArr, ...sharedDelArr]);
+    var delDocsArr = storedDelDocs ? JSON.parse(typeof storedDelDocs === 'string' ? storedDelDocs : storedDelDocs.value || '[]') : [];
+    window._deletedDocumentIds = new Set(delDocsArr);
   } catch(e) { window._deletedDocumentIds = new Set(); }
 
   // Load permanently deleted applicant IDs
@@ -7825,26 +7779,12 @@ function confirmDelete(type, id) {
     }
     if (type==='document') {
       var _delDoc = DB.documents.find(x=>x.id===id);
-      DB.documents = DB.documents.filter(x=>x.id!==id && x._dbId!==id);
+      DB.documents = DB.documents.filter(x=>x.id!==id);
       // Track deleted ID permanently — survives page reload
       if (!window._deletedDocumentIds) window._deletedDocumentIds = new Set();
       window._deletedDocumentIds.add(id);
-      // Also add the _dbId if different
-      if (_delDoc && _delDoc._dbId && _delDoc._dbId !== id) window._deletedDocumentIds.add(_delDoc._dbId);
-      var _delIds = JSON.stringify([...window._deletedDocumentIds]);
-      Store.set('rams:deleted:documents',          _delIds);                 // own browser
-      Store.set('rams:shared:deleted:documents',   _delIds,          true);  // shared — all users
-      Store.set('rams:shared:deleted:documents:ts', String(Date.now()), true); // timestamp for poll detection
-      // Share updated doc list (metadata only — no dataUrls)
-      var _docsForStore = DB.documents.map(function(d) {
-        var meta = {}; var keep = ['id','_dbId','name','type','status','applicant','applicantId',
-          'notes','date','size','fileName','mimeType','file_key','hasFile','downloadUrl'];
-        keep.forEach(function(k){ if (d[k] !== undefined) meta[k] = d[k]; }); return meta;
-      });
-      Store.set('rams:shared:documents',    _docsForStore, true).catch(function(){});
-      Store.set('rams:shared:documents:ts', String(Date.now()), true).catch(function(){});
-      // Bust cache so all users get fresh list on next poll
-      Object.keys(_cache || {}).forEach(function(k) { if (k.includes('/documents')) delete _cache[k]; });
+      Store.set('rams:deleted:documents', JSON.stringify([...window._deletedDocumentIds]));
+      // Immediately persist the filtered documents list (no debounce)
       Store.set('rams:db:documents', DB.documents);
       addAudit('DELETE','Document','Deleted '+name);
       // Sync delete to server
@@ -8121,22 +8061,6 @@ function saveDoc() {
 
     DB.documents.unshift(doc);
     doc._pendingUpload = true; // protect from poll-tick filtering until backend confirms
-    doc._localCreatedAt = Date.now(); // kept in merge for 60s as safety net
-
-    // ── Bust cache NOW (synchronously) before renderDocs() is called ──────────
-    // If the poll tick fires with a valid cached /documents response between
-    // unshift() and the .then() callback, it would overwrite DB.documents
-    // with the old list and the new doc would vanish immediately.
-    Object.keys(_cache || {}).forEach(function(k) {
-      if (k.includes('/documents')) delete _cache[k];
-    });
-    if (typeof _inFlight !== 'undefined') {
-      Object.keys(_inFlight).forEach(function(k) {
-        if (k.includes('/documents')) delete _inFlight[k];
-      });
-    }
-    if (typeof _lastFetch !== 'undefined') _lastFetch['documents'] = 0;
-
     autosave('documents');
     addAudit('CREATE', 'Document', 'Uploaded ' + name + ' for ' + applicant);
 
@@ -8157,8 +8081,9 @@ function saveDoc() {
             doc._dbId = r.data.id; doc.id = r.data.id;
             autosave('documents');
           }
-          doc._pendingUpload = false;
-          // Bust cache so next poll gets fresh data
+          // Bust cache so the next poll gets fresh data — but DON'T re-fetch immediately.
+          // An immediate re-fetch risks the backend not having committed yet,
+          // which returns the old list and wipes the doc from DB.documents.
           Object.keys(_cache || {}).forEach(function(k) {
             if (k.includes('/documents')) delete _cache[k];
           });
@@ -8168,28 +8093,23 @@ function saveDoc() {
             });
           }
           if (typeof _lastFetch !== 'undefined') _lastFetch['documents'] = 0;
-          // Share METADATA only — strip dataUrl/blob before Store.set (5MB limit)
-          var _docsForStore = DB.documents.map(function(d) {
-            var meta = {};
-            var keep = ['id','_dbId','name','type','status','applicant','applicantId',
-                        'notes','date','size','fileName','mimeType','file_key','hasFile',
-                        'downloadUrl','_pendingUpload','_localCreatedAt'];
-            keep.forEach(function(k){ if (d[k] !== undefined) meta[k] = d[k]; });
-            return meta;
-          });
+          // Write to shared Store — other users' next poll picks this up immediately
           if (typeof Store !== 'undefined') {
-            Store.set('rams:shared:documents',    _docsForStore, true).catch(function(){});
             Store.set('rams:shared:documents:ts', String(Date.now()), true).catch(function(){});
           }
+          // Mark upload confirmed — doc is safely on the server now
+          doc._pendingUpload = false;
+          autosave('documents');
+          // Fire notification AFTER server responds so link.id is the real server UUID
           pushNotif('Document Uploaded', doc.name + ' uploaded for ' + doc.applicant + ' — awaiting review', 'document',
             { page: 'documents', id: doc._dbId || doc.id });
-          // Re-render to show the doc (don't fetch from server — it would overwrite local state)
+          // Re-render in place — doc is already in DB.documents with correct server id
           if (currentPage === 'documents') renderDocs();
         }).catch(function(){
           doc._pendingUpload = false;
+          autosave('documents');
           pushNotif('Document Uploaded', doc.name + ' uploaded for ' + doc.applicant + ' — awaiting review', 'document',
             { page: 'documents', id: doc.id });
-          if (currentPage === 'documents') renderDocs();
         });
     };
 
@@ -8204,7 +8124,6 @@ function saveDoc() {
     if (btn) { btn.textContent = 'Upload Document'; btn.disabled = false; }
     closeOverlay('overlay-doc');
     clearDocFile();
-    docFilter = 'all'; // reset filter so the new Pending doc is always visible
     renderDocs();
 
     // Refresh drawer if applicant drawer is open for this applicant
