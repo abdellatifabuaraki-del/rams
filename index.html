@@ -3529,6 +3529,17 @@ function mapDocument(row) {
 async function apiFetchDocuments() {
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
   if (!isLive) return;
+  // Check shared Store timestamp — if another user uploaded recently, bust our cache
+  try {
+    var tsRaw = await Store.get('rams:shared:documents:ts', true);
+    var serverTs = tsRaw ? parseInt(tsRaw.value) : 0;
+    var lastSeen = window._lastDocumentStoreTs || 0;
+    if (serverTs > lastSeen) {
+      Object.keys(_cache || {}).forEach(function(k) { if (k.includes('/documents')) delete _cache[k]; });
+      if (typeof _lastFetch !== 'undefined') _lastFetch['documents'] = 0;
+      window._lastDocumentStoreTs = serverTs;
+    }
+  } catch(e) {}
   var r = await apiFetch('/documents');
   if (r.ok && Array.isArray(r.data)) {
     // Build set of all server IDs to avoid duplicates
@@ -8050,6 +8061,16 @@ function saveDoc() {
           if (r && r.ok && r.data && r.data.id) {
             doc._dbId = r.data.id; doc.id = r.data.id;
             autosave('documents');
+          }
+          // Bust /documents cache so all users get fresh data on next poll
+          Object.keys(_cache || {}).forEach(function(k) {
+            if (k.includes('/documents')) delete _cache[k];
+          });
+          if (typeof _lastFetch !== 'undefined') _lastFetch['documents'] = 0;
+          // Write to shared Store — other users' next poll picks this up immediately
+          if (typeof Store !== 'undefined') {
+            Store.set('rams:shared:documents',    DB.documents, true).catch(function(){});
+            Store.set('rams:shared:documents:ts', String(Date.now()), true).catch(function(){});
           }
           // Fire notification AFTER server responds so link.id is the real server UUID
           pushNotif('Document Uploaded', doc.name + ' uploaded for ' + doc.applicant + ' — awaiting review', 'document',
@@ -15675,7 +15696,7 @@ function _renderPreviewModal(doc) {
       '<div style="display:flex;align-items:center;justify-content:center;height:200px;color:var(--muted);font-size:13px">⏳ Loading preview…</div>';
 
     var BACKEND = typeof RAILWAY_URL !== 'undefined' ? RAILWAY_URL : '';
-    var _dlUrl  = BACKEND + '/documents/' + _dbid + '/download';
+    var _dlUrl  = BACKEND + '/api/documents/' + _dbid + '/download';
     var _token  = window._ramsSessionToken || '';
 
     fetch(_dlUrl, {
@@ -15733,18 +15754,23 @@ function _loadPreviewFromDataUrl(doc) {
     // PDF preview via iframe
     var iframe = document.getElementById('doc-preview-pdf');
     iframe.onload = function() { _showPreviewPane('pdf'); };
-    // Convert base64 data URL to blob URL for iframe
-    try {
-      var base64 = doc.dataUrl.split(',')[1];
-      var binary  = atob(base64);
-      var bytes   = new Uint8Array(binary.length);
-      for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      var blob    = new Blob([bytes], {type: 'application/pdf'});
-      _previewBlobUrl = URL.createObjectURL(blob);
-      iframe.src = _previewBlobUrl;
-    } catch(e) {
-      // Fallback: try direct data URL
+    // If it's a presigned cloud URL, load directly into iframe
+    if (doc.dataUrl && (doc.dataUrl.startsWith('http://') || doc.dataUrl.startsWith('https://'))) {
       iframe.src = doc.dataUrl;
+    } else {
+      // Convert base64 data URL to blob URL for iframe
+      try {
+        var base64 = doc.dataUrl.split(',')[1];
+        var binary  = atob(base64);
+        var bytes   = new Uint8Array(binary.length);
+        for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        var blob    = new Blob([bytes], {type: 'application/pdf'});
+        _previewBlobUrl = URL.createObjectURL(blob);
+        iframe.src = _previewBlobUrl;
+      } catch(e) {
+        // Fallback: try direct data URL
+        iframe.src = doc.dataUrl;
+      }
     }
     // Timeout fallback in case iframe doesn't fire onload
     setTimeout(function() {
@@ -15845,7 +15871,7 @@ function downloadDoc() {
   }
 
   var BACKEND = typeof RAILWAY_URL !== 'undefined' ? RAILWAY_URL : '';
-  var dlUrl   = BACKEND + '/documents/' + dbId + '/download';
+  var dlUrl   = BACKEND + '/api/documents/' + dbId + '/download';
   var token   = window._ramsSessionToken || '';
 
   toast('Preparing download…', 'info');
