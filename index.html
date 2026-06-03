@@ -8105,9 +8105,18 @@ function saveDoc() {
           doc.id    = r.data.id;
           doc._dbId = r.data.id;
           doc._pendingUpload = false;
+          // If backend warned about S3, mark doc as having no stored file
+          if (r.data._warning) {
+            doc._noFile = true;
+            console.warn('[upload] server warning:', r.data._warning);
+          }
           autosave('documents');
-          renderDocs();  // re-render with real id so preview/download/delete all work
-          toast('✓ ' + name + ' uploaded', 'success');
+          renderDocs();
+          if (r.data._warning) {
+            toast('⚠ Metadata saved but file not stored — R2/S3 not configured on server', 'error');
+          } else {
+            toast('✓ ' + name + ' uploaded', 'success');
+          }
           pushNotif('Document Uploaded',
             name + ' uploaded for ' + applicant + ' — awaiting review',
             'document', { page: 'documents', id: doc.id });
@@ -8128,7 +8137,9 @@ function saveDoc() {
           doc._uploadFailed  = true;
           autosave('documents');
           renderDocs();
-          toast('Upload failed — saved locally. Will retry on next sync.', 'error');
+          var errMsg = (r && r.error) ? r.error : ('HTTP ' + (r && r.httpStatus || '?'));
+          console.error('[saveDoc] upload failed:', errMsg, r);
+          toast('Upload failed: ' + errMsg, 'error');
         }
       })
       .catch(function(err) {
