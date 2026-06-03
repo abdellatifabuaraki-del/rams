@@ -3531,15 +3531,36 @@ function mapDocument(row) {
 async function apiFetchDocuments() {
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
   if (!isLive) return;
-  // Check shared Store timestamp — if another user uploaded recently, bust our cache
+  // Check shared Store timestamp — another user uploaded = bust cache + load from Store immediately
   try {
     var tsRaw = await Store.get('rams:shared:documents:ts', true);
-    var serverTs = tsRaw ? parseInt(tsRaw.value) : 0;
+    var serverTs = tsRaw ? parseInt(tsRaw.value || tsRaw) : 0;
     var lastSeen = window._lastDocumentStoreTs || 0;
     if (serverTs > lastSeen) {
-      Object.keys(_cache || {}).forEach(function(k) { if (k.includes('/documents')) delete _cache[k]; });
-      if (typeof _lastFetch !== 'undefined') _lastFetch['documents'] = 0;
       window._lastDocumentStoreTs = serverTs;
+      // Bust in-memory cache AND in-flight dedup
+      Object.keys(_cache || {}).forEach(function(k) { if (k.includes('/documents')) delete _cache[k]; });
+      if (typeof _inFlight !== 'undefined') {
+        Object.keys(_inFlight || {}).forEach(function(k) { if (k.includes('/documents')) delete _inFlight[k]; });
+      }
+      if (typeof _lastFetch !== 'undefined') _lastFetch['documents'] = 0;
+      // Immediately show docs from shared Store — don't wait for backend round-trip
+      try {
+        var storeDocsRaw = await Store.get('rams:shared:documents', true);
+        if (storeDocsRaw) {
+          var storeDocs = storeDocsRaw.value !== undefined ? storeDocsRaw.value : storeDocsRaw;
+          if (typeof storeDocs === 'string') { try { storeDocs = JSON.parse(storeDocs); } catch(e) { storeDocs = null; } }
+          if (Array.isArray(storeDocs) && storeDocs.length > 0) {
+            var storeIds = new Set(storeDocs.map(function(d){ return String(d.id || ''); }));
+            var _localPending = (DB.documents||[]).filter(function(d){
+              return d._pendingUpload || (d._localCreatedAt && d._localCreatedAt > Date.now()-60000);
+            }).filter(function(d){ return !storeIds.has(String(d.id)); });
+            DB.documents = storeDocs.concat(_localPending);
+            autosave('documents');
+            if (currentPage === 'documents') renderDocs();
+          }
+        }
+      } catch(e) {}
     }
   } catch(e) {}
   var r = await apiFetch('/documents');
