@@ -6034,10 +6034,18 @@ function _checkStaleApplicants() {
   var today_str  = new Date().toISOString().slice(0, 10);
 
   // Skip terminal statuses — no action needed
-  var TERMINAL = ['Deployed', 'Cancelled', 'Rejected', 'Blacklisted'];
+  var TERMINAL = ['Deployed', 'Cancelled', 'Rejected', 'Blacklisted', 'Backout', 'Repatriated'];
 
   // Load last-notified map from Store (persist across sessions)
   if (!window._staleNotifiedMap) window._staleNotifiedMap = {};
+
+  // Purge stale map entries for applicants now in a terminal status
+  // so we don't carry dead entries forever
+  DB.applicants.forEach(function(a) {
+    if (TERMINAL.indexOf(a.status) !== -1 && window._staleNotifiedMap[a.id]) {
+      delete window._staleNotifiedMap[a.id];
+    }
+  });
 
   var stale = [];
   DB.applicants.forEach(function(a) {
@@ -7538,8 +7546,9 @@ function saveApplicant() {
     }
     DB.applicants[idx] = data;
 
-    // Notify on status change
-    if (existing && existing.status !== data.status) {
+    // Notify on status change — skip key statuses handled by _pushStatusChangeNotif
+    var _keyStatuses = ['Deployed','Visa','OWWA','Backout','Repatriated','Rejected'];
+    if (existing && existing.status !== data.status && _keyStatuses.indexOf(data.status) === -1) {
       pushNotif('Applicant Status Changed',
         data.name + ' moved from ' + existing.status + ' → ' + data.status,
         'applicant', { page: 'applicants', id: data.id || data._dbId || '' });
@@ -14352,27 +14361,29 @@ function printInvoice() { var area=document.getElementById('invoice-print-area')
 // ── BACKFILL COMMISSIONS ───────────────────────────────────────────
 // Map server notification row to local format
 function mapNotification(row) {
+  var createdAt = row.created_at || new Date().toISOString();
   return {
-    id:    row.id,
-    _dbId: row.id,
-    title: row.title || '',
-    body:  row.body  || row.message || '',
-    type:  row.type  || 'info',
-    link:  row.link  || null,
-    read:  !!(row.is_read || row.read),
-    createdAt: row.created_at || new Date().toISOString(),
+    id:        row.id,
+    _dbId:     row.id,
+    title:     row.title || '',
+    body:      row.body  || row.message || '',
+    type:      row.type  || 'info',
+    link:      row.link  || null,
+    read:      !!(row.is_read || row.read),
+    createdAt: createdAt,
+    ts:        row.ts || (new Date(createdAt).getTime()) || Date.now(),
   };
 }
 
 // Status change notifications — push to all users
 function _pushStatusChangeNotif(app, newStatus, oldStatus) {
   var key_statuses = {
-    'Deployed':    { title:'Worker Deployed', type:'applicant', emoji:'🚀' },
-    'Visa':        { title:'Visa Approved',   type:'applicant', emoji:'📄' },
-    'OWWA':        { title:'OWWA Cleared',    type:'applicant', emoji:'✅' },
-    'Backout':     { title:'Worker Backed Out', type:'warning', emoji:'⚠️' },
-    'Repatriated': { title:'Worker Repatriated', type:'warning', emoji:'↩️' },
-    'Rejected':    { title:'Application Rejected', type:'warning', emoji:'❌' },
+    'Deployed':    { title:'Worker Deployed',      type:'applicant', emoji:'🚀' },
+    'Visa':        { title:'Visa Approved',         type:'applicant', emoji:'📄' },
+    'OWWA':        { title:'OWWA Cleared',          type:'applicant', emoji:'✅' },
+    'Backout':     { title:'Worker Backed Out',     type:'applicant', emoji:'⚠️' },
+    'Repatriated': { title:'Worker Repatriated',    type:'applicant', emoji:'↩️' },
+    'Rejected':    { title:'Application Rejected',  type:'applicant', emoji:'❌' },
   };
   var meta = key_statuses[newStatus];
   if (!meta) return; // don't notify for routine stage changes
