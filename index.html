@@ -3547,28 +3547,40 @@ async function apiFetchDocuments() {
     r.data.forEach(function(d){ if (d.id) serverIds.add(String(d.id)); });
 
     // Keep only local docs that aren't yet on server (pending upload)
+    // Also always keep docs that are currently being uploaded (_pendingUpload flag)
     var localOnly = (DB.documents||[]).filter(function(d){
-      return !serverIds.has(String(d.id)) && !serverIds.has(String(d._dbId));
+      if (d._pendingUpload) return true; // never drop a doc mid-upload
+      var idMatch  = d.id    && serverIds.has(String(d.id));
+      var dbIdMatch = d._dbId && d._dbId !== 'null' && serverIds.has(String(d._dbId));
+      return !idMatch && !dbIdMatch;
     });
 
-    // Map server docs — keep local dataUrl/mimeType if we have it (they're stored locally)
+    // Map server docs — prefer local non-empty values to handle schema lag
     var serverDocs = r.data.map(function(row) {
       var mapped = mapDocument(row);
       var local  = (DB.documents||[]).find(function(d){
-        return d._dbId === mapped._dbId || d.id === mapped._dbId;
+        return d._dbId === mapped._dbId || d.id === mapped._dbId || d.id === mapped.id;
       });
-      if (local && local.dataUrl)  mapped.dataUrl  = local.dataUrl;
-      if (local && local.mimeType) mapped.mimeType = local.mimeType;
+      if (local) {
+        if (local.dataUrl)                        mapped.dataUrl   = local.dataUrl;
+        if (local.mimeType)                       mapped.mimeType  = local.mimeType;
+        if (!mapped.name      && local.name)      mapped.name      = local.name;
+        if (!mapped.type      && local.type)      mapped.type      = local.type;
+        if (!mapped.applicant && local.applicant) mapped.applicant = local.applicant;
+        if (!mapped.notes     && local.notes)     mapped.notes     = local.notes;
+      }
       return mapped;
     });
 
     DB.documents = serverDocs.concat(localOnly);
 
-    // Filter out permanently deleted
+    // Filter out permanently deleted — never filter null IDs (new unsaved docs)
     if (window._deletedDocumentIds) {
       DB.documents = DB.documents.filter(function(d){
-        return !window._deletedDocumentIds.has(String(d.id)) &&
-               !window._deletedDocumentIds.has(String(d._dbId));
+        var idStr  = d.id   && d.id   !== 'null' ? String(d.id)   : null;
+        var dbStr  = d._dbId && d._dbId !== 'null' ? String(d._dbId) : null;
+        return (!idStr  || !window._deletedDocumentIds.has(idStr)) &&
+               (!dbStr  || !window._deletedDocumentIds.has(dbStr));
       });
     }
     autosave('documents');
@@ -8045,6 +8057,7 @@ function saveDoc() {
     };
 
     DB.documents.unshift(doc);
+    doc._pendingUpload = true; // protect from poll-tick filtering until backend confirms
     autosave('documents');
     addAudit('CREATE', 'Document', 'Uploaded ' + name + ' for ' + applicant);
 
@@ -8063,12 +8076,21 @@ function saveDoc() {
         .then(function(r) {
           if (r && r.ok && r.data && r.data.id) {
             doc._dbId = r.data.id; doc.id = r.data.id;
+            doc._pendingUpload = false; // backend confirmed — safe to sync
             autosave('documents');
+          } else {
+            doc._pendingUpload = false;
           }
-          // Bust /documents cache so all users get fresh data on next poll
+          // Bust cache AND in-flight dedup — if a fetch is already in-flight,
+          // it will return stale data even if we cleared the cache
           Object.keys(_cache || {}).forEach(function(k) {
             if (k.includes('/documents')) delete _cache[k];
           });
+          if (typeof _inFlight !== 'undefined') {
+            Object.keys(_inFlight).forEach(function(k) {
+              if (k.includes('/documents')) delete _inFlight[k];
+            });
+          }
           if (typeof _lastFetch !== 'undefined') _lastFetch['documents'] = 0;
           // Write to shared Store — other users' next poll picks this up immediately
           if (typeof Store !== 'undefined') {
@@ -8078,8 +8100,13 @@ function saveDoc() {
           // Fire notification AFTER server responds so link.id is the real server UUID
           pushNotif('Document Uploaded', doc.name + ' uploaded for ' + doc.applicant + ' — awaiting review', 'document',
             { page: 'documents', id: doc._dbId || doc.id });
-          try { _triggerImmediateSync(); } catch(e) {}
+          // Fetch fresh list directly (not via _tick which can hit stale _inFlight)
+          // Small delay ensures backend DB transaction is fully committed
+          setTimeout(function() {
+            apiFetchDocuments().catch(function(){});
+          }, 800);
         }).catch(function(){
+          doc._pendingUpload = false;
           // Still notify even if upload failed — link to local id as fallback
           pushNotif('Document Uploaded', doc.name + ' uploaded for ' + doc.applicant + ' — awaiting review', 'document',
             { page: 'documents', id: doc.id });
