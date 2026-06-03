@@ -2218,7 +2218,7 @@ button[disabled][data-rbac-locked] {
       <div class="f-grp">
         <label class="f-lbl">Attach Documents (optional)</label>
         <input type="file" id="comp-files" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.xlsx" style="font-size:12px">
-        <div style="font-size:11px;color:var(--muted);margin-top:4px">PDF, Word, Excel, images — max 10MB each</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">PDF, Word, Excel, images — max 20MB each</div>
       </div>
     </div>
     <div class="modal-footer">
@@ -2640,7 +2640,7 @@ button[disabled][data-rbac-locked] {
             Click to upload or drag &amp; drop
           </div>
           <div id="doc-upload-sub" style="font-size:11.5px;color:var(--muted);margin-top:4px">
-            PDF, DOC, DOCX, JPG, PNG, XLSX — max 10 MB
+            PDF, DOC, DOCX, JPG, PNG, XLSX — max 20 MB
           </div>
           <div id="doc-upload-preview" style="display:none;margin-top:10px;padding:8px 12px;
                background:var(--gbg);border-radius:7px;border:1px solid #86efac;
@@ -3510,91 +3510,81 @@ async function apiDeleteCountryRule(id) {
 
 // ── DOCUMENT API ──────────────────────────────────────────────────────
 function mapDocument(row) {
-  var clean = function(v) { return (v && v !== 'undefined' && v !== 'null') ? v : ''; };
+  var c = function(v) { return (v && v !== 'undefined' && v !== 'null') ? String(v) : ''; };
   return {
-    id:          row.id, _dbId: row.id,
-    name:        clean(row.name)         || clean(row.file_name) || '',
-    type:        clean(row.type)         || clean(row.doc_type)  || 'Other',
-    status:      clean(row.status)       || 'Pending',
-    applicant:   clean(row.applicant_name) || clean(row.applicant) || '',
-    applicantId: clean(row.applicant_id)   || '',
-    notes:       clean(row.notes)        || '',
-    date:        row.created_at  ? String(row.created_at).slice(0,10) : (row.date||''),
-    size:        clean(row.size)         || '',
-    fileName:    clean(row.file_name)    || clean(row.name) || '',
-    mimeType:    clean(row.mime_type)    || '',
-    downloadUrl: row.download_url        || null,
+    id:          c(row.id)           || c(row._id),
+    _dbId:       c(row.id)           || c(row._id),
+    name:        c(row.name)         || c(row.file_name) || '',
+    type:        c(row.type)         || c(row.doc_type)  || 'Other',
+    status:      c(row.status)       || 'Pending',
+    applicant:   c(row.applicant_name) || c(row.applicant) || '',
+    applicantId: c(row.applicant_id) || '',
+    notes:       c(row.notes)        || '',
+    date:        row.created_at ? String(row.created_at).slice(0,10) : c(row.date),
+    size:        c(row.size)         || '',
+    fileName:    c(row.file_name)    || c(row.name) || '',
+    mimeType:    c(row.mime_type)    || '',
+    ext:         c(row.file_name)    ? c(row.file_name).split('.').pop().toLowerCase() : '',
+    dataUrl:     null,  // never persisted — always fetched fresh from R2
+    _pendingUpload: false,
   };
 }
 async function apiFetchDocuments() {
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
   if (!isLive) return;
-  // Check shared Store timestamp — if another user uploaded recently, bust our cache
+
+  // Bust cache if another user uploaded recently (shared timestamp signal)
   try {
-    var tsRaw = await Store.get('rams:shared:documents:ts', true);
-    var serverTs = tsRaw ? parseInt(tsRaw.value) : 0;
-    var lastSeen = window._lastDocumentStoreTs || 0;
-    if (serverTs > lastSeen) {
+    var tsRaw    = await Store.get('rams:shared:documents:ts', true);
+    var serverTs = tsRaw ? parseInt(typeof tsRaw === 'string' ? tsRaw : (tsRaw.value || '0')) : 0;
+    if (serverTs > (window._lastDocumentStoreTs || 0)) {
       Object.keys(_cache || {}).forEach(function(k) { if (k.includes('/documents')) delete _cache[k]; });
-      if (typeof _lastFetch !== 'undefined') _lastFetch['documents'] = 0;
+      if (window._inFlight) Object.keys(_inFlight).forEach(function(k) { if (k.includes('/documents')) delete _inFlight[k]; });
       window._lastDocumentStoreTs = serverTs;
     }
   } catch(e) {}
+
   var r = await apiFetch('/documents');
-  if (r.ok && Array.isArray(r.data)) {
-    // Build set of all server IDs to avoid duplicates
-    var serverIds = new Set();
-    r.data.forEach(function(d){ if (d.id) serverIds.add(String(d.id)); });
+  if (!r.ok || !Array.isArray(r.data)) return;
 
-    // Keep only local docs that aren't yet on server (pending upload)
-    // Also always keep docs that are currently being uploaded (_pendingUpload flag)
-    var _uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    var localOnly = (DB.documents||[]).filter(function(d){
-      if (d._pendingUpload) return true; // never drop a doc mid-upload
-      // If the doc still has a local generated id (not a UUID), the server hasn't confirmed it yet
-      if (d.id && !_uuidRe.test(String(d.id)) && !(d._dbId && _uuidRe.test(String(d._dbId)))) return true;
-      var idMatch   = d.id    && serverIds.has(String(d.id));
-      var dbIdMatch = d._dbId && d._dbId !== 'null' && serverIds.has(String(d._dbId));
-      return !idMatch && !dbIdMatch;
+  // Build server doc list — preserve local dataUrl/mimeType/ext from current session
+  var serverDocs = r.data.map(function(row) {
+    var mapped = mapDocument(row);
+    // Re-attach in-memory file data from uploader's session (not stored on server)
+    var existing = (DB.documents || []).find(function(d) {
+      return (mapped._dbId && (d._dbId === mapped._dbId || d.id === mapped._dbId)) ||
+             (mapped.id    && (d.id    === mapped.id    || d._dbId === mapped.id));
     });
-
-    // Map server docs — prefer local non-empty values to handle schema lag
-    var serverDocs = r.data.map(function(row) {
-      var mapped = mapDocument(row);
-      var local  = (DB.documents||[]).find(function(d){
-        return d._dbId === mapped._dbId || d.id === mapped._dbId || d.id === mapped.id;
-      });
-      if (local) {
-        if (local.dataUrl)                        mapped.dataUrl   = local.dataUrl;
-        if (local.mimeType)                       mapped.mimeType  = local.mimeType;
-        if (!mapped.name      && local.name)      mapped.name      = local.name;
-        if (!mapped.type      && local.type)      mapped.type      = local.type;
-        if (!mapped.applicant && local.applicant) mapped.applicant = local.applicant;
-        if (!mapped.notes     && local.notes)     mapped.notes     = local.notes;
-      }
-      return mapped;
-    });
-
-    DB.documents = serverDocs.concat(localOnly);
-
-    // Filter out permanently deleted — never filter null IDs (new unsaved docs)
-    if (window._deletedDocumentIds) {
-      DB.documents = DB.documents.filter(function(d){
-        var idStr  = d.id   && d.id   !== 'null' ? String(d.id)   : null;
-        var dbStr  = d._dbId && d._dbId !== 'null' ? String(d._dbId) : null;
-        return (!idStr  || !window._deletedDocumentIds.has(idStr)) &&
-               (!dbStr  || !window._deletedDocumentIds.has(dbStr));
-      });
+    if (existing) {
+      if (existing.dataUrl)  mapped.dataUrl  = existing.dataUrl;
+      if (existing.mimeType) mapped.mimeType = existing.mimeType;
+      if (existing.ext)      mapped.ext      = existing.ext;
+      if (!mapped.size  && existing.size)  mapped.size  = existing.size;
+      if (!mapped.notes && existing.notes) mapped.notes = existing.notes;
     }
-    autosave('documents');
-    // Re-render if on documents page or drawer docs tab is open
-    if (currentPage === 'documents') renderDocs();
-    if (currentDrawerApplicant) {
-      var activePanel = document.getElementById('dtab-docs');
-      if (activePanel && activePanel.classList.contains('active')) {
-        switchDrawerTab('docs', null);
-      }
-    }
+    return mapped;
+  });
+
+  // Preserve any locally-pending docs (mid-upload) that the server hasn't confirmed yet
+  var serverIds = new Set(serverDocs.map(function(d) { return d._dbId || d.id; }).filter(Boolean));
+  var pending = (DB.documents || []).filter(function(d) {
+    return d._pendingUpload === true &&
+           !serverIds.has(d._dbId) && !serverIds.has(d.id);
+  });
+
+  // Filter out permanently deleted
+  var deleted = window._deletedDocumentIds || new Set();
+  var allDocs = serverDocs.concat(pending).filter(function(d) {
+    return !deleted.has(String(d._dbId || '')) && !deleted.has(String(d.id || ''));
+  });
+
+  DB.documents = allDocs;
+  autosave('documents');
+  if (currentPage === 'documents') renderDocs();
+  // Also refresh drawer docs tab if open
+  if (currentDrawerApplicant) {
+    var dtab = document.getElementById('dtab-docs');
+    if (dtab && dtab.classList.contains('active')) switchDrawerTab('docs', null);
   }
 }
 async function apiUploadDocument(doc, fileBlob) {
@@ -7817,34 +7807,48 @@ function filterDocs(status, btn) {
   renderDocs();
 }
 function renderDocs() {
-  const docs = DB.documents.filter(d => docFilter==='all' || d.status===docFilter);
-  const grid = document.getElementById('doc-grid');
-  document.getElementById('sb-doc-count').textContent = DB.documents.filter(d=>d.status==='Pending').length;
+  var docs = DB.documents.filter(function(d) { return docFilter === 'all' || d.status === docFilter; });
+  var grid = document.getElementById('doc-grid');
+  if (!grid) return;
+  var sbCount = document.getElementById('sb-doc-count');
+  if (sbCount) sbCount.textContent = DB.documents.filter(function(d){ return d.status === 'Pending'; }).length;
   if (!docs.length) {
-    grid.innerHTML = `<div class="empty-state"><div class="empty-icon">📂</div><div class="empty-title">No Documents</div><div class="empty-sub">No documents match this filter.</div><button class="btn btn-p" onclick="openUploadDoc()">Upload Document</button></div>`;
+    grid.innerHTML = '<div class="empty-state"><div class="empty-icon">\u{1F4C2}</div><div class="empty-title">No Documents</div><div class="empty-sub">No documents match this filter.</div><button class="btn btn-p" onclick="openUploadDoc()">Upload Document</button></div>';
     return;
   }
-  const icons = {Government:'🪪',Medical:'🏥',Work:'📋',Contract:'📝',Training:'🎓',Other:'📎'};
-  const bgs   = {Government:'var(--brand-l)',Medical:'var(--gbg)',Work:'var(--abg)',Contract:'var(--pbg)',Training:'var(--rbg)',Other:'var(--s2)'};
-  grid.innerHTML = docs.map(d => {
-    const typeKey = d.type ? d.type.split(' ')[0] : 'Other';
-    return `
-    <div class="doc-card" data-doc-id="${d.id}" onclick="previewDoc('${d.id}')" style="cursor:pointer">
-      <div class="doc-icon" style="background:${bgs[typeKey]||'var(--s2)'}">${icons[typeKey]||'📄'}</div>
-      <div class="doc-info">
-        <div class="doc-name">${d.name}</div>
-        <div class="doc-meta">${d.applicant} &middot; ${d.type}</div>
-        <div class="doc-meta" style="font-family:monospace;font-size:10.5px">${d.date} &middot; ${d.size}</div>
-      </div>
-      <div class="doc-actions">
-        ${pillHtml(d.status)}
-        <div style="display:flex;gap:5px;margin-top:2px">
-          <button class="btn btn-s btn-xs doc-preview-btn" onclick="previewDoc('${d.id}')" title="Preview document">👁 Preview</button>
-          ${(d.status==='Pending' && (typeof getCurrentRole !== 'function' || getCurrentRole() !== 'Viewer'))?`<button class="btn btn-sm" style="background:var(--gbg);color:var(--green);border:1px solid #86efac;font-size:11px" onclick="approveDoc('${d.id}')">✓ Approve</button>`:''}
-          <button class="btn btn-ghost btn-xs" onclick="confirmDelete('document','${d.id}')" title="Delete">🗑</button>
-        </div>
-      </div>
-    </div>`;
+  var icons = { Government:'\u{1FAA9}', Medical:'\u{1F3E5}', Work:'\u{1F4CB}', Contract:'\u{1F4DD}', Training:'\u{1F393}', Visa:'\u{1F6C2}', OWWA:'\u{1F3DB}', Other:'\u{1F4CE}' };
+  var bgs   = { Government:'var(--brand-l)', Medical:'var(--gbg)', Work:'var(--abg)', Contract:'var(--pbg)', Training:'var(--rbg)', Other:'var(--s2)' };
+  var canApprove = typeof getCurrentRole === 'function' ? getCurrentRole() !== 'Viewer' : true;
+  grid.innerHTML = docs.map(function(d) {
+    var typeKey  = d.type ? d.type.split(' ')[0] : 'Other';
+    var icon     = icons[typeKey]  || '\u{1F4C4}';
+    var bg       = bgs[typeKey]    || 'var(--s2)';
+    var isPending = d._pendingUpload;
+    var isFailed  = d._uploadFailed;
+    var safeId    = String(d.id || '').replace(/'/g, "\\'");
+    var statusBadge = isPending
+      ? '<span style="font-size:10px;background:var(--abg);color:var(--amber);border:1px solid var(--amber);border-radius:4px;padding:1px 6px;font-weight:700">\u23F3 Uploading\u2026</span>'
+      : isFailed
+        ? '<span style="font-size:10px;background:var(--rbg);color:var(--red);border:1px solid var(--red);border-radius:4px;padding:1px 6px;font-weight:700">\u26A0 Upload failed</span>'
+        : pillHtml(d.status);
+    var actions = (isPending || isFailed) ? '' :
+      '<button class="btn btn-s btn-xs doc-preview-btn" onclick="event.stopPropagation();previewDoc(\'' + safeId + '\')" title="Preview">\u{1F441} Preview</button>' +
+      (d.status === 'Pending' && canApprove
+        ? '<button class="btn btn-sm" style="background:var(--gbg);color:var(--green);border:1px solid #86efac;font-size:11px" onclick="event.stopPropagation();approveDoc(\'' + safeId + '\')">\u2713 Approve</button>'
+        : '') +
+      '<button class="btn btn-ghost btn-xs" onclick="event.stopPropagation();confirmDelete(\'document\',\'' + safeId + '\')" title="Delete">\u{1F5D1}</button>';
+    return '<div class="doc-card" data-doc-id="' + safeId + '" onclick="' + ((isPending || isFailed) ? '' : 'previewDoc(\'' + safeId + '\')') + '" style="cursor:' + ((isPending || isFailed) ? 'default' : 'pointer') + ';opacity:' + (isPending ? '.7' : '1') + '">' +
+      '<div class="doc-icon" style="background:' + bg + '">' + icon + '</div>' +
+      '<div class="doc-info">' +
+        '<div class="doc-name">' + (d.name || '\u2014') + '</div>' +
+        '<div class="doc-meta">' + (d.applicant || '\u2014') + ' &middot; ' + (d.type || '\u2014') + '</div>' +
+        '<div class="doc-meta" style="font-family:monospace;font-size:10.5px">' + (d.date || '') + (d.size ? ' &middot; ' + d.size : '') + '</div>' +
+      '</div>' +
+      '<div class="doc-actions">' +
+        statusBadge +
+        (actions ? '<div style="display:flex;gap:5px;margin-top:4px">' + actions + '</div>' : '') +
+      '</div>' +
+    '</div>';
   }).join('');
 }
 
@@ -7931,7 +7935,7 @@ function docDrop(e) {
 }
 
 function _setDocFile(file) {
-  var maxMB = 10;
+  var maxMB = 20;
   var errEl = document.getElementById('doc-upload-error');
   if (errEl) errEl.style.display = 'none';
 
@@ -8008,13 +8012,14 @@ function clearDocFile() {
   if (zone)  zone.classList.remove('has-file');
   if (icon)  icon.textContent = '📎';
   if (lbl)   lbl.textContent  = 'Click to upload or drag & drop';
-  if (sub)   { sub.style.display = ''; sub.textContent = 'PDF, DOC, DOCX, JPG, PNG, XLSX — max 10 MB'; }
+  if (sub)   { sub.style.display = ''; sub.textContent = 'PDF, DOC, DOCX, JPG, PNG, XLSX — max 20 MB'; }
   if (prev)  prev.style.display = 'none';
   if (fi)    fi.value = '';
   if (errEl) errEl.style.display = 'none';
 }
 function saveDoc() {
   if (!hasPermission('Upload Documents')) { toast('Your role cannot upload documents', 'error'); return; }
+
   var appSel  = document.getElementById('d-applicant');
   var nameEl  = document.getElementById('d-name');
   var typeEl  = document.getElementById('d-type');
@@ -8026,113 +8031,122 @@ function saveDoc() {
 
   var applicant = appSel ? appSel.value.trim() : '';
   var name      = nameEl ? nameEl.value.trim() : '';
+  if (!applicant) { toast('Please select an applicant', 'error'); if (appSel) appSel.focus(); return; }
+  if (!name)      { toast('Document name is required',  'error'); if (nameEl) nameEl.focus(); return; }
 
-  if (!applicant) { toast('Please select an applicant', 'error'); if(appSel) appSel.focus(); return; }
-  if (!name)      { toast('Document name is required',  'error'); if(nameEl) nameEl.focus(); return; }
+  // Find applicant record for its UUID
+  var appRecord   = DB.applicants.find(function(a) { return a.name === applicant; });
+  var applicantId = appRecord ? (appRecord._dbId || appRecord.id || '') : '';
 
-  // File size display
   var sizeStr = '—';
   if (_docFile) {
-    sizeStr = _docFile.size < 1024000
+    sizeStr = _docFile.size < 1048576
       ? (_docFile.size / 1024).toFixed(1) + ' KB'
       : (_docFile.size / 1048576).toFixed(2) + ' MB';
   }
 
-  var btn = document.getElementById('save-doc-btn');
-  if (btn) { btn.textContent = _docFile ? 'Uploading…' : 'Saving…'; btn.disabled = true; }
+  // Build the doc record immediately — add to DB and show it
+  var doc = {
+    id:             'DOC-PENDING-' + Date.now(),  // temporary id — replaced by server UUID
+    _dbId:          null,
+    name:           name,
+    type:           typeEl  ? typeEl.value  : 'Other',
+    status:         statEl  ? statEl.value  : 'Pending',
+    applicant:      applicant,
+    applicantId:    applicantId,
+    date:           new Date().toISOString().slice(0, 10),
+    size:           sizeStr,
+    notes:          notesEl ? notesEl.value.trim() : '',
+    fileName:       _docFile ? _docFile.name   : null,
+    mimeType:       _docFile ? (_docFile.type || _docFile._mimeType || '') : null,
+    ext:            _docFile ? (_docFile.name.split('.').pop().toLowerCase() || _docFile._ext || '') : null,
+    dataUrl:        _docFile ? (_docFile._dataUrl  || null) : null,
+    _pendingUpload: true,
+  };
 
-  // Simulate upload delay if file present
-  var delay = _docFile ? 800 : 0;
-  setTimeout(function() {
-    var doc = {
-      id:        genId('DOC'),
-      name:      name,
-      type:      typeEl ? typeEl.value : 'Other',
-      applicant: applicant,
-      status:    statEl ? statEl.value : 'Pending',
-      date:      new Date().toISOString().split('T')[0],
-      size:      sizeStr,
-      notes:     notesEl ? notesEl.value.trim() : '',
-      fileName:  _docFile ? _docFile.name : null,
-      dataUrl:   (_docFile && _docFile._dataUrl)  ? _docFile._dataUrl  : null,
-      mimeType:  (_docFile && _docFile._mimeType) ? _docFile._mimeType : null,
-      ext:       (_docFile && _docFile._ext)      ? _docFile._ext      : null,
-    };
+  // Add to top of list immediately — user sees it right away
+  DB.documents.unshift(doc);
+  autosave('documents');
+  renderDocs();
+  addAudit('CREATE', 'Document', 'Uploaded ' + name + ' for ' + applicant);
 
-    DB.documents.unshift(doc);
-    doc._pendingUpload = true; // protect from poll-tick filtering until backend confirms
-    autosave('documents');
-    addAudit('CREATE', 'Document', 'Uploaded ' + name + ' for ' + applicant);
+  // Close modal and reset — don't wait for backend
+  if (btn) { btn.textContent = 'Uploading…'; btn.disabled = true; }
+  closeOverlay('overlay-doc');
 
-    // Always persist to backend via /documents/upload (works with or without file)
-    var _doBackendSave = function(blob) {
-      var form = new FormData();
-      form.append('name',           doc.name      || '');
-      form.append('type',           doc.type      || 'Other');
-      form.append('applicant_name', doc.applicant || '');
-      form.append('applicant_id',   (doc.applicantId && typeof isUUID === 'function' && isUUID(doc.applicantId)) ? doc.applicantId : '');
-      form.append('notes',          doc.notes     || '');
-      form.append('status',         doc.status    || 'Pending');
-      form.append('date',           doc.date      || '');
-      if (blob) form.append('file', blob, doc.fileName || doc.name || 'document');
-      return apiFetch('/documents/upload', { method: 'POST', body: form, _noContentType: true })
-        .then(function(r) {
-          if (r && r.ok && r.data && r.data.id) {
-            doc._dbId = r.data.id; doc.id = r.data.id;
-            autosave('documents');
-          }
-          // Bust cache so the next poll gets fresh data — but DON'T re-fetch immediately.
-          // An immediate re-fetch risks the backend not having committed yet,
-          // which returns the old list and wipes the doc from DB.documents.
-          Object.keys(_cache || {}).forEach(function(k) {
-            if (k.includes('/documents')) delete _cache[k];
-          });
-          if (typeof _inFlight !== 'undefined') {
-            Object.keys(_inFlight).forEach(function(k) {
-              if (k.includes('/documents')) delete _inFlight[k];
-            });
-          }
-          if (typeof _lastFetch !== 'undefined') _lastFetch['documents'] = 0;
-          // Write to shared Store — other users' next poll picks this up immediately
+  // Capture file blob now before clearDocFile nulls _docFile
+  var fileToUpload = _docFile;
+  clearDocFile();
+  if (btn) { btn.textContent = 'Upload Document'; btn.disabled = false; }
+
+  toast('Uploading ' + name + '…', 'info');
+
+  // Refresh drawer if open for this applicant
+  if (currentDrawerApplicant && currentDrawerApplicant.name === applicant) {
+    switchDrawerTab('docs', null);
+  }
+
+  // Upload to backend — either with file blob or metadata only
+  function _doUpload(blob) {
+    var form = new FormData();
+    form.append('name',           doc.name         || '');
+    form.append('type',           doc.type         || 'Other');
+    form.append('applicant_name', doc.applicant    || '');
+    form.append('applicant_id',   applicantId      || '');
+    form.append('notes',          doc.notes        || '');
+    form.append('status',         doc.status       || 'Pending');
+    form.append('date',           doc.date         || '');
+    if (blob) form.append('file', blob, doc.fileName || doc.name || 'document');
+
+    apiFetch('/documents/upload', { method: 'POST', body: form, _noContentType: true })
+      .then(function(r) {
+        if (r && r.ok && r.data && r.data.id) {
+          // Update local record with real server UUID — in-place, no re-sort
+          doc.id    = r.data.id;
+          doc._dbId = r.data.id;
+          doc._pendingUpload = false;
+          autosave('documents');
+          renderDocs();  // re-render with real id so preview/download/delete all work
+          toast('✓ ' + name + ' uploaded', 'success');
+          pushNotif('Document Uploaded',
+            name + ' uploaded for ' + applicant + ' — awaiting review',
+            'document', { page: 'documents', id: doc.id });
+          // Signal other users to bust their cache on next poll
           if (typeof Store !== 'undefined') {
             Store.set('rams:shared:documents:ts', String(Date.now()), true).catch(function(){});
           }
-          // Mark upload confirmed — doc is safely on the server now
+          // Bust own cache so next poll gets fresh server list
+          Object.keys(_cache || {}).forEach(function(k) {
+            if (k.includes('/documents')) delete _cache[k];
+          });
+          if (window._inFlight) Object.keys(_inFlight).forEach(function(k) {
+            if (k.includes('/documents')) delete _inFlight[k];
+          });
+        } else {
+          // Upload failed — mark clearly but keep visible
           doc._pendingUpload = false;
+          doc._uploadFailed  = true;
           autosave('documents');
-          // Fire notification AFTER server responds so link.id is the real server UUID
-          pushNotif('Document Uploaded', doc.name + ' uploaded for ' + doc.applicant + ' — awaiting review', 'document',
-            { page: 'documents', id: doc._dbId || doc.id });
-          // Re-render in place — doc is already in DB.documents with correct server id
-          if (currentPage === 'documents') renderDocs();
-        }).catch(function(){
-          doc._pendingUpload = false;
-          autosave('documents');
-          pushNotif('Document Uploaded', doc.name + ' uploaded for ' + doc.applicant + ' — awaiting review', 'document',
-            { page: 'documents', id: doc.id });
-        });
-    };
+          renderDocs();
+          toast('Upload failed — saved locally. Will retry on next sync.', 'error');
+        }
+      })
+      .catch(function(err) {
+        doc._pendingUpload = false;
+        doc._uploadFailed  = true;
+        autosave('documents');
+        renderDocs();
+        toast('Upload error: ' + (err && err.message || 'network error'), 'error');
+      });
+  }
 
-    if (_docFile && _docFile._dataUrl) {
-      fetch(_docFile._dataUrl).then(function(res){ return res.blob(); })
-        .then(function(blob){ return _doBackendSave(blob); })
-        .catch(function(){ _doBackendSave(null); }); // fallback: save metadata at least
-    } else {
-      _doBackendSave(null);
-    }
-
-    if (btn) { btn.textContent = 'Upload Document'; btn.disabled = false; }
-    closeOverlay('overlay-doc');
-    clearDocFile();
-    renderDocs();
-
-    // Refresh drawer if applicant drawer is open for this applicant
-    if (currentDrawerApplicant && currentDrawerApplicant.name === applicant) {
-      switchDrawerTab('docs', null);
-    }
-
-    toast('Document uploaded — ' + name, 'success');
-  }, delay);
+  if (fileToUpload) {
+    // Pass the raw File object directly to FormData — fast, no async FileReader needed
+    // The dataUrl on doc is only for local preview; the actual upload uses the File
+    _doUpload(fileToUpload);
+  } else {
+    _doUpload(null);
+  }
 }
 
 // ════════════════════════════════════════════════════════
@@ -15664,308 +15678,318 @@ function renderAgentSummaryInDrawer(app) {
 // DOCUMENT PREVIEW SYSTEM
 // ════════════════════════════════════════════════════════
 
-var _previewDocId    = null;
-var _previewDocList  = [];
-var _previewDocIndex = 0;
-var _previewBlobUrl  = null;
+var _previewDocId   = null;
+var _previewDocList = [];
+var _previewDocIdx  = 0;
+var _previewBlobUrl = null;
 
 var DOC_TYPE_ICONS = {
-  'Government': '🪪', 'Medical': '🏥', 'Work': '📋',
-  'Contract': '📝', 'Training': '🎓', 'Visa': '🛂',
-  'OWWA': '🏛', 'Other': '📎',
+  Government:'🪪', Medical:'🏥', Work:'📋', Contract:'📝',
+  Training:'🎓', Visa:'🛂', OWWA:'🏛', Other:'📎',
 };
 
-function previewDoc(docId) {
-  var doc = DB.documents.find(function(d) { return d.id === docId || d._dbId === docId; });
-  if (!doc) return;
+// ── Helper: is this string a real UUID? ───────────────────────────────
+function _isRealUUID(s) {
+  return s && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(s));
+}
 
-  // Build nav list (current filter context)
-  var html = document.getElementById('page-documents');
-  _previewDocList  = DB.documents.filter(function(d) {
+// ── Open preview modal ────────────────────────────────────────────────
+function previewDoc(docId) {
+  var doc = DB.documents.find(function(d) {
+    return d.id === docId || d._dbId === docId;
+  });
+  if (!doc) { toast('Document not found — try refreshing', 'error'); return; }
+
+  _previewDocList = DB.documents.filter(function(d) {
     return docFilter === 'all' || d.status === docFilter;
   });
-  _previewDocIndex = _previewDocList.findIndex(function(d) { return d.id === docId; });
-  _previewDocId    = docId;
+  _previewDocIdx = _previewDocList.findIndex(function(d) {
+    return d.id === doc.id || d._dbId === doc._dbId;
+  });
+  if (_previewDocIdx < 0) _previewDocIdx = 0;
+  _previewDocId = doc.id;
 
   _renderPreviewModal(doc);
   openOverlay('overlay-doc-preview');
 }
 
+// ── Render/update the preview modal for a given doc ───────────────────
 function _renderPreviewModal(doc) {
   if (!doc) return;
 
-  // Header
   var typeKey = doc.type ? doc.type.split(' ')[0] : 'Other';
   var icon    = DOC_TYPE_ICONS[typeKey] || '📄';
-  document.getElementById('doc-preview-icon').textContent = icon;
-  document.getElementById('doc-preview-name').textContent = doc.name || '(Unnamed document)';
-  document.getElementById('doc-preview-meta').textContent =
-    [doc.applicant, doc.type, doc.date, doc.size].filter(function(v){ return v && v !== 'undefined'; }).join(' · ');
+  var el;
 
-  // Status pill + approve btn
-  var statPill = document.getElementById('doc-preview-status-pill');
-  if (statPill) statPill.innerHTML = pillHtml(doc.status);
-  var approveBtn = document.getElementById('doc-preview-approve-btn');
-  if (approveBtn) approveBtn.style.display = doc.status === 'Pending' ? '' : 'none';
+  el = document.getElementById('doc-preview-icon');    if (el) el.textContent = icon;
+  el = document.getElementById('doc-preview-name');    if (el) el.textContent = doc.name || '(Unnamed)';
+  el = document.getElementById('doc-preview-meta');
+  if (el) el.textContent = [doc.applicant, doc.type, doc.date, doc.size]
+    .filter(function(v){ return v && v !== 'undefined' && v !== '—'; }).join(' · ');
 
-  // Nav label
-  var navLbl = document.getElementById('doc-preview-nav-label');
-  if (navLbl) navLbl.textContent = (_previewDocIndex + 1) + ' / ' + _previewDocList.length;
+  el = document.getElementById('doc-preview-status-pill');
+  if (el) el.innerHTML = pillHtml(doc.status);
 
-  // Hide all preview panes, show loading
+  el = document.getElementById('doc-preview-approve-btn');
+  if (el) el.style.display = doc.status === 'Pending' ? '' : 'none';
+
+  el = document.getElementById('doc-preview-nav-label');
+  if (el) el.textContent = (_previewDocIdx + 1) + ' / ' + _previewDocList.length;
+
+  // Download button — always show if doc has a server id
+  el = document.getElementById('doc-preview-download');
+  if (el) el.style.display = (doc.dataUrl || _isRealUUID(doc._dbId || doc.id)) ? '' : 'none';
+
+  // Reset panes — show loading spinner
   _showPreviewPane('loading');
 
-  // Revoke previous blob URL
+  // Revoke stale blob URL
   if (_previewBlobUrl) { URL.revokeObjectURL(_previewBlobUrl); _previewBlobUrl = null; }
 
-  // Determine how to preview
-  if (doc.dataUrl) {
-    // File was uploaded in this session — we have the data URL
-    _loadPreviewFromDataUrl(doc);
-  } else if (doc._dbId || doc.id) {
-    // Fetch file from backend download endpoint
-    var _dbid  = doc._dbId || doc.id;
-    var _isUUID = typeof isUUID === 'function' ? isUUID(_dbid) : /^[0-9a-f-]{36}$/.test(_dbid);
-    if (!_isUUID) { _showDocFallback(doc); return; }
-
-    var _previewPane = document.getElementById('doc-preview-pane') ||
-                       document.getElementById('doc-preview-area');
-    if (_previewPane) _previewPane.innerHTML =
-      '<div style="display:flex;align-items:center;justify-content:center;height:200px;color:var(--muted);font-size:13px">⏳ Loading preview…</div>';
+  // ── Decide preview strategy ──────────────────────────────────────────
+  if (doc.dataUrl && !doc.dataUrl.startsWith('blob:revoked')) {
+    // We already have a local data URL or a cached blob URL — use it directly
+    _loadPreview(doc);
+  } else {
+    // Need to fetch from backend
+    var serverId = doc._dbId || doc.id;
+    if (!_isRealUUID(serverId)) { _showDocFallback(doc, 'no-file'); return; }
 
     var BACKEND = typeof RAILWAY_URL !== 'undefined' ? RAILWAY_URL : '';
-    var _dlUrl  = BACKEND + '/api/documents/' + _dbid + '/download';
-    var _token  = window._ramsSessionToken || '';
+    var dlUrl   = BACKEND + '/api/documents/' + serverId + '/download';
+    var token   = window._ramsSessionToken || '';
 
-    fetch(_dlUrl, {
-      headers: { 'Authorization': 'Bearer ' + _token },
+    fetch(dlUrl, {
+      headers:  { 'Authorization': 'Bearer ' + token },
       redirect: 'follow',
     })
-    .then(function(r) {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      // Check if server returned a redirect URL (cloud storage)
-      var ct = r.headers.get('Content-Type') || '';
+    .then(function(res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var ct = res.headers.get('Content-Type') || '';
       if (ct.includes('application/json')) {
-        return r.json().then(function(j) {
-          if (j.url) {
-            // Redirect to cloud storage URL
-            doc.dataUrl = j.url;
-            doc.ext = (doc.fileName||'').split('.').pop().toLowerCase() || 'pdf';
-            _loadPreviewFromDataUrl(doc);
-          } else { _showDocFallback(doc); }
+        // Backend returned a presigned R2 URL
+        return res.json().then(function(j) {
+          if (!j || !j.url) throw new Error('No URL in response');
+          doc.ext    = doc.ext || (doc.fileName ? doc.fileName.split('.').pop().toLowerCase() : 'bin');
+          doc.dataUrl = j.url;  // presigned HTTPS URL — valid for 1 hour
+          _loadPreview(doc);
         });
       }
-      return r.blob().then(function(blob) {
-        if (_previewBlobUrl) URL.revokeObjectURL(_previewBlobUrl);
+      // Backend streamed the file directly
+      return res.blob().then(function(blob) {
         _previewBlobUrl = URL.createObjectURL(blob);
+        doc.ext     = doc.ext    || (doc.fileName ? doc.fileName.split('.').pop().toLowerCase() : '')
+                                 || (blob.type ? blob.type.split('/').pop() : 'bin');
         doc.dataUrl = _previewBlobUrl;
-        doc.ext     = (doc.fileName||'').split('.').pop().toLowerCase() ||
-                      (blob.type ? blob.type.split('/')[1] : 'pdf');
-        _loadPreviewFromDataUrl(doc);
+        _loadPreview(doc);
       });
     })
     .catch(function(err) {
-      console.warn('[doc preview] download failed:', err.message);
-      _showDocFallback(doc);
+      console.warn('[previewDoc] fetch failed:', err.message);
+      _showDocFallback(doc, 'fetch-failed');
     });
-  } else {
-    // No file at all
-    _showDocFallback(doc);
   }
-
-  // Download button visibility
-  var dlBtn = document.getElementById('doc-preview-download');
-  if (dlBtn) dlBtn.style.display = (doc.dataUrl || doc._dbId || doc.id) ? '' : 'none';
 }
 
-function _loadPreviewFromDataUrl(doc) {
-  var ext = doc.ext || (doc.fileName ? doc.fileName.split('.').pop().toLowerCase() : '');
+// ── Actually render the preview based on file type ────────────────────
+function _loadPreview(doc) {
+  var ext = doc.ext
+    || (doc.fileName ? doc.fileName.split('.').pop().toLowerCase() : '')
+    || (doc.mimeType ? doc.mimeType.split('/').pop() : '');
 
-  if (['jpg','jpeg','png','gif','webp'].includes(ext)) {
-    // Image preview
+  var isImage = ['jpg','jpeg','png','gif','webp','bmp'].indexOf(ext) !== -1;
+  var isPdf   = ext === 'pdf';
+  var isUrl   = doc.dataUrl && (doc.dataUrl.startsWith('http://') || doc.dataUrl.startsWith('https://') || doc.dataUrl.startsWith('blob:'));
+
+  if (isImage) {
     var img = document.getElementById('doc-preview-img');
-    img.onload = function() { _showPreviewPane('image'); };
-    img.onerror = function() { _showDocFallback(doc); };
+    if (!img) { _showDocFallback(doc, 'no-element'); return; }
+    img.onload  = function() { _showPreviewPane('image'); };
+    img.onerror = function() { _showDocFallback(doc, 'img-error'); };
     img.src = doc.dataUrl;
 
-  } else if (ext === 'pdf') {
-    // PDF preview via iframe
+  } else if (isPdf) {
     var iframe = document.getElementById('doc-preview-pdf');
-    iframe.onload = function() { _showPreviewPane('pdf'); };
-    // If it's a presigned cloud URL, load directly into iframe
-    if (doc.dataUrl && (doc.dataUrl.startsWith('http://') || doc.dataUrl.startsWith('https://'))) {
+    if (!iframe) { _showDocFallback(doc, 'no-element'); return; }
+
+    if (isUrl) {
+      // Presigned URL or blob URL — set directly
       iframe.src = doc.dataUrl;
     } else {
-      // Convert base64 data URL to blob URL for iframe
+      // base64 data URL — convert to blob URL for iframe (atob on HTTPS URL would throw)
       try {
-        var base64 = doc.dataUrl.split(',')[1];
-        var binary  = atob(base64);
-        var bytes   = new Uint8Array(binary.length);
-        for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        var blob    = new Blob([bytes], {type: 'application/pdf'});
-        _previewBlobUrl = URL.createObjectURL(blob);
+        var b64   = doc.dataUrl.split(',')[1];
+        var bin   = atob(b64);
+        var bytes = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        _previewBlobUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
         iframe.src = _previewBlobUrl;
       } catch(e) {
-        // Fallback: try direct data URL
         iframe.src = doc.dataUrl;
       }
     }
-    // Timeout fallback in case iframe doesn't fire onload
+
+    // iframe onload fires on blank src too — use timeout as belt-and-suspenders
+    iframe.onload = function() { _showPreviewPane('pdf'); };
     setTimeout(function() {
-      if (document.getElementById('doc-preview-loading').style.display !== 'none') {
-        _showPreviewPane('pdf');
-      }
-    }, 1500);
+      var loading = document.getElementById('doc-preview-loading');
+      if (loading && loading.style.display !== 'none') _showPreviewPane('pdf');
+    }, 2000);
 
   } else {
-    // DOC, DOCX, XLSX — can't render natively, show fallback with download
-    _showDocFallback(doc);
+    // DOC, DOCX, XLSX, etc — no in-browser renderer — show fallback + download
+    _showDocFallback(doc, 'unsupported');
   }
 }
 
+// ── Show/hide the correct content pane ───────────────────────────────
 function _showPreviewPane(which) {
-  var panes = {
+  var map = {
+    loading:  document.getElementById('doc-preview-loading'),
     image:    document.getElementById('doc-preview-image-wrap'),
     pdf:      document.getElementById('doc-preview-pdf'),
     fallback: document.getElementById('doc-preview-fallback'),
-    loading:  document.getElementById('doc-preview-loading'),
   };
-  Object.keys(panes).forEach(function(key) {
-    if (panes[key]) panes[key].style.display = (key === which) ? (key === 'pdf' ? 'block' : key === 'image' ? 'block' : 'flex') : 'none';
+  Object.keys(map).forEach(function(k) {
+    if (!map[k]) return;
+    if (k === which) {
+      map[k].style.display = (k === 'fallback') ? 'flex' : (k === 'loading' ? 'flex' : 'block');
+      if (k === 'fallback') { map[k].style.flexDirection = 'column'; map[k].style.alignItems = 'center'; }
+    } else {
+      map[k].style.display = 'none';
+    }
   });
-  // Fix display for image wrapper
-  if (which === 'image' && panes.image) panes.image.style.display = 'block';
-  if (which === 'fallback' && panes.fallback) panes.fallback.style.display = 'flex';
-  if (which === 'fallback' && panes.fallback) panes.fallback.style.flexDirection = 'column';
-  if (which === 'fallback' && panes.fallback) panes.fallback.style.alignItems = 'center';
 }
 
-function _showDocFallback(doc) {
+// ── Fallback pane — show metadata + download button ──────────────────
+function _showDocFallback(doc, reason) {
   var ext     = doc.ext || (doc.fileName ? doc.fileName.split('.').pop().toLowerCase() : '');
   var typeKey = doc.type ? doc.type.split(' ')[0] : 'Other';
-  var extIcons = {pdf:'📄',doc:'📝',docx:'📝',jpg:'🖼',jpeg:'🖼',png:'🖼',xlsx:'📊'};
+  var extIcons = { pdf:'📄', doc:'📝', docx:'📝', jpg:'🖼', jpeg:'🖼', png:'🖼', xlsx:'📊' };
 
-  var fallIcon  = document.getElementById('doc-preview-fallback-icon');
-  var fallName  = document.getElementById('doc-preview-fallback-name');
-  var fallInfo  = document.getElementById('doc-preview-fallback-info');
-  var fallDets  = document.getElementById('doc-preview-details');
-  var dlBtn     = document.getElementById('doc-preview-dl-btn');
+  var messages = {
+    'no-file':        'No file attached — this is a metadata-only record.',
+    'fetch-failed':   'Could not load the file — check your connection and try again.',
+    'img-error':      'Image could not be displayed — click Download to save it.',
+    'unsupported':    'Preview not available for .' + (ext||'?').toUpperCase() + ' files — click Download to open.',
+    'no-element':     'Preview unavailable — click Download to open the file.',
+  };
 
-  if (fallIcon) fallIcon.textContent = extIcons[ext] || DOC_TYPE_ICONS[typeKey] || '📄';
-  if (fallName) fallName.textContent = doc.name;
+  var el;
+  el = document.getElementById('doc-preview-fallback-icon'); if (el) el.textContent = extIcons[ext] || DOC_TYPE_ICONS[typeKey] || '📄';
+  el = document.getElementById('doc-preview-fallback-name'); if (el) el.textContent = doc.name || '—';
+  el = document.getElementById('doc-preview-fallback-info'); if (el) el.textContent = messages[reason] || 'Preview unavailable.';
+  el = document.getElementById('doc-preview-details');
+  if (el) el.innerHTML = [
+    ['Applicant', doc.applicant || '—'],
+    ['Type',      doc.type      || '—'],
+    ['Status',    doc.status    || '—'],
+    ['Date',      doc.date      || '—'],
+    ['Size',      doc.size      || '—'],
+    ['File',      doc.fileName  || 'No file'],
+    ['Notes',     doc.notes     || '—'],
+  ].map(function(r) {
+    return '<div><span style="color:#5a6a8a;display:inline-block;min-width:80px">' + r[0] + '</span>' +
+           '<span style="color:#c8d8f8;font-weight:600">' + r[1] + '</span></div>';
+  }).join('');
 
-  if (fallInfo) fallInfo.textContent = doc.dataUrl
-    ? 'Preview not available for .' + (ext||'').toUpperCase() + ' files — click Download to open.'
-    : (doc._dbId || doc.fileName)
-      ? 'Could not load preview — click Download to open the file.'
-      : 'No file uploaded yet. This is a metadata record only.';
+  el = document.getElementById('doc-preview-dl-btn');
+  if (el) el.style.display = (_isRealUUID(doc._dbId || doc.id) || doc.dataUrl) ? '' : 'none';
+  el = document.getElementById('doc-preview-download');
+  if (el) el.style.display = (_isRealUUID(doc._dbId || doc.id) || doc.dataUrl) ? '' : 'none';
 
-  if (fallDets) {
-    fallDets.innerHTML = [
-      ['Applicant',  doc.applicant || '—'],
-      ['Type',       doc.type      || '—'],
-      ['Status',     doc.status    || '—'],
-      ['Date',       doc.date      || '—'],
-      ['Size',       doc.size      || '—'],
-      ['File',       doc.fileName  || 'No file attached'],
-      ['Notes',      doc.notes     || '—'],
-    ].map(function(row) {
-      return '<div><span style="color:#5a6a8a;display:inline-block;min-width:80px">' + row[0] + '</span>' +
-             '<span style="color:#c8d8f8;font-weight:600">' + row[1] + '</span></div>';
-    }).join('');
-  }
-
-  if (dlBtn) dlBtn.style.display = (doc.dataUrl || doc._dbId) ? '' : 'none';
   _showPreviewPane('fallback');
 }
 
+// ── Navigate prev/next doc ────────────────────────────────────────────
 function navigateDocPreview(dir) {
   if (!_previewDocList.length) return;
-  _previewDocIndex = (_previewDocIndex + dir + _previewDocList.length) % _previewDocList.length;
-  var doc = _previewDocList[_previewDocIndex];
+  _previewDocIdx = (_previewDocIdx + dir + _previewDocList.length) % _previewDocList.length;
+  var doc = _previewDocList[_previewDocIdx];
   if (!doc) return;
   _previewDocId = doc.id;
   _renderPreviewModal(doc);
 }
 
+// ── Download the current previewed document ───────────────────────────
 function downloadDoc() {
-  var doc = DB.documents.find(function(d) { return d.id === _previewDocId; });
+  var doc = DB.documents.find(function(d) { return d.id === _previewDocId || d._dbId === _previewDocId; });
   if (!doc) { toast('Document not found', 'error'); return; }
 
-  // If we have a local data URL (just uploaded this session), use it directly
+  // Already have a local/blob URL — trigger download directly
   if (doc.dataUrl) {
-    var a = document.createElement('a');
-    a.href = doc.dataUrl;
-    a.download = doc.fileName || (doc.name + '.' + (doc.ext || 'pdf'));
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    toast('Download started — ' + (doc.fileName || doc.name), 'success');
+    // If it's a presigned HTTPS URL (R2), open in new tab — can't use anchor download cross-origin
+    if (doc.dataUrl.startsWith('http://') || doc.dataUrl.startsWith('https://')) {
+      window.open(doc.dataUrl, '_blank');
+      toast('Opening file…', 'success');
+    } else {
+      var a = document.createElement('a');
+      a.href     = doc.dataUrl;
+      a.download = doc.fileName || (doc.name + '.' + (doc.ext || 'bin'));
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      toast('Download started — ' + (doc.fileName || doc.name), 'success');
+    }
     return;
   }
 
-  // Otherwise fetch from backend download endpoint
-  var dbId = doc._dbId || doc.id;
-  if (!dbId || !(typeof isUUID === 'function' ? isUUID(dbId) : /^[0-9a-f-]{36}$/.test(dbId))) {
-    toast('No file available to download', 'info'); return;
-  }
+  // Fetch from backend
+  var serverId = doc._dbId || doc.id;
+  if (!_isRealUUID(serverId)) { toast('No file available to download', 'info'); return; }
 
   var BACKEND = typeof RAILWAY_URL !== 'undefined' ? RAILWAY_URL : '';
-  var dlUrl   = BACKEND + '/api/documents/' + dbId + '/download';
+  var dlUrl   = BACKEND + '/api/documents/' + serverId + '/download';
   var token   = window._ramsSessionToken || '';
 
   toast('Preparing download…', 'info');
   fetch(dlUrl, { headers: { 'Authorization': 'Bearer ' + token }, redirect: 'follow' })
-    .then(function(r) {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      var ct = r.headers.get('Content-Type') || '';
-      // If backend returns a redirect URL (S3/cloud)
+    .then(function(res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var ct = res.headers.get('Content-Type') || '';
       if (ct.includes('application/json')) {
-        return r.json().then(function(j) {
-          if (j.url) { window.open(j.url, '_blank'); }
-          else { throw new Error('No URL in response'); }
+        return res.json().then(function(j) {
+          if (!j || !j.url) throw new Error('No URL');
+          window.open(j.url, '_blank');
+          doc.dataUrl = j.url;  // cache for subsequent previews
+          toast('Opening file…', 'success');
         });
       }
-      // Stream the blob directly
-      return r.blob().then(function(blob) {
-        var url = URL.createObjectURL(blob);
+      return res.blob().then(function(blob) {
+        var blobUrl = URL.createObjectURL(blob);
         var a = document.createElement('a');
-        a.href = url; a.download = doc.fileName || (doc.name + '.' + (doc.ext || 'bin'));
+        a.href     = blobUrl;
+        a.download = doc.fileName || (doc.name + '.' + (doc.ext || 'bin'));
         document.body.appendChild(a); a.click(); document.body.removeChild(a);
-        setTimeout(function(){ URL.revokeObjectURL(url); }, 10000);
-        // Cache for preview
-        doc.dataUrl = url;
-        doc.ext = doc.ext || (blob.type ? blob.type.split('/')[1] : '');
+        setTimeout(function(){ URL.revokeObjectURL(blobUrl); }, 30000);
+        doc.dataUrl = blobUrl;  // cache for subsequent previews
         toast('Download started — ' + (doc.fileName || doc.name), 'success');
       });
     })
     .catch(function(err) {
       console.error('[downloadDoc]', err.message);
-      toast('Download failed — the file may no longer be stored on the server', 'error');
+      toast('Download failed — ' + err.message, 'error');
     });
 }
 
+// ── Approve / delete from preview ────────────────────────────────────
 function approveDocFromPreview() {
   if (!_previewDocId) return;
   approveDoc(_previewDocId);
-  // Refresh the preview header status
   var doc = DB.documents.find(function(d) { return d.id === _previewDocId; });
   if (doc) {
-    var pill = document.getElementById('doc-preview-status-pill');
-    if (pill) pill.innerHTML = pillHtml(doc.status);
-    var btn = document.getElementById('doc-preview-approve-btn');
-    if (btn) btn.style.display = 'none';
+    var statEl = document.getElementById('doc-preview-status-pill');
+    if (statEl) statEl.innerHTML = pillHtml(doc.status);
+    var approveBtn = document.getElementById('doc-preview-approve-btn');
+    if (approveBtn) approveBtn.style.display = 'none';
   }
 }
 
 function deleteDocFromPreview() {
+  if (!_previewDocId) return;
   var doc = DB.documents.find(function(d) { return d.id === _previewDocId; });
   if (!doc) return;
   closeOverlay('overlay-doc-preview');
-  // Small delay so overlay closes first
-  setTimeout(function() {
-    confirmDelete('document', _previewDocId);
-  }, 200);
+  setTimeout(function() { confirmDelete('document', _previewDocId); }, 200);
 }
-
 
 
 // ╔══════════════════════════════════════════════════════════════════════╗
