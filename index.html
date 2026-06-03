@@ -8040,6 +8040,7 @@ function saveDoc() {
       form.append('name',           doc.name      || '');
       form.append('type',           doc.type      || 'Other');
       form.append('applicant_name', doc.applicant || '');
+      form.append('applicant_id',   (doc.applicantId && typeof isUUID === 'function' && isUUID(doc.applicantId)) ? doc.applicantId : '');
       form.append('notes',          doc.notes     || '');
       form.append('status',         doc.status    || 'Pending');
       form.append('date',           doc.date      || '');
@@ -8050,8 +8051,15 @@ function saveDoc() {
             doc._dbId = r.data.id; doc.id = r.data.id;
             autosave('documents');
           }
+          // Fire notification AFTER server responds so link.id is the real server UUID
+          pushNotif('Document Uploaded', doc.name + ' uploaded for ' + doc.applicant + ' — awaiting review', 'document',
+            { page: 'documents', id: doc._dbId || doc.id });
           try { _triggerImmediateSync(); } catch(e) {}
-        }).catch(function(){});
+        }).catch(function(){
+          // Still notify even if upload failed — link to local id as fallback
+          pushNotif('Document Uploaded', doc.name + ' uploaded for ' + doc.applicant + ' — awaiting review', 'document',
+            { page: 'documents', id: doc.id });
+        });
     };
 
     if (_docFile && _docFile._dataUrl) {
@@ -8061,8 +8069,6 @@ function saveDoc() {
     } else {
       _doBackendSave(null);
     }
-  pushNotif('Document Uploaded', name + ' uploaded for ' + applicant + ' — awaiting review', 'document',
-    { page: 'documents', id: doc.id });
 
     if (btn) { btn.textContent = 'Upload Document'; btn.disabled = false; }
     closeOverlay('overlay-doc');
@@ -15611,7 +15617,7 @@ var DOC_TYPE_ICONS = {
 };
 
 function previewDoc(docId) {
-  var doc = DB.documents.find(function(d) { return d.id === docId; });
+  var doc = DB.documents.find(function(d) { return d.id === docId || d._dbId === docId; });
   if (!doc) return;
 
   // Build nav list (current filter context)
@@ -15710,7 +15716,7 @@ function _renderPreviewModal(doc) {
 
   // Download button visibility
   var dlBtn = document.getElementById('doc-preview-download');
-  if (dlBtn) dlBtn.style.display = doc.dataUrl ? '' : 'none';
+  if (dlBtn) dlBtn.style.display = (doc.dataUrl || doc._dbId || doc.id) ? '' : 'none';
 }
 
 function _loadPreviewFromDataUrl(doc) {
