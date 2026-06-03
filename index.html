@@ -5183,7 +5183,8 @@ function nav(page) {
   if (page === 'settings') renderSettings();
   if (page === 'roles') renderRoles();
 
-  // Fetch fresh data from server immediately (not after 8s wait)
+  // Re-gate all dynamic buttons after every page render
+  setTimeout(function(){ if (typeof _gateButtons === 'function') _gateButtons(); }, 50);  // Fetch fresh data from server immediately (not after 8s wait)
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
   if (isLive && _isOnline) {
     var fetchFn = _pageFetchMap[page];
@@ -6892,6 +6893,7 @@ function resetPipelineOrder() {
 }
 
 function deleteApplicant(appId) {
+  if (!hasPermission('Delete Applicants')) { toast('Your role cannot delete applicants','error'); return; }
   var app = DB.applicants.find(function(a){ return a.id===appId; });
   if (!app || !confirm('Delete '+app.name+'? This cannot be undone.')) return;
   DB.applicants = DB.applicants.filter(function(a){ return a.id!==appId; });
@@ -7997,6 +7999,7 @@ function clearDocFile() {
   if (errEl) errEl.style.display = 'none';
 }
 function saveDoc() {
+  if (!hasPermission('Upload Documents')) { toast('Your role cannot upload documents', 'error'); return; }
   var appSel  = document.getElementById('d-applicant');
   var nameEl  = document.getElementById('d-name');
   var typeEl  = document.getElementById('d-type');
@@ -8389,6 +8392,7 @@ function openEditJob(jobId) {
 }
 
 function saveJob() {
+  if (!hasPermission('Manage Job Orders')) { toast('Your role cannot manage job orders','error'); return; }
   var employer = document.getElementById('j-employer').value.trim();
   var country  = document.getElementById('j-country').value.trim();
   var deadline = document.getElementById('j-deadline').value || 'TBD';
@@ -8744,6 +8748,7 @@ function updateExpenseTotal() {
   totalEl.textContent = '₱' + (existing + newAmt).toLocaleString();
 }
 function saveExpense() {
+  if (!hasPermission('Manage Expenses')) { toast('Your role cannot manage expenses','error'); return; }
   var appName = (document.getElementById('e-applicant').value || '').trim();
   var desc    = (document.getElementById('e-desc').value     || '').trim();
   var amt     = parseFloat(document.getElementById('e-amount').value) || 0;
@@ -11396,6 +11401,7 @@ function renderCommissions() {
 
 // ── RESET COMMISSIONS — remove pending comms that don't match applicant status ──
 function resetCommissions() {
+  if (!hasPermission('Manage Accounting')) { toast('Your role cannot manage accounting','error'); return; }
   // Valid statuses for each tranche:
   // T1 (Medical Cleared 20%): applicant.medical === 'Passed' AND status not terminal-bad
   // T2 (OWWA/Processing 20%): applicant.status in OWWA/Processing/Visa/Deployed/Repatriated
@@ -11547,6 +11553,7 @@ function saveCommissionRates() {
 }
 
 function releaseCommission(commId) {
+  if (!hasPermission('Manage Accounting')) { toast('Your role cannot release or reverse commissions','error'); return; }
   var c = DB.commissions.find(function(x){ return x.id===commId; });
   if (!c) return;
 
@@ -11639,6 +11646,7 @@ function releaseCommission(commId) {
   renderCommissions();
 }
 function reverseCommission(commId) {
+  if (!hasPermission('Manage Accounting')) { toast('Your role cannot release or reverse commissions','error'); return; }
   var c = DB.commissions.find(function(x){ return x.id===commId; });
   if (!c) return;
 
@@ -12790,6 +12798,7 @@ function openEditAgent(idx) {
 }
 
 function submitAgent() {
+  if (!hasPermission('Manage Accounting')) { toast('Your role cannot manage agents','error'); return; }
   var name  = (document.getElementById('ag-name').value||'').trim();
   var phone = (document.getElementById('ag-phone').value||'').trim();
   if (!name || !phone) { toast('Name and phone are required','error'); return; }
@@ -12839,6 +12848,7 @@ function submitAgent() {
 }
 
 function deleteAgent(idx) {
+  if (!hasPermission('Manage Accounting')) { toast('Your role cannot manage agents','error'); return; }
   var a = DB.agents[idx];
   if (!a) return;
   if (!confirm('Remove agent "'+a.name+'"? This cannot be undone.')) return;
@@ -14543,6 +14553,7 @@ function clearCommissionFilters() {
 }
 
 function backfillCommissions() {
+  if (!hasPermission('Manage Accounting')) { toast('Your role cannot manage accounting','error'); return; }
   if (!confirm('Scan all applicants with agents and create missing T1/T2/T3 commission records?\n\nExisting records will NOT be duplicated. Proceed?')) return;
   var created={T1:[],T2:[],T3:[]}, skipped=0, today=new Date().toISOString().split('T')[0];
   DB.applicants.forEach(function(app) {
@@ -17166,27 +17177,46 @@ function stopChatPoll() {
 // ── Load permissions from shared Store (admin may have changed them) ──
 async function loadSharedPermissions() {
   try {
-    // Try shared Store first (updated by admin)
+    var data = null;
+
+    // 1. Try shared Store first (fastest — updated live by admin)
     var r = await Store.get('rams:shared:permissions', true);
     if (!r) r = await Store.get('rams:shared:permissions');
-    if (!r) return;
-    // Store.get returns the already-parsed value (Store does JSON.parse internally)
-    var data = r;
-    if (typeof data === 'string') { try { data = JSON.parse(data); } catch(e) { return; } }
+    if (r) {
+      // Store.get returns { key, value, shared } — extract the value
+      var raw = (r && r.value !== undefined) ? r.value : r;
+      if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch(e) { raw = null; } }
+      if (raw && raw.permissions && Array.isArray(raw.permissions)) data = raw;
+    }
+
+    // 2. Backend fallback — covers different browser sessions (cross-device)
+    if (!data) {
+      var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
+      if (isLive) {
+        var br = await apiFetch('/permissions').catch(function(){ return null; });
+        if (br && br.ok && br.data && br.data.permissions) data = br.data;
+      }
+    }
+
     if (!data || !data.permissions || !Array.isArray(data.permissions)) return;
-    // Apply permissions matrix
+
+    // Apply permissions matrix in-place (const array — mutate elements, don't reassign)
     data.permissions.forEach(function(row, i) {
       if (PERMISSIONS[i]) PERMISSIONS[i] = row.slice();
     });
+
     // Apply roles config if present
     if (data.rolesConfig && Array.isArray(data.rolesConfig)) {
       data.rolesConfig.forEach(function(r2, i) {
         if (ROLES_CONFIG[i]) Object.assign(ROLES_CONFIG[i], r2);
       });
     }
+
     _permissionsOriginal = PERMISSIONS.map(function(row){ return row.slice(); });
-    window._localPermTs = data.ts || Date.now();  // remember what we loaded
+    window._localPermTs = data.ts || Date.now();
     console.log('[RBAC] Loaded shared permissions ts=' + window._localPermTs);
+    // Re-gate all buttons with new permissions
+    if (typeof applyRBAC === 'function') applyRBAC();
   } catch(e) { console.warn('[RBAC] Failed to load shared permissions:', e); }
 }
 
