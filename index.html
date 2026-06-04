@@ -7638,6 +7638,19 @@ function saveApplicant() {
         delete window._clearedJobOrders[data.id];
         Store.set('rams:cleared:joborders', JSON.stringify(window._clearedJobOrders));
       }
+      // Auto-set job status to "In Progress" when an applicant is assigned
+      var assignedJob = DB.jobs.find(function(j) {
+        return j.id === data._jobOrderId || j._dbId === data._jobOrderId;
+      });
+      if (assignedJob && assignedJob.status === 'Open') {
+        assignedJob.status = 'In Progress';
+        autosave('jobs');
+        apiFetch('/jobs/' + (assignedJob._dbId || assignedJob.id), {
+          method: 'PATCH',
+          body: JSON.stringify({ status: 'In Progress' }),
+        }).catch(function(){});
+        if (currentPage === 'jobs') renderJobs();
+      }
     }
     addAudit('UPDATE', 'Applicant', `Updated ${name}`);
     queueWrite(async () => {
@@ -8236,12 +8249,14 @@ function _jobKeyId(key) {
 }
 
 function toggleJobGroup(key) {
-  window._jobFoldState[key] = !window._jobFoldState[key];
+  // Default is collapsed (undefined = true), so toggle: if currently collapsed → expand (false), if expanded → collapse (true)
+  var currentlyCollapsed = window._jobFoldState[key] !== false;
+  window._jobFoldState[key] = !currentlyCollapsed; // false = expanded, true = collapsed
   var safeId = _jobKeyId(key);
   var body = document.getElementById('jg-body-' + safeId);
   var chevron = document.getElementById('jg-chev-' + safeId);
   if (!body) return;
-  var collapsed = window._jobFoldState[key];
+  var collapsed = window._jobFoldState[key] !== false;
   body.style.display = collapsed ? 'none' : 'block';
   if (chevron) chevron.style.transform = collapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
 }
@@ -8299,7 +8314,7 @@ function renderJobs() {
     var totalFilled = grp.positions.reduce(function(s,p){ return s + (parseInt(p.filled)||0); }, 0);
     var pct = totalSlots ? Math.min(100, Math.round(totalFilled / totalSlots * 100)) : 0;
     var accentColor = statusAccent[grp.status] || 'var(--muted)';
-    var collapsed = !!window._jobFoldState[key];
+    var collapsed = window._jobFoldState[key] !== false; // default collapsed — only expand if explicitly set to false
     var safeKey = key.replace(/'/g, "\\'");
     var safeId  = _jobKeyId(key);
     var chevRot = collapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
@@ -9850,15 +9865,19 @@ const SETTINGS_SECTIONS = {
   },
 };
 
-// ── Settings toggle — auto-saves immediately on click ─────────────────
-function _onSettingToggle(btn, label, section) {
+function _onSettingToggle(btn) {
+  var label   = btn.getAttribute('data-lbl');
+  var section = btn.getAttribute('data-section');
+
   btn.classList.toggle('on');
   var isOn = btn.classList.contains('on');
+  btn.setAttribute('aria-pressed', isOn);
 
   // Update in-memory value immediately
-  var sec = SETTINGS_SECTIONS[section];
+  var sec   = SETTINGS_SECTIONS[section];
+  var field = null;
   if (sec) {
-    var field = sec.fields.find(function(f){ return f.lbl === label; });
+    field = sec.fields.find(function(f){ return f.lbl === label; });
     if (field) field.value = isOn;
   }
 
@@ -9877,17 +9896,20 @@ function _onSettingToggle(btn, label, section) {
     } else if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
       toast('⚠️ Notifications blocked by browser — enable them in browser site settings', 'error');
       btn.classList.remove('on');
-      if (sec && field) field.value = false;
+      if (field) field.value = false;
       return;
     }
   }
 
-  // Auto-save immediately — persist to storage
+  // Auto-save immediately
   Store.set('rams:settings:' + section,
     JSON.stringify(SETTINGS_SECTIONS[section] ? SETTINGS_SECTIONS[section].fields : [])
   ).catch(function(){});
+  try { localStorage.setItem('rams:settings:' + section,
+    JSON.stringify(SETTINGS_SECTIONS[section] ? SETTINGS_SECTIONS[section].fields : []));
+  } catch(e) {}
 
-  // Show subtle feedback (not a full toast — too noisy for toggles)
+  // Show subtle feedback
   var indicator = document.getElementById('settings-save-indicator');
   if (indicator) {
     indicator.textContent = '✓ Saved';
@@ -9934,7 +9956,7 @@ function renderSettings() {
           <div class="settings-field-lbl">${f.lbl}</div>
           <div class="settings-field-sub">${f.sub}</div>
         </div>
-        ${f.type==='toggle'?`<button class="toggle ${f.value?'on':''}" onclick="_onSettingToggle(this,'${f.lbl.replace(/'/g,"\\'")}',${JSON.stringify(currentSettingsSection)})" aria-label="${f.lbl}" aria-pressed="${f.value}"></button>`:''}
+        ${f.type==='toggle'?`<button class="toggle ${f.value?'on':''}" data-lbl="${f.lbl.replace(/"/g,'&quot;')}" data-section="${currentSettingsSection}" onclick="_onSettingToggle(this)" aria-label="${f.lbl}" aria-pressed="${f.value}"></button>`:''}
         ${f.type==='select'?`<select class="filter-select" style="min-width:160px"><option>${f.opts.join('</option><option>')}</option></select>`:''}
         ${f.type==='input'?`<input type="text" class="form-input" value="${f.value}" style="max-width:280px">`:''}
         ${f.type==='button'?`<button class="btn ${f.danger?'btn-danger':'btn-s'} btn-sm" onclick="${f.action?f.action+'()':"toast('"+(f.lbl2||f.lbl)+" initiated','"+(f.danger?'error':'info')+"')"  }">${f.lbl2||f.lbl}</button>`:''}
