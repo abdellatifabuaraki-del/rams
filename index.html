@@ -4161,7 +4161,9 @@ async function loadSharedNotifications() {
     // Preserve local read states when merging
     var localReadMap = {};
     (DB.notifications || []).forEach(function(n){ if (n.read) localReadMap[n.id] = true; });
-    arr.forEach(function(n){ if (localReadMap[n.id]) n.read = true; });
+    // Also apply persistent read set — survives poll cycles even before server confirms
+    if (window._localReadIds) window._localReadIds.forEach(function(id){ localReadMap[id] = true; });
+    arr.forEach(function(n){ if (localReadMap[n.id] || localReadMap[n._dbId]) n.read = true; });
     // Merge: keep any local NTF-* notifications not in the shared array,
     // then deduplicate by title+body (prefer copy with richer link)
     var sharedIds = new Set(arr.map(function(n){ return n.id; }));
@@ -4272,6 +4274,8 @@ function startPolling() {
         if (!r || !r.ok || !Array.isArray(r.data)) return;
         var localReadMap = {};
         (DB.notifications||[]).forEach(function(n){ if (n.read) localReadMap[n.id] = true; });
+        // Apply persistent read set — survives poll cycles
+        if (window._localReadIds) window._localReadIds.forEach(function(id){ localReadMap[id] = true; });
 
         // Apply server is_read=true (sticky: once read always read)
         r.data.forEach(function(row) {
@@ -4543,6 +4547,8 @@ function _startNotifTicker() {
         if (!r || !r.ok || !Array.isArray(r.data) || r.data.length === 0) return;
         var localReadMap = {};
         (DB.notifications||[]).forEach(function(n){ if (n.read) localReadMap[n.id] = true; });
+        // Apply persistent read set — survives poll cycles
+        if (window._localReadIds) window._localReadIds.forEach(function(id){ localReadMap[id] = true; });
         function _dedupeN(arr) {
           var seen={},out=[];
           arr.forEach(function(n){
@@ -5546,10 +5552,13 @@ function markRead(id) {
   var n = DB.notifications.find(function(x){ return x.id === id; });
   if (n) {
     n.read = true;
+    // Persist read state so poll cycles don't flash it back as unread
+    window._localReadIds = window._localReadIds || new Set();
+    window._localReadIds.add(n.id);
+    if (n._dbId) window._localReadIds.add(n._dbId);
     autosave('notifications');
     Store.set('rams:shared:notifications', DB.notifications, true).catch(function(){});
     Store.set('rams:shared:notifications:ts', String(Date.now()), true).catch(function(){});
-    // Also mark read in backend DB if this is a server-sourced notification
     if (n._dbId || (n.id && n.id.length === 36 && n.id.includes('-'))) {
       apiFetch('/notifications/' + (n._dbId || n.id) + '/read', { method: 'PATCH' }).catch(function(){});
     }
@@ -5557,7 +5566,13 @@ function markRead(id) {
   }
 }
 function markAllRead() {
-  DB.notifications.forEach(function(n){ n.read = true; });
+  DB.notifications.forEach(function(n){
+    n.read = true;
+    // Add to persistent read set — survives poll cycles
+    window._localReadIds = window._localReadIds || new Set();
+    window._localReadIds.add(n.id);
+    if (n._dbId) window._localReadIds.add(n._dbId);
+  });
   autosave('notifications');
   Store.set('rams:shared:notifications', DB.notifications, true).catch(function(){});
   Store.set('rams:shared:notifications:ts', String(Date.now()), true).catch(function(){});
