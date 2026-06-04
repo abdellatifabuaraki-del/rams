@@ -1370,7 +1370,6 @@ button[disabled][data-rbac-locked] {
       </div>
       <div class="tabs">
         <button class="tab active" onclick="filterDocs('all',this)">All Documents</button>
-        <button class="tab" onclick="filterDocs('Pending',this)">Pending Review</button>
         <button class="tab" onclick="filterDocs('Approved',this)">Approved</button>
         <button class="tab" onclick="filterDocs('Rejected',this)">Rejected</button>
       </div>
@@ -2613,15 +2612,7 @@ button[disabled][data-rbac-locked] {
             <option value="Other">Other</option>
           </select>
         </div>
-        <div class="f-grp">
-          <label class="f-lbl">Status</label>
-          <select class="f-inp" id="d-status">
-            <option value="Paid">Paid (Awaiting Recovery)</option>
-            <option value="Approved">Approved</option>
-            <option value="Rejected">Rejected</option>
-          </select>
         </div>
-      </div>
 
       <!-- File upload zone -->
       <div class="f-grp">
@@ -7894,7 +7885,6 @@ function renderDocs() {
   }
   var icons = { Government:'\u{1FAA9}', Medical:'\u{1F3E5}', Work:'\u{1F4CB}', Contract:'\u{1F4DD}', Training:'\u{1F393}', Visa:'\u{1F6C2}', OWWA:'\u{1F3DB}', Other:'\u{1F4CE}' };
   var bgs   = { Government:'var(--brand-l)', Medical:'var(--gbg)', Work:'var(--abg)', Contract:'var(--pbg)', Training:'var(--rbg)', Other:'var(--s2)' };
-  var canApprove = typeof getCurrentRole === 'function' ? getCurrentRole() !== 'Viewer' : true;
   grid.innerHTML = docs.map(function(d) {
     var typeKey  = d.type ? d.type.split(' ')[0] : 'Other';
     var icon     = icons[typeKey]  || '\u{1F4C4}';
@@ -7906,12 +7896,9 @@ function renderDocs() {
       ? '<span style="font-size:10px;background:var(--abg);color:var(--amber);border:1px solid var(--amber);border-radius:4px;padding:1px 6px;font-weight:700">\u23F3 Uploading\u2026</span>'
       : isFailed
         ? '<span style="font-size:10px;background:var(--rbg);color:var(--red);border:1px solid var(--red);border-radius:4px;padding:1px 6px;font-weight:700">\u26A0 Upload failed</span>'
-        : pillHtml(d.status);
+        : '';
     var actions = (isPending || isFailed) ? '' :
       '<button class="btn btn-s btn-xs doc-preview-btn" onclick="event.stopPropagation();previewDoc(\'' + safeId + '\')" title="Preview">\u{1F441} Preview</button>' +
-      (d.status === 'Pending' && canApprove
-        ? '<button class="btn btn-sm" style="background:var(--gbg);color:var(--green);border:1px solid #86efac;font-size:11px" onclick="event.stopPropagation();approveDoc(\'' + safeId + '\')">\u2713 Approve</button>'
-        : '') +
       '<button class="btn btn-ghost btn-xs" onclick="event.stopPropagation();confirmDelete(\'document\',\'' + safeId + '\')" title="Delete">\u{1F5D1}</button>';
     return '<div class="doc-card" data-doc-id="' + safeId + '" onclick="' + ((isPending || isFailed) ? '' : 'previewDoc(\'' + safeId + '\')') + '" style="cursor:' + ((isPending || isFailed) ? 'default' : 'pointer') + ';opacity:' + (isPending ? '.7' : '1') + '">' +
       '<div class="doc-icon" style="background:' + bg + '">' + icon + '</div>' +
@@ -8099,7 +8086,6 @@ function saveDoc() {
   var appSel  = document.getElementById('d-applicant');
   var nameEl  = document.getElementById('d-name');
   var typeEl  = document.getElementById('d-type');
-  var statEl  = document.getElementById('d-status');
   var notesEl = document.getElementById('d-notes');
   var btn     = document.getElementById('save-doc-btn');
   var errEl   = document.getElementById('doc-upload-error');
@@ -8127,7 +8113,7 @@ function saveDoc() {
     _dbId:          null,
     name:           name,
     type:           typeEl  ? typeEl.value  : 'Other',
-    status:         statEl  ? statEl.value  : 'Pending',
+    status:         'Approved',
     applicant:      applicant,
     applicantId:    applicantId,
     date:           new Date().toISOString().slice(0, 10),
@@ -15822,7 +15808,7 @@ function _renderPreviewModal(doc) {
   if (el) el.innerHTML = pillHtml(doc.status);
 
   el = document.getElementById('doc-preview-approve-btn');
-  if (el) el.style.display = doc.status === 'Pending' ? '' : 'none';
+  if (el) el.style.display = 'none';
 
   el = document.getElementById('doc-preview-nav-label');
   if (el) el.textContent = (_previewDocIdx + 1) + ' / ' + _previewDocList.length;
