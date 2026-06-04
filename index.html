@@ -1646,7 +1646,7 @@ button[disabled][data-rbac-locked] {
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <select class="f-inp" id="ef-status-filter" onchange="renderEmployerFees()" style="width:160px">
           <option value="all">All Status</option>
-          <option value="Paid">Paid</option>
+          <option value="Pending">Pending</option>
           <option value="Settled">Settled</option>
           <option value="Waived">Waived</option>
         </select>
@@ -13266,20 +13266,23 @@ function renderEmployerFees() {
       if (employerFilter && f.employer !== employerFilter) return false;
       return true;
     });
-    var allFees = kpiFees;
+    var allFees    = kpiFees;
     var totalUSD   = allFees.reduce(function(s,f){ return s + (f.feeUSD||0); }, 0);
     var pendingCt  = allFees.filter(function(f){ return f.status==='Pending'; }).length;
     var settledCt  = allFees.filter(function(f){ return f.status==='Settled'; }).length;
+    var waivedCt   = allFees.filter(function(f){ return f.status==='Waived';  }).length;
     var settledUSD = allFees.filter(function(f){ return f.status==='Settled'; }).reduce(function(s,f){ return s+(f.feeUSD||0); },0);
     var pendingUSD = allFees.filter(function(f){ return f.status==='Pending'; }).reduce(function(s,f){ return s+(f.feeUSD||0); },0);
+    var waivedUSD  = allFees.filter(function(f){ return f.status==='Waived';  }).reduce(function(s,f){ return s+(f.feeUSD||0); },0);
     kpiEl.innerHTML =
-      _efKpi('💵', 'Total Fees', '$' + totalUSD.toLocaleString() + ' USD', 'var(--brand)') +
-      _efKpi('⏳', 'Pending', pendingCt + ' · $' + pendingUSD.toLocaleString() + ' USD', 'var(--amber)') +
-      _efKpi('✅', 'Settled', settledCt + ' · $' + settledUSD.toLocaleString() + ' USD', 'var(--green)') +
+      _efKpi('💵', 'Total Fees',  '$' + totalUSD.toLocaleString()   + ' USD · ' + waivedCt + ' waived ($' + waivedUSD.toLocaleString() + ')', 'var(--brand)') +
+      _efKpi('⏳', 'Pending',     pendingCt + ' · $' + pendingUSD.toLocaleString() + ' USD', 'var(--amber)') +
+      _efKpi('✅', 'Settled',     settledCt + ' · $' + settledUSD.toLocaleString() + ' USD', 'var(--green)') +
+      _efKpi('🚫', 'Waived',      waivedCt  + ' · $' + waivedUSD.toLocaleString()  + ' USD', 'var(--muted)') +
       _efKpi('🚀', 'Deployment Ready', DB.applicants.filter(function(a){
         if (a.status !== 'OWWA' && a.status !== 'Visa') return false;
         var pf = DB.employerFees.find(function(f){ return f.applicantId===a.id && f.status==='Pending'; });
-        return !pf; // no pending fee = ready
+        return !pf;
       }).length + ' applicants', 'var(--teal)');
   }
 
