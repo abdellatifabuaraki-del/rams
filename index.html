@@ -8294,7 +8294,11 @@ function renderJobs() {
       '<div style="font-size:36px;margin-bottom:12px">💼</div>' +
       '<div style="font-size:15px;font-weight:700;color:var(--text2);margin-bottom:4px">No job orders found</div>' +
       '<div style="font-size:13px;color:var(--muted)">Try adjusting your search or filters</div></div>';
-    document.getElementById('sb-job-count').textContent = DB.jobs.filter(function(j){ return j.status==='Open'; }).length;
+    (function() {
+        var _grps = new Set(DB.jobs.map(function(j){ return (j.employer||'') + '||' + (j.country||''); }));
+        var el = document.getElementById('sb-job-count');
+        if (el) el.textContent = _grps.size;
+      })();
     return;
   }
 
@@ -8391,7 +8395,11 @@ function renderJobs() {
     `</div>`;
   }).join('');
 
-  document.getElementById('sb-job-count').textContent = DB.jobs.filter(function(j){ return j.status==='Open'; }).length;
+  (function() {
+        var _grps = new Set(DB.jobs.map(function(j){ return (j.employer||'') + '||' + (j.country||''); }));
+        var el = document.getElementById('sb-job-count');
+        if (el) el.textContent = _grps.size;
+      })();
 }
 // ── Position row counter ─────────────────────────────────────────────
 var _posRowIdx = 0;
@@ -14691,6 +14699,38 @@ function clearCommissionFilters() {
   renderCommissions();
 }
 
+// ── backfillJobStatuses — set In Progress for any job that has assigned applicants ─
+function backfillJobStatuses() {
+  var changed = [];
+
+  DB.jobs.forEach(function(job) {
+    if (job.status !== 'Open') return; // only update Open jobs
+    var jobId = job._dbId || job.id;
+    var hasApplicant = DB.applicants.some(function(a) {
+      return a._jobOrderId && (a._jobOrderId === jobId || a._jobOrderId === job.id || a._jobOrderId === job._dbId);
+    });
+    if (hasApplicant) {
+      job.status = 'In Progress';
+      changed.push(job);
+    }
+  });
+
+  if (!changed.length) return;
+
+  autosave('jobs');
+  if (currentPage === 'jobs') renderJobs();
+
+  // Sync each changed job to backend
+  changed.forEach(function(job) {
+    apiFetch('/jobs/' + (job._dbId || job.id), {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'In Progress' }),
+    }).catch(function(){});
+  });
+
+  toast(changed.length + ' job order' + (changed.length > 1 ? 's' : '') + ' set to In Progress', 'info');
+}
+
 function backfillCommissions() {
   if (!hasPermission('Manage Accounting')) { toast('Your role cannot manage accounting','error'); return; }
   if (!confirm('Scan all applicants with agents and create missing T1/T2/T3 commission records?\n\nExisting records will NOT be duplicated. Proceed?')) return;
@@ -16384,6 +16424,12 @@ _showApp = function(user) {
     // Pull fresh data from PostgreSQL (includes agents now)
     await syncAllFromAPI();
     await fetchAgents();
+    // Silently fix job statuses — set In Progress for jobs with assigned applicants
+    if (typeof backfillJobStatuses === 'function') {
+      setTimeout(function() {
+        try { backfillJobStatuses(); } catch(e) {}
+      }, 1000);
+    }
     if (typeof renderDashboard === 'function') renderDashboard();
     if (typeof renderNotifications === 'function') renderNotifications();
     startPolling();
