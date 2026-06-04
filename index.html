@@ -7638,17 +7638,22 @@ function saveApplicant() {
         delete window._clearedJobOrders[data.id];
         Store.set('rams:cleared:joborders', JSON.stringify(window._clearedJobOrders));
       }
-      // Auto-set job status to "In Progress" when an applicant is assigned
+      // Auto-set ALL positions of the same employer to "In Progress" when any applicant is assigned
       var assignedJob = DB.jobs.find(function(j) {
         return j.id === data._jobOrderId || j._dbId === data._jobOrderId;
       });
-      if (assignedJob && assignedJob.status === 'Open') {
-        assignedJob.status = 'In Progress';
+      if (assignedJob) {
+        var employerName = assignedJob.employer;
+        DB.jobs.forEach(function(j) {
+          if (j.employer === employerName && j.status === 'Open') {
+            j.status = 'In Progress';
+            apiFetch('/jobs/' + (j._dbId || j.id), {
+              method: 'PATCH',
+              body: JSON.stringify({ status: 'In Progress' }),
+            }).catch(function(){});
+          }
+        });
         autosave('jobs');
-        apiFetch('/jobs/' + (assignedJob._dbId || assignedJob.id), {
-          method: 'PATCH',
-          body: JSON.stringify({ status: 'In Progress' }),
-        }).catch(function(){});
         if (currentPage === 'jobs') renderJobs();
       }
     }
@@ -14699,17 +14704,24 @@ function clearCommissionFilters() {
   renderCommissions();
 }
 
-// ── backfillJobStatuses — set In Progress for any job that has assigned applicants ─
+// ── backfillJobStatuses — set In Progress for any job group that has assigned applicants ─
 function backfillJobStatuses() {
-  var changed = [];
-
+  // Build set of employer names whose positions have at least one applicant assigned
+  var employersWithApplicants = new Set();
   DB.jobs.forEach(function(job) {
-    if (job.status !== 'Open') return; // only update Open jobs
     var jobId = job._dbId || job.id;
     var hasApplicant = DB.applicants.some(function(a) {
       return a._jobOrderId && (a._jobOrderId === jobId || a._jobOrderId === job.id || a._jobOrderId === job._dbId);
     });
-    if (hasApplicant) {
+    if (hasApplicant) employersWithApplicants.add(job.employer);
+  });
+
+  if (!employersWithApplicants.size) return;
+
+  var changed = [];
+  DB.jobs.forEach(function(job) {
+    if (job.status !== 'Open') return;
+    if (employersWithApplicants.has(job.employer)) {
       job.status = 'In Progress';
       changed.push(job);
     }
@@ -14720,15 +14732,12 @@ function backfillJobStatuses() {
   autosave('jobs');
   if (currentPage === 'jobs') renderJobs();
 
-  // Sync each changed job to backend
   changed.forEach(function(job) {
     apiFetch('/jobs/' + (job._dbId || job.id), {
       method: 'PATCH',
       body: JSON.stringify({ status: 'In Progress' }),
     }).catch(function(){});
   });
-
-  toast(changed.length + ' job order' + (changed.length > 1 ? 's' : '') + ' set to In Progress', 'info');
 }
 
 function backfillCommissions() {
