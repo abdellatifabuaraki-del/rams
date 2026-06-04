@@ -3188,6 +3188,7 @@ async function apiCreateApplicant(data) {
     agent_id:       (data._agentDbId && isUUID(data._agentDbId)) ? data._agentDbId : null,
     category:       data.category || null,
   };
+  var r = await apiFetch('/applicants', { method: 'POST', body: JSON.stringify(payload) });
   if (r.ok) { data._dbId = r.data.id; data.id = r.data.id; }
   return r;
 }
@@ -3211,6 +3212,7 @@ async function apiUpdateApplicant(data) {
     agent_id:        (data._agentDbId && isUUID(data._agentDbId)) ? data._agentDbId : null,
     category:        data.category || null,
   };
+  if (!isUUID(dbId)) {
     var r2 = await apiFetch('/applicants', { method: 'POST', body: JSON.stringify(Object.assign({}, payload, { email: placeholderEmail(data.name) })) });
     if (r2.ok) { data._dbId = r2.data.id; data.id = r2.data.id; }
     return r2;
