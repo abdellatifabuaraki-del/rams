@@ -2852,6 +2852,62 @@ async function apiFetch(path, opts) {
   return _fetchFresh(path, headers, opts);
 }
 
+// ── Silent session revalidation — called when a 401 is received ──────────────
+// Returns true if the session was successfully refreshed, false if truly expired
+var _revalidating = false;
+async function _tryRevalidateSession() {
+  if (_revalidating) return false; // prevent concurrent revalidation
+  _revalidating = true;
+  try {
+    var token = window._ramsSessionToken;
+    if (!token || token === 'demo') return false;
+
+    // Clear the GET cache so /auth/me hits the server fresh
+    Object.keys(_cache || {}).forEach(function(k) {
+      if (k.includes('/auth')) delete _cache[k];
+    });
+
+    // Try /auth/me — if it succeeds the token is still valid
+    var res = await fetch(RAILWAY_URL + '/api/auth/me', {
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    });
+
+    if (res.ok) {
+      // Token is valid — the 401 was likely a transient issue or race condition
+      return true;
+    }
+
+    // Token truly expired — try to re-login with stored credentials
+    var storedUser = window._ramsSessionUser;
+    var storedPass = await Store.get('rams:session:pass').catch(function(){ return null; });
+    storedPass = storedPass ? (typeof storedPass === 'string' ? storedPass : storedPass.value) : null;
+
+    if (storedUser && storedUser.email && storedPass) {
+      var loginRes = await fetch(RAILWAY_URL + '/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: storedUser.email, password: storedPass }),
+      });
+      if (loginRes.ok) {
+        var loginData = await loginRes.json();
+        if (loginData && loginData.token) {
+          window._ramsSessionToken = loginData.token;
+          await Store.set('rams:session:token', loginData.token);
+          console.log('[RAMS] Session silently refreshed');
+          return true;
+        }
+      }
+    }
+
+    return false;
+  } catch(e) {
+    console.warn('[_tryRevalidateSession]', e.message);
+    return false;
+  } finally {
+    _revalidating = false;
+  }
+}
+
 async function _fetchFresh(path, headers, opts) {
   opts = opts || {};
   try {
@@ -2860,7 +2916,27 @@ async function _fetchFresh(path, headers, opts) {
     var res  = await fetch(RAILWAY_URL + '/api' + path, Object.assign({}, opts, { headers: headers, signal: controller.signal }));
     clearTimeout(timeoutId);
     var data = await res.json();
-    if (res.status === 401) { toast('Session expired — please log in again','error'); handleLogout(); return {ok:false,error:'Unauthorized',httpStatus:401}; }
+    if (res.status === 401) {
+      // Before logging out, try to silently revalidate the session
+      // GET requests are often cached — the token may have expired without us knowing
+      var _revalidated = await _tryRevalidateSession();
+      if (_revalidated) {
+        // Token refreshed — retry this request once with the new token
+        var newToken   = window._ramsSessionToken || '';
+        var newHeaders = opts._noContentType
+          ? { 'Authorization': 'Bearer ' + newToken }
+          : Object.assign({ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + newToken }, opts.headers || {});
+        try {
+          var retryRes  = await fetch(RAILWAY_URL + '/api' + path, Object.assign({}, opts, { headers: newHeaders, signal: controller.signal }));
+          var retryData = await retryRes.json();
+          if (retryRes.ok) return { ok: true, data: retryData, httpStatus: retryRes.status };
+        } catch(e2) {}
+      }
+      // Revalidation failed or retry also failed — session truly expired
+      toast('Session expired — please log in again', 'error');
+      handleLogout();
+      return { ok: false, error: 'Unauthorized', httpStatus: 401 };
+    }
     if (res.status === 403) { toast('Permission denied: '+(data.error||'Your role cannot perform this action'),'error'); return {ok:false,error:data.error||'Forbidden',httpStatus:403}; }
     // Return (not throw) for all other HTTP errors so callers can check r.httpStatus
     if (!res.ok) return { ok: false, error: data.error || data.message || 'Server error ['+res.status+']', httpStatus: res.status, data: data };
@@ -10216,9 +10292,12 @@ async function _doLogin() {
     var totpRow2 = document.getElementById('li-totp-row');
     if (totpRow2) totpRow2.style.display = 'none';
     if (totpInput) totpInput.value = '';
-    Store.set('rams:session:token',r.data.token);
-    Store.set('rams:session:user',JSON.stringify(r.data.user));
-    window._ramsSessionUser = r.data.user;
+    Store.set('rams:session:token', r.data.token);
+    Store.set('rams:session:user',  JSON.stringify(r.data.user));
+    // Store credentials for silent session refresh on 401 (token expiry)
+    // Stored only in private Store — never shared
+    Store.set('rams:session:pass', pass).catch(function(){});
+    window._ramsSessionUser  = r.data.user;
     window._ramsSessionToken = r.data.token;
     _showApp(r.data.user);
   }).catch(function(err){
@@ -10233,11 +10312,12 @@ async function _doLogin() {
 async function handleLogout() {
   stopPolling();
   stopChatPoll();
-  await flushAutosave();  // save any pending writes before clearing
-  window._ramsSessionUser = null;
+  await flushAutosave();
+  window._ramsSessionUser  = null;
   window._ramsSessionToken = null;
   await Store.remove('rams:session:token');
   await Store.remove('rams:session:user');
+  await Store.remove('rams:session:pass');
   await Store.remove('rams:session:api_url');
   _showLogin();
 }
