@@ -1394,6 +1394,7 @@ button[disabled][data-rbac-locked] {
         </div>
         <select class="filter-select" id="job-status-filter" onchange="filterJobs()" aria-label="Filter by status">
           <option value="">All Status</option>
+          <option value="active">Active (Open + In Progress)</option>
           <option>Open</option><option>In Progress</option><option>Filled</option><option>Closed</option>
         </select>
       </div>
@@ -8302,7 +8303,9 @@ function renderJobs() {
   });
   var sfEl = document.getElementById('job-status-filter');
   var sf = sfEl ? sfEl.value : '';
-  var filtered = sf ? jobs.filter(function(j){ return j.status === sf; }) : jobs;
+  var filtered = !sf ? jobs
+    : sf === 'active' ? jobs.filter(function(j){ return j.status === 'Open' || j.status === 'In Progress'; })
+    : jobs.filter(function(j){ return j.status === sf; });
 
   var container = document.getElementById('job-cards-container');
   if (!container) return;
@@ -16862,11 +16865,10 @@ function _populateJobOrderSelect(selectedId) {
   // Clear and rebuild options
   sel.innerHTML = '<option value="">— Select Job Order —</option>';
 
-  // Show all jobs — always include currently linked job regardless of status
+  // Sort: Open and In Progress first, then others
   var allJobs = DB.jobs.slice().sort(function(a, b) {
-    // Open first, then others
-    var order = { 'Open': 0, 'Filled': 1, 'On Hold': 2, 'Closed': 3 };
-    return (order[a.status] || 9) - (order[b.status] || 9);
+    var order = { 'Open': 0, 'In Progress': 0, 'Filled': 1, 'On Hold': 2, 'Closed': 3 };
+    return (order[a.status] !== undefined ? order[a.status] : 9) - (order[b.status] !== undefined ? order[b.status] : 9);
   });
 
   if (allJobs.length === 0) {
@@ -16883,8 +16885,9 @@ function _populateJobOrderSelect(selectedId) {
       var statusTag = (j.status !== 'Open') ? ' [' + j.status + ']' : '';
       opt.text = j.title + ' @ ' + (j.employer||'') + ' · ' + (j.country||'') +
                  ' (' + (isFull ? 'FULL' : slotsLeft + ' left') + ')' + statusTag;
-      if (j.status !== 'Open') opt.style.color = 'var(--muted)';
-      if (j.id === selectedId) { opt.selected = true; opt.style.color = ''; } // always show current clearly
+      var activeStatuses = ['Open', 'In Progress'];
+      if (!activeStatuses.includes(j.status)) opt.style.color = 'var(--muted)';
+      if (j.id === selectedId) { opt.selected = true; opt.style.color = ''; }
       sel.appendChild(opt);
     });
   }
