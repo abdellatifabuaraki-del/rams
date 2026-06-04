@@ -6913,6 +6913,14 @@ function renderKanban() {
   var board = document.getElementById('kanban-board');
   var _scopedApps = getScopedApplicants();
   var isAdmin = (typeof getCurrentRole === 'function') && getCurrentRole() === 'Admin';
+
+  // Always update the stat cards at the top of the Pipeline page
+  var rc = document.getElementById('repat-count');
+  var bc = document.getElementById('backout-count');
+  var rj = document.getElementById('rejected-count');
+  if (rc) rc.textContent = _scopedApps.filter(function(a){ return a.status === 'Repatriated'; }).length;
+  if (bc) bc.textContent = _scopedApps.filter(function(a){ return a.status === 'Backout'; }).length;
+  if (rj) rj.textContent = _scopedApps.filter(function(a){ return a.status === 'Rejected'; }).length;
   board.innerHTML = order.map(function(stageKey) {
     var meta = _STAGE_META[stageKey] || {color:'var(--muted)',bg:'var(--s2)',cnt:'pill-gray'};
     var apps = _scopedApps.filter(function(a){ return a.status === stageKey; });
