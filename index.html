@@ -13278,7 +13278,6 @@ function renderEmployerFees() {
       _efKpi('💵', 'Total Fees',  '$' + totalUSD.toLocaleString()   + ' USD · ' + waivedCt + ' waived ($' + waivedUSD.toLocaleString() + ')', 'var(--brand)') +
       _efKpi('⏳', 'Pending',     pendingCt + ' · $' + pendingUSD.toLocaleString() + ' USD', 'var(--amber)') +
       _efKpi('✅', 'Settled',     settledCt + ' · $' + settledUSD.toLocaleString() + ' USD', 'var(--green)') +
-      _efKpi('🚫', 'Waived',      waivedCt  + ' · $' + waivedUSD.toLocaleString()  + ' USD', 'var(--muted)') +
       _efKpi('🚀', 'Deployment Ready', DB.applicants.filter(function(a){
         if (a.status !== 'OWWA' && a.status !== 'Visa') return false;
         var pf = DB.employerFees.find(function(f){ return f.applicantId===a.id && f.status==='Pending'; });
