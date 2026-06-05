@@ -2737,13 +2737,13 @@ const DEMO_PASS   = 'password123';
 function toDbRole(role) {
   var map = {
     'Admin':'admin', 'admin':'admin', 'super_admin':'super_admin',
-    'Recruiter':'recruiter', 'recruiter':'recruiter', 'agent':'recruiter',
+    'Recruiter':'agent', 'recruiter':'agent', 'agent':'agent',
     'Manager':'manager', 'manager':'manager',
     'Compliance':'viewer', 'compliance':'viewer',
     'Finance':'finance', 'finance':'finance',
     'Viewer':'viewer', 'viewer':'viewer',
   };
-  return map[role] || 'recruiter';
+  return map[role] || 'agent';
 }
 
 // Map backend DB role → frontend display label
