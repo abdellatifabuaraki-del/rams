@@ -10666,6 +10666,8 @@ function submitCreateUser() {
   if (!name)          { errEl.textContent = 'Full name is required.'; errEl.style.display = 'block'; return; }
   if (!email || !email.includes('@')) { errEl.textContent = 'Valid email is required.'; errEl.style.display = 'block'; return; }
   if (!password || password.length < 8) { errEl.textContent = 'Password must be at least 8 characters.'; errEl.style.display = 'block'; return; }
+  if (!/[A-Z]/.test(password)) { errEl.textContent = 'Password must contain at least one uppercase letter.'; errEl.style.display = 'block'; return; }
+  if (!/[!@#$%^&*()_+\-=\[\]{};\':"\\|,.<>\/?]/.test(password)) { errEl.textContent = 'Password must contain at least one special character (!@#$%^&* etc.).'; errEl.style.display = 'block'; return; }
 
   var apiUrl = RAILWAY_URL;
   var token  = window._ramsSessionToken || '';
@@ -10697,7 +10699,10 @@ function submitCreateUser() {
   }).then(function(res) {
     return res.json().then(function(d) { return { ok: res.ok, data: d }; });
   }).then(function(r) {
-    if (!r.ok) throw new Error(r.data.error || 'Failed to create user');
+    if (!r.ok) {
+      var msg = (r.data && r.data.error) ? r.data.error : 'Failed to create user';
+      throw new Error(msg);
+    }
     DB.users.push({ name: name, email: email, role: role, status: status, last: 'Just now' });
     addAudit('CREATE', 'User', 'Created user: ' + name + ' (' + role + ')');
     pushNotif('New User Added', name + ' (' + role + ') has been added to the system', 'system',
@@ -17572,6 +17577,7 @@ async function loadSharedPermissions() {
         <label class="f-lbl">Password <span class="req">*</span></label>
         <input class="f-inp" type="password" id="u-password"
                placeholder="Min. 8 characters" autocomplete="new-password">
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">Min. 8 characters, one uppercase letter, one special character (!@#$%^&*)</div>
       </div>
       <div id="u-error"
            style="display:none;color:var(--red);font-size:12.5px;padding:9px 13px;
