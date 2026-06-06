@@ -5140,6 +5140,20 @@ async function loadDB() {
         if (!DB.chatMessages.__rooms)    DB.chatMessages.__rooms    = [];
         if (!DB.chatMessages.__dms)      DB.chatMessages.__dms      = [];
         if (!DB.chatMessages.__messages) DB.chatMessages.__messages = {};
+        // Restore DMs from localStorage backup if Store didn't have them
+        if (!DB.chatMessages.__dms.length) {
+          try {
+            var _dmsBackup = localStorage.getItem('rams:chat:dms');
+            if (_dmsBackup) DB.chatMessages.__dms = JSON.parse(_dmsBackup);
+          } catch(e) {}
+        }
+        // Restore DMs from localStorage backup if Store didn't have them
+        if (!DB.chatMessages.__dms.length) {
+          try {
+            var _dmsBackup = localStorage.getItem('rams:chat:dms');
+            if (_dmsBackup) DB.chatMessages.__dms = JSON.parse(_dmsBackup);
+          } catch(e) {}
+        }
         loaded = true;
       }
       continue;
@@ -9161,6 +9175,28 @@ function getViewerAllowedRooms() {
   return allowedRoomIds;
 }
 
+// ── Fetch DM rooms from backend — restores across devices ─────────────
+async function _fetchChatDMs() {
+  try {
+    var r = await apiFetch('/chat/dms');
+    if (!r || !r.ok || !Array.isArray(r.data) || !r.data.length) return;
+    var existing = getChatDMs();
+    var existingIds = new Set(existing.map(function(d){ return d.id; }));
+    var added = false;
+    r.data.forEach(function(row) {
+      if (!existingIds.has(row.room_id)) {
+        existing.push({ id: row.room_id, name: row.peer_name, type: 'dm', icon: '👤', unread: 0 });
+        existingIds.add(row.room_id);
+        added = true;
+      }
+    });
+    if (added) {
+      saveChatDMs(existing);
+      if (currentPage === 'chat') renderChatRooms();
+    }
+  } catch(e) {}
+}
+
 // ── Chat last-seen timestamps per room — for efficient polling ────────
 if (!window._chatLastTs) window._chatLastTs = {};
 // Restore last selected room across refreshes
@@ -9292,20 +9328,22 @@ async function _fetchChatRooms() {
   } catch(e) { console.warn('[_fetchChatRooms]', e.message); }
 }
 
-function saveChatRooms(rooms) {
-  DB.chatMessages.__rooms = rooms;
-  Store.set('rams:db:chatMessages', DB.chatMessages).catch(function(){});
-  autosave('chatMessages');
-}
-
 function saveChatDMs(dms) {
   DB.chatMessages.__dms = dms;
-  Store.set('rams:db:chatMessages', DB.chatMessages).catch(function(){});
+  // Persist immediately to both Store and localStorage as backup
   autosave('chatMessages');
+  try { localStorage.setItem('rams:chat:dms', JSON.stringify(dms)); } catch(e) {}
+}
+
+function saveChatRooms(rooms) {
+  DB.chatMessages.__rooms = rooms;
+  autosave('chatMessages');
+  try { localStorage.setItem('rams:chat:rooms', JSON.stringify(rooms)); } catch(e) {}
 }
 
 // ── Render sidebar ────────────────────────────────────────────────────
 function renderChat() {
+  _fetchChatDMs().catch(function(){});
   // Fetch rooms from backend on first load
   if (!(DB.chatMessages.__rooms && DB.chatMessages.__rooms._fetched)) {
     _fetchChatRooms().then(function() {
@@ -9853,13 +9891,17 @@ function openNewDMModal() {
 }
 function startDM(userName, dmId) {
   var me  = (window._ramsSessionUser && window._ramsSessionUser.name) || '';
-  // Always compute symmetric ID so both sides use the same room
   var canonicalId = _dmRoomId(me, userName);
   var dms = getChatDMs();
   if (!dms.find(function(d){ return d.id === canonicalId; })) {
     dms.push({ id: canonicalId, name: userName, type: 'dm', icon: '👤', unread: 0 });
     saveChatDMs(dms);
   }
+  // Sync to backend so other devices restore this DM on login
+  apiFetch('/chat/dms', {
+    method: 'POST',
+    body: JSON.stringify({ peer_name: userName, room_id: canonicalId }),
+  }).catch(function(){});
   closeOverlay('overlay-new-dm');
   selectChatRoom(canonicalId);
   renderChatRooms();
@@ -16671,6 +16713,7 @@ _showApp = function(user) {
     if (typeof renderNotifications === 'function') renderNotifications();
     startPolling();
     startChatPoll();
+    _fetchChatDMs().catch(function(){});
     if (typeof _startNotifTicker === "function") _startNotifTicker();
   }, 200);
 };
