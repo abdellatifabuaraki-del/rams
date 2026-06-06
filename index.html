@@ -5257,8 +5257,9 @@ function nav(page) {
   if (page === 'analytics') renderAnalytics();
   if (page === 'accounting') renderAccounting();
   if (page === 'audit') renderAudit();
-  if (page === 'chat') { renderChat(); startChatPoll(); }
-  else stopChatPoll();
+  if (page === 'chat') { renderChat(); }
+  // Chat poll always runs regardless of page — for badge updates
+  if (!_chatPollTimer) startChatPoll();
   if (page === 'complaints') renderComplaints();
   if (page === 'integrations') renderIntegrations();
   if (page === 'settings') renderSettings();
@@ -9160,6 +9161,9 @@ function getViewerAllowedRooms() {
   return allowedRoomIds;
 }
 
+// ── Chat last-seen timestamps per room — for efficient polling ────────
+if (!window._chatLastTs) window._chatLastTs = {};
+
 function getChatRooms() {
   var stored = DB.chatMessages.__rooms || [];
   var ids = stored.map(function(r){ return r.id; });
@@ -9179,30 +9183,95 @@ async function saveChatMessages(roomId, messages) {
   if (!DB.chatMessages.__messages) DB.chatMessages.__messages = {};
   DB.chatMessages.__messages[roomId] = messages;
   autosave('chatMessages');
-  // Sync to shared Store so all users see messages
-  try { await Store.set('rams:chat:msgs:' + roomId, messages, true); } catch(e) {}
 }
 
+// ── Fetch messages from backend since last known timestamp ────────────
 async function _fetchChatMessages(roomId) {
   try {
-    var r = await Store.get('rams:chat:msgs:' + roomId, true);
-    if (!r) return;
-    var shared = typeof r === 'string' ? JSON.parse(r) : (r.value ? JSON.parse(r.value) : r);
-    if (!Array.isArray(shared)) return;
+    var lastTs = window._chatLastTs[roomId] || 0;
+    var path   = lastTs
+      ? '/chat/messages/' + encodeURIComponent(roomId) + '/since?ts=' + lastTs
+      : '/chat/messages/' + encodeURIComponent(roomId) + '?limit=100';
+
+    var r = await apiFetch(path);
+    if (!r || !r.ok || !Array.isArray(r.data)) return;
+    if (!r.data.length) return;
+
     var local    = getChatMessages(roomId);
     var localIds = new Set(local.map(function(m){ return m.id; }));
-    var newMsgs  = shared.filter(function(m){ return !localIds.has(m.id); });
-    if (newMsgs.length || shared.length < local.length) {
-      if (!DB.chatMessages.__messages) DB.chatMessages.__messages = {};
-      DB.chatMessages.__messages[roomId] = shared;
-      if (currentPage === 'chat' && _currentRoomId === roomId) renderChatMessages();
+    var newMsgs  = r.data.filter(function(m){ return !localIds.has(m.id); });
+
+    if (!newMsgs.length) return;
+
+    // Merge new messages into local store
+    var merged = local.concat(newMsgs).sort(function(a, b){
+      return new Date(a.created_at) - new Date(b.created_at);
+    });
+    if (!DB.chatMessages.__messages) DB.chatMessages.__messages = {};
+    DB.chatMessages.__messages[roomId] = merged;
+
+    // Update last-seen timestamp
+    var latest = r.data[r.data.length - 1];
+    if (latest && latest.created_at) {
+      window._chatLastTs[roomId] = new Date(latest.created_at).getTime();
     }
-  } catch(e) {}
+
+    autosave('chatMessages');
+
+    // Increment unread for non-active rooms — others' messages only
+    if (roomId !== _currentRoomId) {
+      var me = window._ramsSessionUser && window._ramsSessionUser.name;
+      var otherMsgs = newMsgs.filter(function(m){ return m.user !== me; });
+      if (otherMsgs.length) {
+        var allRooms = getChatRooms().concat(getChatDMs());
+        var room = allRooms.find(function(r){ return r.id === roomId; });
+        if (room) room.unread = (room.unread || 0) + otherMsgs.length;
+        _updateChatSidebarBadge();
+        if (currentPage !== 'chat') {
+          var latestMsg = otherMsgs[otherMsgs.length - 1];
+          var roomName  = room ? (room.name || roomId) : roomId;
+          pushNotif('💬 New message in #' + roomName,
+            (latestMsg.user || 'Someone') + ': ' + (latestMsg.msg || '').slice(0, 80),
+            'system', { page: 'chat' });
+        }
+      }
+    }
+
+    if (currentPage === 'chat' && _currentRoomId === roomId) renderChatMessages();
+  } catch(e) { console.warn('[_fetchChatMessages]', e.message); }
+}
+
+// ── Load chat rooms from backend ──────────────────────────────────────
+async function _fetchChatRooms() {
+  try {
+    var r = await apiFetch('/chat/rooms');
+    if (!r || !r.ok || !Array.isArray(r.data)) return;
+    // Merge backend rooms with defaults — backend rooms take precedence
+    var backendIds = new Set(r.data.map(function(rm){ return rm.id || rm.name; }));
+    var backendRooms = r.data.map(function(rm) {
+      return {
+        id:    rm.id   || rm.name,
+        name:  rm.name,
+        desc:  rm.description || '',
+        type:  rm.type || 'public',
+        icon:  rm.icon || '#',
+        unread: 0,
+      };
+    });
+    // Update _defaultRooms to use server UUIDs if matched by name
+    _defaultRooms.forEach(function(dr) {
+      var serverRoom = backendRooms.find(function(sr){ return sr.name === dr.id || sr.name === dr.name; });
+      if (serverRoom) dr.serverId = serverRoom.id;
+    });
+    DB.chatMessages.__rooms = backendRooms.filter(function(sr){
+      return !_defaultRooms.find(function(dr){ return dr.name === sr.name || dr.id === sr.name; });
+    });
+    autosave('chatMessages');
+  } catch(e) { console.warn('[_fetchChatRooms]', e.message); }
 }
 
 function saveChatRooms(rooms) {
   DB.chatMessages.__rooms = rooms;
-  // Immediately persist so new channels survive refresh
   Store.set('rams:db:chatMessages', DB.chatMessages).catch(function(){});
   autosave('chatMessages');
 }
@@ -9215,6 +9284,20 @@ function saveChatDMs(dms) {
 
 // ── Render sidebar ────────────────────────────────────────────────────
 function renderChat() {
+  // Fetch rooms from backend on first load
+  if (!(DB.chatMessages.__rooms && DB.chatMessages.__rooms._fetched)) {
+    _fetchChatRooms().then(function() {
+      if (DB.chatMessages.__rooms) DB.chatMessages.__rooms._fetched = true;
+      renderChatRooms();
+      // Auto-select first room and load its messages
+      if (!_currentRoomId) {
+        var rooms = getChatRooms();
+        if (rooms.length) selectChatRoom(rooms[0].id);
+      } else {
+        _fetchChatMessages(_currentRoomId).catch(function(){});
+      }
+    });
+  }
   renderChatRooms();
   renderChatMessages();
 }
@@ -9314,6 +9397,20 @@ function selectChatRoom(roomId) {
   }
   renderChatRooms();
   renderChatMessages();
+  // Load messages from backend if not yet loaded
+  var existing = getChatMessages(roomId);
+  if (!existing.length) {
+    var serverRoomId = (defRoom && defRoom.serverId) ? defRoom.serverId : roomId;
+    apiFetch('/chat/messages/' + encodeURIComponent(serverRoomId) + '?limit=100').then(function(r) {
+      if (!r || !r.ok || !Array.isArray(r.data) || !r.data.length) return;
+      if (!DB.chatMessages.__messages) DB.chatMessages.__messages = {};
+      DB.chatMessages.__messages[roomId] = r.data;
+      var latest = r.data[r.data.length - 1];
+      if (latest) window._chatLastTs[roomId] = new Date(latest.created_at).getTime();
+      autosave('chatMessages');
+      if (_currentRoomId === roomId) renderChatMessages();
+    }).catch(function(){});
+  }
 }
 
 // ── Render messages ───────────────────────────────────────────────────
@@ -9432,15 +9529,20 @@ async function sendChat() {
   if (!msg && !_chatAttachment) return;
 
   var me   = (window._ramsSessionUser && window._ramsSessionUser.name) || 'You';
+
+  // Optimistic local message — shown immediately
+  var tempId = 'msg-' + Date.now();
   var newMsg = {
-    id:         'msg-' + Date.now(),
+    id:         tempId,
     user:       me,
     msg:        msg,
     time:       new Date().toLocaleTimeString('en-PH', {hour:'2-digit', minute:'2-digit'}),
     date:       new Date().toLocaleDateString('en-PH', {weekday:'long', month:'long', day:'numeric'}),
+    created_at: new Date().toISOString(),
     reactions:  {},
     edited:     false,
     attachment: _chatAttachment || null,
+    _pending:   true,
   };
 
   var msgs = getChatMessages(_currentRoomId);
@@ -9448,7 +9550,8 @@ async function sendChat() {
   await saveChatMessages(_currentRoomId, msgs);
 
   if (input) input.value = '';
-  if (input) { input.style.height = 'auto'; }
+  if (input) input.style.height = 'auto';
+  var att = _chatAttachment;
   clearChatAttachment();
   closeMentionPopup();
   var ti = document.getElementById('chat-typing');
@@ -9456,6 +9559,33 @@ async function sendChat() {
   clearTimeout(_typingTimer);
   renderChatMessages();
   addAudit('CREATE', 'Chat', me + ' sent a message in #' + _currentRoomId);
+
+  // Send to backend
+  var roomId = _currentRoomId;
+  // Resolve room ID — use serverId if available for default rooms
+  var defRoom = _defaultRooms.find(function(r){ return r.id === roomId; });
+  var serverRoomId = (defRoom && defRoom.serverId) ? defRoom.serverId : roomId;
+
+  apiFetch('/chat/messages/' + encodeURIComponent(serverRoomId), {
+    method: 'POST',
+    body: JSON.stringify({ message: msg, attachment: att || undefined }),
+  }).then(function(r) {
+    if (r && r.ok && r.data && r.data.id) {
+      // Replace temp message with server-confirmed one
+      var current = getChatMessages(roomId);
+      var idx = current.findIndex(function(m){ return m.id === tempId; });
+      if (idx !== -1) {
+        current[idx] = r.data;
+        // Update last-seen timestamp
+        window._chatLastTs[roomId] = new Date(r.data.created_at).getTime();
+        saveChatMessages(roomId, current);
+        renderChatMessages();
+      }
+    }
+  }).catch(function(e){
+    console.warn('[sendChat] backend error:', e.message);
+    // Message is already shown locally — it will sync on next poll
+  });
 }
 
 // ── Input handling: @mention, auto-resize ────────────────────────────
@@ -16494,6 +16624,7 @@ _showApp = function(user) {
     if (typeof renderDashboard === 'function') renderDashboard();
     if (typeof renderNotifications === 'function') renderNotifications();
     startPolling();
+    startChatPoll();
     if (typeof _startNotifTicker === "function") _startNotifTicker();
   }, 200);
 };
@@ -17418,12 +17549,20 @@ var _chatPollTimer = null;
 function startChatPoll() {
   stopChatPoll();
   _chatPollTimer = setInterval(function() {
-    if (currentPage === 'chat' && _currentRoomId && !document.hidden) {
+    if (document.hidden) return;
+    // Poll current room immediately for live updates
+    if (_currentRoomId) {
       _fetchChatMessages(_currentRoomId).catch(function(){});
     }
-    // Always update badge so unread counts from other rooms stay accurate
-    if (typeof _updateChatSidebarBadge === 'function') _updateChatSidebarBadge();
-  }, 8000); // 8s for near-real-time chat
+    // Poll all other rooms for unread badge updates (less urgently)
+    var allRooms = getChatRooms().concat(getChatDMs());
+    allRooms.forEach(function(room) {
+      if (room.id && room.id !== _currentRoomId) {
+        _fetchChatMessages(room.id).catch(function(){});
+      }
+    });
+    _updateChatSidebarBadge();
+  }, 8000);
 }
 function stopChatPoll() {
   if (_chatPollTimer) { clearInterval(_chatPollTimer); _chatPollTimer = null; }
