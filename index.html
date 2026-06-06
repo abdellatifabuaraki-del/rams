@@ -17591,57 +17591,54 @@ async function _pollChatMessages() {
 }
 
 
-var _chatPollTimer = null;
+var _chatPollTimer    = null;
+var _chatBadgeTick    = 0;
+
 function startChatPoll() {
   stopChatPoll();
-  _chatPollTimer = setInterval(function() {
-    if (document.hidden) return;
+  function _chatTick() {
+    if (document.hidden) { _chatPollTimer = setTimeout(_chatTick, 8000); return; }
     var me = (window._ramsSessionUser && window._ramsSessionUser.name) || '';
 
-    // Poll current room for live updates
+    // Poll current room every 2s for near-instant chat
     if (_currentRoomId) _fetchChatMessages(_currentRoomId).catch(function(){});
 
-    // Poll all known rooms for unread badge updates
-    getChatRooms().concat(getChatDMs()).forEach(function(room) {
-      if (room.id && room.id !== _currentRoomId) {
-        _fetchChatMessages(room.id).catch(function(){});
-      }
-    });
-
-    // Check for incoming DMs — poll DM rooms with all other users
-    // so recipient sees messages even if they haven't opened the DM first
-    if (me && DB.users && DB.users.length) {
-      DB.users.forEach(function(u) {
-        if (!u.name || u.name === me) return;
-        var dmId = _dmRoomId(me, u.name);
-        var alreadyPolling = getChatDMs().find(function(d){ return d.id === dmId; });
-        if (alreadyPolling) return; // already covered above
-        // Check if there are any messages in this DM room (silent check, no-cache)
-        var token2 = window._ramsSessionToken || '';
-        var dmPath = (window._chatLastTs[dmId] || 0)
-          ? '/api/chat/messages/' + encodeURIComponent(dmId) + '/since?ts=' + (window._chatLastTs[dmId])
-          : '/api/chat/messages/' + encodeURIComponent(dmId) + '?limit=1';
-        fetch(RAILWAY_URL + dmPath, {
-          headers: { 'Authorization': 'Bearer ' + token2 },
-        }).then(function(res){ return res.ok ? res.json() : []; }).then(function(data) {
-          if (!Array.isArray(data) || !data.length) return;
-          // There are messages — add this DM to the sidebar
-          var dms = getChatDMs();
-          if (!dms.find(function(d){ return d.id === dmId; })) {
-            dms.push({ id: dmId, name: u.name, type: 'dm', icon: '👤', unread: data.length });
-            saveChatDMs(dms);
-            renderChatRooms();
-            _updateChatSidebarBadge();
-          }
-        }).catch(function(){});
+    // Poll other rooms and DMs every 8s for badge updates
+    if (Date.now() - _chatBadgeTick > 8000) {
+      _chatBadgeTick = Date.now();
+      getChatRooms().concat(getChatDMs()).forEach(function(room) {
+        if (room.id && room.id !== _currentRoomId) {
+          _fetchChatMessages(room.id).catch(function(){});
+        }
       });
+      // DM discovery
+      if (me && DB.users && DB.users.length) {
+        DB.users.forEach(function(u) {
+          if (!u.name || u.name === me) return;
+          var dmId = _dmRoomId(me, u.name);
+          if (getChatDMs().find(function(d){ return d.id === dmId; })) return;
+          var tok = window._ramsSessionToken || '';
+          fetch(RAILWAY_URL + '/api/chat/messages/' + encodeURIComponent(dmId) + '?limit=1', {
+            headers: { 'Authorization': 'Bearer ' + tok },
+          }).then(function(res){ return res.ok ? res.json() : []; }).then(function(data) {
+            if (!Array.isArray(data) || !data.length) return;
+            var dms = getChatDMs();
+            if (!dms.find(function(d){ return d.id === dmId; })) {
+              dms.push({ id: dmId, name: u.name, type: 'dm', icon: '👤', unread: data.length });
+              saveChatDMs(dms); renderChatRooms(); _updateChatSidebarBadge();
+            }
+          }).catch(function(){});
+        });
+      }
+      _updateChatSidebarBadge();
     }
-
-    _updateChatSidebarBadge();
-  }, 8000);
+    _chatPollTimer = setTimeout(_chatTick, 2000);
+  }
+  _chatPollTimer = setTimeout(_chatTick, 500); // start quickly
 }
+
 function stopChatPoll() {
-  if (_chatPollTimer) { clearInterval(_chatPollTimer); _chatPollTimer = null; }
+  if (_chatPollTimer) { clearTimeout(_chatPollTimer); _chatPollTimer = null; }
 }
 
 
