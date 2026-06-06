@@ -17601,7 +17601,30 @@ function startChatPoll() {
     var me = (window._ramsSessionUser && window._ramsSessionUser.name) || '';
 
     // Poll current room every 2s for near-instant chat
-    if (_currentRoomId) _fetchChatMessages(_currentRoomId).catch(function(){});
+    if (_currentRoomId) {
+      _fetchChatMessages(_currentRoomId).catch(function(){});
+      // Full refresh every 10s to catch deletions (delta poll misses them)
+      if (!window._chatFullRefreshTick) window._chatFullRefreshTick = {};
+      if (Date.now() - (window._chatFullRefreshTick[_currentRoomId] || 0) > 10000) {
+        window._chatFullRefreshTick[_currentRoomId] = Date.now();
+        var _rfRoomId  = _currentRoomId;
+        var _rfToken   = window._ramsSessionToken || '';
+        var _rfDefRoom = _defaultRooms.find(function(r){ return r.id === _rfRoomId; });
+        var _rfApiId   = _rfDefRoom ? _rfDefRoom.name : _rfRoomId;
+        fetch(RAILWAY_URL + '/api/chat/messages/' + encodeURIComponent(_rfApiId) + '?limit=100', {
+          headers: { 'Authorization': 'Bearer ' + _rfToken },
+        }).then(function(res){ return res.ok ? res.json() : null; }).then(function(data) {
+          if (!Array.isArray(data)) return;
+          // Replace local cache with server truth — catches deletions
+          if (!DB.chatMessages.__messages) DB.chatMessages.__messages = {};
+          DB.chatMessages.__messages[_rfRoomId] = data;
+          var latest = data[data.length - 1];
+          if (latest) window._chatLastTs[_rfRoomId] = new Date(latest.created_at).getTime();
+          autosave('chatMessages');
+          if (currentPage === 'chat' && _currentRoomId === _rfRoomId) renderChatMessages();
+        }).catch(function(){});
+      }
+    }
 
     // Poll other rooms and DMs every 8s for badge updates
     if (Date.now() - _chatBadgeTick > 8000) {
