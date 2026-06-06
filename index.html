@@ -9163,6 +9163,10 @@ function getViewerAllowedRooms() {
 
 // ── Chat last-seen timestamps per room — for efficient polling ────────
 if (!window._chatLastTs) window._chatLastTs = {};
+// Restore last selected room across refreshes
+if (!window._lastChatRoom) {
+  try { window._lastChatRoom = localStorage.getItem('rams:chat:lastRoom') || 'general'; } catch(e) { window._lastChatRoom = 'general'; }
+}
 
 function getChatRooms() {
   var stored = DB.chatMessages.__rooms || [];
@@ -9188,25 +9192,28 @@ async function saveChatMessages(roomId, messages) {
 // ── Fetch messages from backend since last known timestamp ────────────
 async function _fetchChatMessages(roomId) {
   try {
-    // Always use the room name as room_id in the API path for consistency
-    var defRoom = _defaultRooms.find(function(r){ return r.id === roomId; });
+    var defRoom  = _defaultRooms.find(function(r){ return r.id === roomId; });
     var apiRoomId = defRoom ? defRoom.name : roomId;
-    var lastTs = window._chatLastTs[roomId] || 0;
-    var path   = lastTs
+    var lastTs   = window._chatLastTs[roomId] || 0;
+    var path     = lastTs
       ? '/chat/messages/' + encodeURIComponent(apiRoomId) + '/since?ts=' + lastTs
       : '/chat/messages/' + encodeURIComponent(apiRoomId) + '?limit=100';
 
-    var r = await apiFetch(path);
-    if (!r || !r.ok || !Array.isArray(r.data)) return;
-    if (!r.data.length) return;
+    // Bypass apiFetch cache — chat needs fresh data every poll
+    var token = window._ramsSessionToken || '';
+    var res   = await fetch(RAILWAY_URL + '/api' + path, {
+      headers: { 'Authorization': 'Bearer ' + token, 'Cache-Control': 'no-cache' },
+    });
+    if (!res.ok) return;
+    var data = await res.json();
+    if (!Array.isArray(data) || !data.length) return;
 
     var local    = getChatMessages(roomId);
     var localIds = new Set(local.map(function(m){ return m.id; }));
-    var newMsgs  = r.data.filter(function(m){ return !localIds.has(m.id); });
+    var newMsgs  = data.filter(function(m){ return !localIds.has(m.id); });
 
     if (!newMsgs.length) return;
 
-    // Merge new messages into local store
     var merged = local.concat(newMsgs).sort(function(a, b){
       return new Date(a.created_at) - new Date(b.created_at);
     });
@@ -9214,14 +9221,14 @@ async function _fetchChatMessages(roomId) {
     DB.chatMessages.__messages[roomId] = merged;
 
     // Update last-seen timestamp
-    var latest = r.data[r.data.length - 1];
+    var latest = data[data.length - 1];
     if (latest && latest.created_at) {
       window._chatLastTs[roomId] = new Date(latest.created_at).getTime();
     }
 
     autosave('chatMessages');
 
-    // Increment unread for non-active rooms — others' messages only
+    // Increment unread for non-active rooms
     if (roomId !== _currentRoomId) {
       var me = window._ramsSessionUser && window._ramsSessionUser.name;
       var otherMsgs = newMsgs.filter(function(m){ return m.user !== me; });
@@ -9292,14 +9299,15 @@ function renderChat() {
     _fetchChatRooms().then(function() {
       if (DB.chatMessages.__rooms) DB.chatMessages.__rooms._fetched = true;
       renderChatRooms();
-      // Auto-select first room and load its messages
-      if (!_currentRoomId) {
-        var rooms = getChatRooms();
-        if (rooms.length) selectChatRoom(rooms[0].id);
-      } else {
-        _fetchChatMessages(_currentRoomId).catch(function(){});
-      }
+      // Restore last room or default to 'general'
+      var lastRoom = window._lastChatRoom || 'general';
+      selectChatRoom(lastRoom);
     });
+  } else {
+    // Rooms already loaded — just refresh messages for current room
+    var lastRoom = _currentRoomId || window._lastChatRoom || 'general';
+    if (!_currentRoomId) selectChatRoom(lastRoom);
+    else _fetchChatMessages(_currentRoomId).catch(function(){});
   }
   renderChatRooms();
   renderChatMessages();
@@ -9390,6 +9398,8 @@ function _updateChatSidebarBadge() {
 
 function selectChatRoom(roomId) {
   _currentRoomId = roomId;
+  window._lastChatRoom = roomId; // persist for refresh
+  try { localStorage.setItem('rams:chat:lastRoom', roomId); } catch(e) {}
   // Clear unread on default rooms (in-memory)
   var defRoom = _defaultRooms.find(function(r){ return r.id === roomId; });
   if (defRoom) defRoom.unread = 0;
@@ -9400,20 +9410,20 @@ function selectChatRoom(roomId) {
   }
   renderChatRooms();
   renderChatMessages();
-  // Load messages from backend if not yet loaded
-  var existing = getChatMessages(roomId);
-  if (!existing.length) {
-    var serverRoomId = defRoom ? defRoom.name : roomId;
-    apiFetch('/chat/messages/' + encodeURIComponent(serverRoomId) + '?limit=100').then(function(r) {
-      if (!r || !r.ok || !Array.isArray(r.data) || !r.data.length) return;
-      if (!DB.chatMessages.__messages) DB.chatMessages.__messages = {};
-      DB.chatMessages.__messages[roomId] = r.data;
-      var latest = r.data[r.data.length - 1];
-      if (latest) window._chatLastTs[roomId] = new Date(latest.created_at).getTime();
-      autosave('chatMessages');
-      if (_currentRoomId === roomId) renderChatMessages();
-    }).catch(function(){});
-  }
+  // Always load fresh from backend on room switch — bypass apiFetch cache
+  var serverRoomId = defRoom ? defRoom.name : roomId;
+  var token = window._ramsSessionToken || '';
+  fetch(RAILWAY_URL + '/api/chat/messages/' + encodeURIComponent(serverRoomId) + '?limit=100', {
+    headers: { 'Authorization': 'Bearer ' + token, 'Cache-Control': 'no-cache' },
+  }).then(function(res) { return res.json(); }).then(function(data) {
+    if (!Array.isArray(data) || !data.length) return;
+    if (!DB.chatMessages.__messages) DB.chatMessages.__messages = {};
+    DB.chatMessages.__messages[roomId] = data;
+    var latest = data[data.length - 1];
+    if (latest) window._chatLastTs[roomId] = new Date(latest.created_at).getTime();
+    autosave('chatMessages');
+    if (_currentRoomId === roomId) renderChatMessages();
+  }).catch(function(){});
 }
 
 // ── Render messages ───────────────────────────────────────────────────
@@ -17582,17 +17592,19 @@ function startChatPoll() {
         var dmId = _dmRoomId(me, u.name);
         var alreadyPolling = getChatDMs().find(function(d){ return d.id === dmId; });
         if (alreadyPolling) return; // already covered above
-        // Check if there are any messages in this DM room (silent check)
-        var lastTs = window._chatLastTs[dmId] || 0;
-        var path = lastTs
-          ? '/chat/messages/' + encodeURIComponent(dmId) + '/since?ts=' + lastTs
-          : '/chat/messages/' + encodeURIComponent(dmId) + '?limit=1';
-        apiFetch(path).then(function(r) {
-          if (!r || !r.ok || !Array.isArray(r.data) || !r.data.length) return;
+        // Check if there are any messages in this DM room (silent check, no-cache)
+        var token2 = window._ramsSessionToken || '';
+        var dmPath = (window._chatLastTs[dmId] || 0)
+          ? '/api/chat/messages/' + encodeURIComponent(dmId) + '/since?ts=' + (window._chatLastTs[dmId])
+          : '/api/chat/messages/' + encodeURIComponent(dmId) + '?limit=1';
+        fetch(RAILWAY_URL + dmPath, {
+          headers: { 'Authorization': 'Bearer ' + token2, 'Cache-Control': 'no-cache' },
+        }).then(function(res){ return res.ok ? res.json() : []; }).then(function(data) {
+          if (!Array.isArray(data) || !data.length) return;
           // There are messages — add this DM to the sidebar
           var dms = getChatDMs();
           if (!dms.find(function(d){ return d.id === dmId; })) {
-            dms.push({ id: dmId, name: u.name, type: 'dm', icon: '👤', unread: r.data.length });
+            dms.push({ id: dmId, name: u.name, type: 'dm', icon: '👤', unread: data.length });
             saveChatDMs(dms);
             renderChatRooms();
             _updateChatSidebarBadge();
