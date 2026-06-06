@@ -9202,19 +9202,31 @@ async function _fetchChatMessages(roomId) {
     // Bypass apiFetch cache — chat needs fresh data every poll
     var token = window._ramsSessionToken || '';
     var res   = await fetch(RAILWAY_URL + '/api' + path, {
-      headers: { 'Authorization': 'Bearer ' + token, 'Cache-Control': 'no-cache' },
+      headers: { 'Authorization': 'Bearer ' + token },
     });
     if (!res.ok) return;
     var data = await res.json();
     if (!Array.isArray(data) || !data.length) return;
 
-    var local    = getChatMessages(roomId);
-    var localIds = new Set(local.map(function(m){ return m.id; }));
-    var newMsgs  = data.filter(function(m){ return !localIds.has(m.id); });
+    var local = getChatMessages(roomId);
+    // Merge: update existing messages (edits/reactions) and add new ones
+    var localMap = {};
+    local.forEach(function(m){ localMap[m.id] = m; });
+    var newMsgs = [];
+    data.forEach(function(m) {
+      if (localMap[m.id]) {
+        // Update existing — reactions, edits
+        Object.assign(localMap[m.id], m);
+      } else {
+        newMsgs.push(m);
+        localMap[m.id] = m;
+      }
+    });
 
-    if (!newMsgs.length) return;
+    // For DELETE: if /since returns fewer messages than we have, check what's missing
+    // (handled by full refresh on room switch)
 
-    var merged = local.concat(newMsgs).sort(function(a, b){
+    var merged = Object.values(localMap).sort(function(a, b){
       return new Date(a.created_at) - new Date(b.created_at);
     });
     if (!DB.chatMessages.__messages) DB.chatMessages.__messages = {};
@@ -9414,7 +9426,7 @@ function selectChatRoom(roomId) {
   var serverRoomId = defRoom ? defRoom.name : roomId;
   var token = window._ramsSessionToken || '';
   fetch(RAILWAY_URL + '/api/chat/messages/' + encodeURIComponent(serverRoomId) + '?limit=100', {
-    headers: { 'Authorization': 'Bearer ' + token, 'Cache-Control': 'no-cache' },
+    headers: { 'Authorization': 'Bearer ' + token },
   }).then(function(res) { return res.json(); }).then(function(data) {
     if (!Array.isArray(data) || !data.length) return;
     if (!DB.chatMessages.__messages) DB.chatMessages.__messages = {};
@@ -9744,6 +9756,11 @@ function addReaction(msgId, emoji) {
   msg.reactions[emoji] = (msg.reactions[emoji] || 0) + 1;
   saveChatMessages(_currentRoomId, msgs);
   renderChatMessages();
+  if (_isRealUUID(msgId)) {
+    apiFetch('/chat/messages/' + msgId + '/react', {
+      method: 'POST', body: JSON.stringify({ emoji: emoji }),
+    }).catch(function(){});
+  }
 }
 
 // ── Edit / Delete message ─────────────────────────────────────────────
@@ -9754,11 +9771,16 @@ function editMessage(msgId) {
   var me = (window._ramsSessionUser && window._ramsSessionUser.name) || 'You';
   if (msg.user !== me) { toast('You can only edit your own messages', 'error'); return; }
   var newText = prompt('Edit message:', msg.msg);
-  if (newText === null || newText === msg.msg) return;
+  if (newText === null || newText.trim() === msg.msg) return;
   msg.msg    = newText.trim();
   msg.edited = true;
   saveChatMessages(_currentRoomId, msgs);
   renderChatMessages();
+  if (_isRealUUID(msgId)) {
+    apiFetch('/chat/messages/' + msgId, {
+      method: 'PATCH', body: JSON.stringify({ message: msg.msg }),
+    }).catch(function(){});
+  }
 }
 
 function deleteMessage(msgId) {
@@ -9770,8 +9792,10 @@ function deleteMessage(msgId) {
   if (!confirm('Delete this message?')) return;
   saveChatMessages(_currentRoomId, msgs.filter(function(m){ return m.id !== msgId; }));
   renderChatMessages();
+  if (_isRealUUID(msgId)) {
+    apiFetch('/chat/messages/' + msgId, { method: 'DELETE' }).catch(function(){});
+  }
 }
-
 // ── Create new room ───────────────────────────────────────────────────
 function openNewRoomModal() {
   document.getElementById('new-room-name').value = '';
@@ -17598,7 +17622,7 @@ function startChatPoll() {
           ? '/api/chat/messages/' + encodeURIComponent(dmId) + '/since?ts=' + (window._chatLastTs[dmId])
           : '/api/chat/messages/' + encodeURIComponent(dmId) + '?limit=1';
         fetch(RAILWAY_URL + dmPath, {
-          headers: { 'Authorization': 'Bearer ' + token2, 'Cache-Control': 'no-cache' },
+          headers: { 'Authorization': 'Bearer ' + token2 },
         }).then(function(res){ return res.ok ? res.json() : []; }).then(function(data) {
           if (!Array.isArray(data) || !data.length) return;
           // There are messages — add this DM to the sidebar
