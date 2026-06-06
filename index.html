@@ -9188,10 +9188,13 @@ async function saveChatMessages(roomId, messages) {
 // ── Fetch messages from backend since last known timestamp ────────────
 async function _fetchChatMessages(roomId) {
   try {
+    // Always use the room name as room_id in the API path for consistency
+    var defRoom = _defaultRooms.find(function(r){ return r.id === roomId; });
+    var apiRoomId = defRoom ? defRoom.name : roomId;
     var lastTs = window._chatLastTs[roomId] || 0;
     var path   = lastTs
-      ? '/chat/messages/' + encodeURIComponent(roomId) + '/since?ts=' + lastTs
-      : '/chat/messages/' + encodeURIComponent(roomId) + '?limit=100';
+      ? '/chat/messages/' + encodeURIComponent(apiRoomId) + '/since?ts=' + lastTs
+      : '/chat/messages/' + encodeURIComponent(apiRoomId) + '?limit=100';
 
     var r = await apiFetch(path);
     if (!r || !r.ok || !Array.isArray(r.data)) return;
@@ -9258,10 +9261,10 @@ async function _fetchChatRooms() {
         unread: 0,
       };
     });
-    // Update _defaultRooms to use server UUIDs if matched by name
+    // Update _defaultRooms so names are confirmed from server
     _defaultRooms.forEach(function(dr) {
       var serverRoom = backendRooms.find(function(sr){ return sr.name === dr.id || sr.name === dr.name; });
-      if (serverRoom) dr.serverId = serverRoom.id;
+      if (serverRoom) dr.name = serverRoom.name; // ensure name matches server
     });
     DB.chatMessages.__rooms = backendRooms.filter(function(sr){
       return !_defaultRooms.find(function(dr){ return dr.name === sr.name || dr.id === sr.name; });
@@ -9400,7 +9403,7 @@ function selectChatRoom(roomId) {
   // Load messages from backend if not yet loaded
   var existing = getChatMessages(roomId);
   if (!existing.length) {
-    var serverRoomId = (defRoom && defRoom.serverId) ? defRoom.serverId : roomId;
+    var serverRoomId = defRoom ? defRoom.name : roomId;
     apiFetch('/chat/messages/' + encodeURIComponent(serverRoomId) + '?limit=100').then(function(r) {
       if (!r || !r.ok || !Array.isArray(r.data) || !r.data.length) return;
       if (!DB.chatMessages.__messages) DB.chatMessages.__messages = {};
@@ -9561,10 +9564,10 @@ async function sendChat() {
   addAudit('CREATE', 'Chat', me + ' sent a message in #' + _currentRoomId);
 
   // Send to backend
+  // Always use the room name as room_id for consistency — never UUID
   var roomId = _currentRoomId;
-  // Resolve room ID — use serverId if available for default rooms
   var defRoom = _defaultRooms.find(function(r){ return r.id === roomId; });
-  var serverRoomId = (defRoom && defRoom.serverId) ? defRoom.serverId : roomId;
+  var serverRoomId = defRoom ? defRoom.name : roomId;
 
   apiFetch('/chat/messages/' + encodeURIComponent(serverRoomId), {
     method: 'POST',
@@ -9785,14 +9788,21 @@ function createChatRoom() {
 }
 
 // ── New DM ────────────────────────────────────────────────────────────
+function _dmRoomId(userA, userB) {
+  var names = [userA, userB].map(function(n){
+    return n.toLowerCase().replace(/[^a-z0-9]/g, '-');
+  }).sort();
+  return 'dm-' + names[0] + '--' + names[1];
+}
+
 function openNewDMModal() {
   var me = (window._ramsSessionUser && window._ramsSessionUser.name) || '';
   var ul = document.getElementById('dm-user-list');
   if (!ul) return;
   ul.innerHTML = DB.users.filter(function(u){ return u.name !== me; }).map(function(u) {
     var av  = (u.name||'?').split(' ').map(function(n){ return n[0]; }).join('').toUpperCase().slice(0,2);
-    var dmId = 'dm-' + u.name.toLowerCase().replace(/[^a-z]/g,'-');
-    return '<div data-dm-name="' + u.name.replace(/"/g,"&quot;") + '" data-dm-id="' + dmId + '" style="display:flex;align-items:center;gap:10px;padding:10px 8px;cursor:pointer;border-radius:8px">' +
+    var dmId = _dmRoomId(me, u.name);
+    return '<div data-dm-name="' + u.name.replace(/"/g,'&quot;') + '" data-dm-id="' + dmId + '" style="display:flex;align-items:center;gap:10px;padding:10px 8px;cursor:pointer;border-radius:8px">' +
       '<div style="width:36px;height:36px;border-radius:50%;background:' + stringToColor(u.name) + ';color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700">' + av + '</div>' +
       '<div><div style="font-size:13px;font-weight:700">' + u.name + '</div><div style="font-size:11px;color:var(--muted)">' + (u.role||'') + '</div></div>' +
     '</div>';
@@ -9807,15 +9817,17 @@ function openNewDMModal() {
     });
   }, 50);
 }
-
 function startDM(userName, dmId) {
+  var me  = (window._ramsSessionUser && window._ramsSessionUser.name) || '';
+  // Always compute symmetric ID so both sides use the same room
+  var canonicalId = _dmRoomId(me, userName);
   var dms = getChatDMs();
-  if (!dms.find(function(d){ return d.id === dmId; })) {
-    dms.push({ id: dmId, name: userName, type: 'dm', icon: '👤', unread: 0 });
+  if (!dms.find(function(d){ return d.id === canonicalId; })) {
+    dms.push({ id: canonicalId, name: userName, type: 'dm', icon: '👤', unread: 0 });
     saveChatDMs(dms);
   }
   closeOverlay('overlay-new-dm');
-  selectChatRoom(dmId);
+  selectChatRoom(canonicalId);
   renderChatRooms();
 }
 
@@ -17550,17 +17562,45 @@ function startChatPoll() {
   stopChatPoll();
   _chatPollTimer = setInterval(function() {
     if (document.hidden) return;
-    // Poll current room immediately for live updates
-    if (_currentRoomId) {
-      _fetchChatMessages(_currentRoomId).catch(function(){});
-    }
-    // Poll all other rooms for unread badge updates (less urgently)
-    var allRooms = getChatRooms().concat(getChatDMs());
-    allRooms.forEach(function(room) {
+    var me = (window._ramsSessionUser && window._ramsSessionUser.name) || '';
+
+    // Poll current room for live updates
+    if (_currentRoomId) _fetchChatMessages(_currentRoomId).catch(function(){});
+
+    // Poll all known rooms for unread badge updates
+    getChatRooms().concat(getChatDMs()).forEach(function(room) {
       if (room.id && room.id !== _currentRoomId) {
         _fetchChatMessages(room.id).catch(function(){});
       }
     });
+
+    // Check for incoming DMs — poll DM rooms with all other users
+    // so recipient sees messages even if they haven't opened the DM first
+    if (me && DB.users && DB.users.length) {
+      DB.users.forEach(function(u) {
+        if (!u.name || u.name === me) return;
+        var dmId = _dmRoomId(me, u.name);
+        var alreadyPolling = getChatDMs().find(function(d){ return d.id === dmId; });
+        if (alreadyPolling) return; // already covered above
+        // Check if there are any messages in this DM room (silent check)
+        var lastTs = window._chatLastTs[dmId] || 0;
+        var path = lastTs
+          ? '/chat/messages/' + encodeURIComponent(dmId) + '/since?ts=' + lastTs
+          : '/chat/messages/' + encodeURIComponent(dmId) + '?limit=1';
+        apiFetch(path).then(function(r) {
+          if (!r || !r.ok || !Array.isArray(r.data) || !r.data.length) return;
+          // There are messages — add this DM to the sidebar
+          var dms = getChatDMs();
+          if (!dms.find(function(d){ return d.id === dmId; })) {
+            dms.push({ id: dmId, name: u.name, type: 'dm', icon: '👤', unread: r.data.length });
+            saveChatDMs(dms);
+            renderChatRooms();
+            _updateChatSidebarBadge();
+          }
+        }).catch(function(){});
+      });
+    }
+
     _updateChatSidebarBadge();
   }, 8000);
 }
