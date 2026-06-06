@@ -5274,7 +5274,11 @@ function nav(page) {
         // Re-render after fresh data arrives
         if (page === 'dashboard')   renderDashboard();
         if (page === 'pipeline')    renderKanban();
-        if (page === 'applicants')  { renderApplicants(); setTimeout(_restoreApplicantFilters, 150); }
+        if (page === 'applicants')  {
+          // Apply saved filters BEFORE first render to prevent flash of unfiltered list
+          _restoreApplicantFilters();
+          renderApplicants();
+        }
         if (page === 'documents')   renderDocs();
         if (page === 'accounting')  renderAccounting();
         if (page === 'complaints')  renderComplaints();
@@ -7729,6 +7733,13 @@ function saveApplicant() {
             if (data._dbId) window._pendingStatusUpdates[data._dbId] = { status: data.status, ts: Date.now() };
           }
           DB.applicants[i] = Object.assign({}, DB.applicants[i], serverData);
+          // If the drawer is open for this applicant, refresh it immediately
+          if (currentDrawerApplicant && (currentDrawerApplicant.id === data.id || currentDrawerApplicant._dbId === data._dbId)) {
+            currentDrawerApplicant = DB.applicants[i];
+            var _activeDrawerTab = document.querySelector('.dtab.active');
+            var _activeTabName = _activeDrawerTab ? (_activeDrawerTab.getAttribute('onclick') || '').match(/switchDrawerTab\('(\w+)'/)?.[1] : null;
+            if (_activeTabName === 'overview') switchDrawerTab('overview', _activeDrawerTab);
+          }
         }
         filteredApps = [...getScopedApplicants()];
         autosave('applicants');
@@ -7766,9 +7777,15 @@ function saveApplicant() {
   if (!data.displayId) { data.displayId = getDisplayId(data); }
   filteredApps = [...getScopedApplicants()];
   autosave('applicants');
-  // Agent is now stored server-side via agent_id FK — no local override needed
   closeOverlay('overlay-applicant');
-  // Invalidate applicants cache so next poll gets fresh agent assignments for ALL users
+  // Immediately refresh drawer if it's open for this applicant — shows category change right away
+  if (currentDrawerApplicant && (currentDrawerApplicant.id === data.id || currentDrawerApplicant._dbId === data._dbId)) {
+    currentDrawerApplicant = data;
+    var _dtab = document.querySelector('.dtab.active');
+    var _dtabName = _dtab ? (_dtab.getAttribute('onclick')||'').replace(/.*switchDrawerTab\('(\w+)'.*/,'$1') : '';
+    if (_dtabName === 'overview') switchDrawerTab('overview', _dtab);
+  }
+  // Invalidate applicants cache so next poll gets fresh data for ALL users
   if (typeof _cache !== 'undefined') delete _cache['/applicants?limit=500'];
   if (typeof _lastFetch !== 'undefined') _lastFetch['applicants'] = 0;
   if (currentPage === 'applicants') renderApplicants();
