@@ -6440,7 +6440,22 @@ function switchDrawerTab(tab, btn) {
           </div>
         </div>`;
       })()}
-      ${app.notes?`<div style="padding:10px 12px;background:var(--abg);border:1px solid var(--abd);border-radius:8px;font-size:12.5px;color:var(--text2)"><strong>Notes:</strong> ${app.notes}</div>`:''}
+      ${_isViewer
+        ? (app.notes ? `<div style="padding:10px 12px;background:var(--abg);border:1px solid var(--abd);border-radius:8px;font-size:12.5px;color:var(--text2)"><strong>Notes:</strong> ${app.notes}</div>` : '')
+        : `<div style="margin-bottom:14px">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:6px;display:flex;align-items:center;justify-content:space-between">
+              NOTES
+              <span id="drawer-notes-status" style="font-size:10px;color:var(--green);opacity:0;transition:opacity .3s">✓ Saved</span>
+            </div>
+            <textarea id="drawer-notes-input" rows="3"
+              style="width:100%;padding:9px 12px;font-size:12.5px;border:1.5px solid var(--border);border-radius:8px;resize:vertical;background:var(--s2);color:var(--text);font-family:inherit;line-height:1.5;box-sizing:border-box;transition:border-color .15s;outline:none"
+              onfocus="this.style.borderColor='var(--brand)'"
+              onblur="this.style.borderColor='var(--border)'"
+              placeholder="Add notes about this applicant…"
+              oninput="_drawerNotesChanged()"
+            >${(app.notes||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>
+          </div>`
+      }
       ${_isViewer ? '' : `<div style="margin-top:16px;display:flex;gap:8px">
         <button class="btn btn-p btn-sm" onclick="editApplicant('${app.id}')">Edit Applicant</button>
         <button class="btn btn-danger btn-sm" onclick="confirmDelete('applicant','${app.id}')">Delete</button>
@@ -17292,7 +17307,34 @@ function applySettings() {
   }
 }
 
-// ── formatDate — apply the configured date format across the system ───────────
+// ── Inline notes editing in applicant drawer ──────────────────────────
+var _drawerNotesTimer = null;
+function _drawerNotesChanged() {
+  var el = document.getElementById('drawer-notes-input');
+  if (!el || !currentDrawerApplicant) return;
+  var newNotes = el.value;
+  clearTimeout(_drawerNotesTimer);
+  _drawerNotesTimer = setTimeout(function() {
+    currentDrawerApplicant.notes = newNotes;
+    // Update in DB
+    var idx = DB.applicants.findIndex(function(a){
+      return a.id === currentDrawerApplicant.id || a._dbId === currentDrawerApplicant._dbId;
+    });
+    if (idx !== -1) DB.applicants[idx].notes = newNotes;
+    autosave('applicants');
+    // Sync to backend
+    var dbId = currentDrawerApplicant._dbId || currentDrawerApplicant.id;
+    if (dbId && isUUID(dbId)) {
+      apiFetch('/applicants/' + dbId, {
+        method: 'PATCH',
+        body: JSON.stringify({ notes: newNotes }),
+      }).then(function() {
+        var status = document.getElementById('drawer-notes-status');
+        if (status) { status.style.opacity = '1'; setTimeout(function(){ status.style.opacity = '0'; }, 1500); }
+      }).catch(function(){});
+    }
+  }, 800); // 800ms debounce — saves after user stops typing
+}
 function formatDate(dateStr) {
   if (!dateStr) return '';
   var d = new Date(dateStr);
