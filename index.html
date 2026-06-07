@@ -7082,7 +7082,10 @@ function _reapplyFiltersIfActive() {
   } catch(e) { filteredApps = [...getScopedApplicants()]; }
 }
 
-// ── Re-apply active filters after poll refresh — prevents resetting active filters ─
+// ── Active filter state — source of truth, not the DOM ───────────────
+var _activeFilters = { q:'', s:'', a:'', m:'', jo:'' };
+
+// ── Re-apply active filters after poll refresh ────────────────────────
 function _reapplyFiltersIfActive() {
   try {
     var saved = localStorage.getItem('rams:filters:applicants');
