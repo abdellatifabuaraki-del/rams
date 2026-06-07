@@ -3823,7 +3823,7 @@ async function fetchApplicants() {
   // Resolve blank agent names and re-link expenses using now-fresh applicant data
   _resolveAgentNames();
   _resolveExpenseApplicants();
-  filteredApps = [...getScopedApplicants()];
+  _reapplyFiltersIfActive();
   autosave('applicants');
   Store.set('rams:shared:applicants:ts', String(Date.now()), true).catch(function(){});
   if (changed.length) _showSyncBadge(changed.length + ' applicant' + (changed.length > 1 ? 's' : '') + ' updated by another user');
@@ -4055,7 +4055,7 @@ async function syncAllFromAPI() {
     });
     DB.applicants = _freshApps;
     applyDisplayIds();
-    filteredApps = [...getScopedApplicants()];
+    _reapplyFiltersIfActive();
     _markFresh('applicants');
   }
   if (jobs.ok)     { DB.jobs     = jobs.data.map(mapJob);       _markFresh('jobs');     }
@@ -4418,7 +4418,7 @@ function startPolling() {
                 DB.applicants = DB.applicants.filter(function(a) {
                   return !window._deletedApplicantIds.has(a.id) && !window._deletedApplicantIds.has(a._dbId);
                 });
-                filteredApps = [...getScopedApplicants()];
+                _reapplyFiltersIfActive();
                 if (currentPage === 'applicants') renderApplicants();
               }
             } catch(e) {}
@@ -7076,6 +7076,20 @@ function _reapplyFiltersIfActive() {
     var f = JSON.parse(saved);
     if (f.q || f.s || f.a || f.m || f.jo) {
       filterApplicants(); // re-run with current dropdown state
+    } else {
+      filteredApps = [...getScopedApplicants()];
+    }
+  } catch(e) { filteredApps = [...getScopedApplicants()]; }
+}
+
+// ── Re-apply active filters after poll refresh — prevents resetting active filters ─
+function _reapplyFiltersIfActive() {
+  try {
+    var saved = localStorage.getItem('rams:filters:applicants');
+    if (!saved) { filteredApps = [...getScopedApplicants()]; return; }
+    var f = JSON.parse(saved);
+    if (f.q || f.s || f.a || f.m || f.jo) {
+      filterApplicants(); // re-runs with current saved state
     } else {
       filteredApps = [...getScopedApplicants()];
     }
