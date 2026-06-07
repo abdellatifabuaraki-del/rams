@@ -17288,20 +17288,52 @@ function formatDate(dateStr) {
 }
 
 // ── Session timeout management ────────────────────────────────────────────────
-var _sessionTimer = null;
+var _sessionTimer        = null;
+var _sessionWarnTimer    = null;
+var _sessionCountdownTimer = null;
+
 function _resetSessionTimer() {
-  if (_sessionTimer) clearTimeout(_sessionTimer);
+  if (_sessionTimer)        clearTimeout(_sessionTimer);
+  if (_sessionWarnTimer)    clearTimeout(_sessionWarnTimer);
+  if (_sessionCountdownTimer) clearInterval(_sessionCountdownTimer);
   if (!window._ramsSessionTimeoutMs) return; // 'Never'
+
+  var ms = window._ramsSessionTimeoutMs;
+
+  // Warn 60 seconds before logout
+  var warnMs = ms - 60000;
+  if (warnMs > 0) {
+    _sessionWarnTimer = setTimeout(function() {
+      if (!window._ramsSessionToken) return;
+      var remaining = 60;
+      var warnToast = document.createElement('div');
+      warnToast.id  = 'session-warn-toast';
+      warnToast.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--amber);color:#fff;padding:12px 20px;border-radius:10px;font-size:13px;font-weight:700;z-index:99999;box-shadow:0 4px 16px rgba(0,0,0,.2);display:flex;align-items:center;gap:12px';
+      warnToast.innerHTML = '<span>⏳ Session expiring in <span id="session-countdown">60</span>s</span><button onclick="document.getElementById(\'session-warn-toast\').remove();clearInterval(window._scTimer);_resetSessionTimer()" style="background:rgba(255,255,255,.3);border:none;border-radius:6px;color:#fff;padding:4px 10px;cursor:pointer;font-weight:700">Stay logged in</button>';
+      document.body.appendChild(warnToast);
+      window._scTimer = setInterval(function() {
+        remaining--;
+        var el = document.getElementById('session-countdown');
+        if (el) el.textContent = remaining;
+        if (remaining <= 0) clearInterval(window._scTimer);
+      }, 1000);
+    }, warnMs);
+  }
+
   _sessionTimer = setTimeout(function() {
-    if (window._ramsSessionToken) {
-      toast('Session expired — logging you out', 'error');
-      setTimeout(function(){ if (typeof logout === 'function') logout(); }, 2000);
-    }
-  }, window._ramsSessionTimeoutMs);
+    if (!window._ramsSessionToken) return;
+    var wt = document.getElementById('session-warn-toast');
+    if (wt) wt.remove();
+    toast('Session expired — logging you out', 'error');
+    setTimeout(function(){ handleLogout(); }, 2000);
+  }, ms);
 }
+
 // Reset timer on any user activity
 ['click','keydown','mousemove','touchstart'].forEach(function(evt) {
-  document.addEventListener(evt, function(){ if (window._ramsSessionTimeoutMs) _resetSessionTimer(); }, { passive: true });
+  document.addEventListener(evt, function(){
+    if (window._ramsSessionTimeoutMs) _resetSessionTimer();
+  }, { passive: true });
 });
 
 // Load saved settings on startup
