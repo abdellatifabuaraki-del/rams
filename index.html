@@ -1438,6 +1438,14 @@ button[disabled][data-rbac-locked] {
           <div style="font-size:14px;font-weight:800;margin-bottom:14px">Agent Performance</div>
           <div id="analytics-agents"></div>
         </div>
+        <div class="card cp">
+          <div style="font-size:14px;font-weight:800;margin-bottom:14px">Job Order Fill Rate</div>
+          <div id="analytics-jobs"></div>
+        </div>
+        <div class="card cp">
+          <div style="font-size:14px;font-weight:800;margin-bottom:14px">Medical Pass Rate</div>
+          <div id="analytics-medical"></div>
+        </div>
       </div>
     </div>
 
@@ -8771,90 +8779,195 @@ function saveJob() {
 // ANALYTICS
 // ════════════════════════════════════════════════════════
 function renderAnalytics() {
-  const deployed   = DB.applicants.filter(a=>a.status==='Deployed').length;
-  const totalFees  = DB.expenses.reduce((s,e)=>s+e.amount, 0);
-  const conversion = DB.applicants.length ? Math.round(deployed/DB.applicants.length*100) : 0;
-  const pending    = DB.applicants.filter(a=>a.status!=='Deployed'&&a.status!=='Rejected').length;
+  var apps      = DB.applicants;
+  var total     = apps.length;
+  var deployed  = apps.filter(function(a){ return a.status === 'Deployed'; }).length;
+  var pipeline  = apps.filter(function(a){
+    return ['For Selection','Applied','Screening','Interview','Medical','Processing','Visa','OWWA'].indexOf(a.status) !== -1;
+  }).length;
+  var backouts    = apps.filter(function(a){ return a.status === 'Backout'; }).length;
+  var repatriated = apps.filter(function(a){ return a.status === 'Repatriated'; }).length;
+  var rejected    = apps.filter(function(a){ return a.status === 'Rejected'; }).length;
+  var conversion  = total ? Math.round(deployed / total * 100) : 0;
+  var totalExpPHP = DB.expenses.reduce(function(s,e){ return s + (e.amount||0); }, 0);
+  var totalExpUSD = DB.employerFees ? DB.employerFees.reduce(function(s,f){ return s + (f.feeUSD||0); }, 0) : 0;
+  var settledFees = DB.employerFees ? DB.employerFees.filter(function(f){ return f.status==='Settled'; }).reduce(function(s,f){ return s + (f.feeUSD||0); }, 0) : 0;
+  var openJobs    = DB.jobs.filter(function(j){ return j.status === 'Open' || j.status === 'In Progress'; });
+  var totalSlots  = openJobs.reduce(function(s,j){ return s + (parseInt(j.slots)||0); }, 0);
+  var totalFilled = openJobs.reduce(function(s,j){ return s + (parseInt(j.filled)||0); }, 0);
 
-  // KPI cards
+  // ── KPI Cards ────────────────────────────────────────────────────────
   document.getElementById('analytics-stats').innerHTML = [
-    {label:'Total Deployed',  val:deployed,              icon:'✈️', bg:'var(--gbg)',     c:'var(--green)'},
-    {label:'In Pipeline',     val:pending,               icon:'🔄', bg:'var(--brand-l)', c:'var(--brand)'},
-    {label:'Conversion Rate', val:conversion+'%',        icon:'📈', bg:'var(--abg)',     c:'var(--amber)'},
-    {label:'Total Expenses',  val:'₱'+totalFees.toLocaleString(), icon:'💰', bg:'var(--pbg)', c:'var(--purple)'},
-  ].map(s=>`
-    <div class="stat-card">
-      <div class="stat-top">
-        <div class="stat-icon" style="background:${s.bg};color:${s.c}">${s.icon}</div>
-      </div>
-      <div class="stat-val">${s.val}</div>
-      <div class="stat-lbl">${s.label}</div>
-    </div>`).join('');
+    { label:'Total Applicants',  val: total,                           icon:'👥', bg:'var(--brand-l)', c:'var(--brand)' },
+    { label:'Deployed',          val: deployed,                        icon:'✈️', bg:'var(--gbg)',     c:'var(--green)' },
+    { label:'In Pipeline',       val: pipeline,                        icon:'🔄', bg:'var(--pbg)',     c:'var(--purple)' },
+    { label:'Conversion Rate',   val: conversion + '%',                icon:'📈', bg:'var(--abg)',     c:'var(--amber)' },
+    { label:'Expenses (PHP)',     val: '₱' + totalExpPHP.toLocaleString(), icon:'💸', bg:'var(--rbg)', c:'var(--red)' },
+    { label:'Employer Fees (USD)',val: '$' + totalExpUSD.toLocaleString() + ' · $' + settledFees.toLocaleString() + ' settled', icon:'🏢', bg:'var(--gbg)', c:'var(--green)' },
+    { label:'Active Job Slots',  val: totalFilled + ' / ' + totalSlots + ' filled', icon:'💼', bg:'var(--brand-l)', c:'var(--brand)' },
+    { label:'Attrition',         val: (backouts + repatriated) + ' · ' + rejected + ' rejected', icon:'⚠️', bg:'var(--abg)', c:'var(--amber)' },
+  ].map(function(s) {
+    return '<div class="stat-card"><div class="stat-top"><div class="stat-icon" style="background:' + s.bg + ';color:' + s.c + '">' + s.icon + '</div></div><div class="stat-val">' + s.val + '</div><div class="stat-lbl">' + s.label + '</div></div>';
+  }).join('');
 
-  // Bar chart
-  const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const vals=[5,8,6,10,7,9,12,8,11,14,10,15];
-  const maxV=Math.max(...vals);
-  const barsEl = document.getElementById('analytics-chart-bars');
-  const lblsEl = document.getElementById('analytics-chart-labels');
+  // ── Monthly Deployments (real data from last 12 months) ──────────────
+  var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var now    = new Date();
+  var monthlyCounts = [];
+  var monthLabels   = [];
+  for (var m = 11; m >= 0; m--) {
+    var d = new Date(now.getFullYear(), now.getMonth() - m, 1);
+    monthLabels.push(months[d.getMonth()] + (m === 0 || d.getMonth() === 0 ? ' ' + String(d.getFullYear()).slice(2) : ''));
+    var count = apps.filter(function(a) {
+      if (a.status !== 'Deployed' || !a.deploymentDate) return false;
+      var dd = new Date(a.deploymentDate);
+      return dd.getFullYear() === d.getFullYear() && dd.getMonth() === d.getMonth();
+    }).length;
+    monthlyCounts.push(count);
+  }
+  var maxV = Math.max.apply(null, monthlyCounts) || 1;
+  var barsEl = document.getElementById('analytics-chart-bars');
+  var lblsEl = document.getElementById('analytics-chart-labels');
   if (barsEl) {
-    barsEl.innerHTML = vals.map((v,i)=>`
-      <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%">
-        <span style="font-size:10px;font-family:monospace;color:var(--text);font-weight:700">${v}</span>
-        <div style="width:100%;flex:1;display:flex;align-items:flex-end">
-          <div style="width:100%;border-radius:4px 4px 0 0;background:var(--brand);opacity:${0.35+v/maxV*0.65};height:${Math.max(4,v/maxV*100)}%;min-height:4px;transition:height .6s ease"></div>
-        </div>
-      </div>`).join('');
+    barsEl.innerHTML = monthlyCounts.map(function(v, i) {
+      var pct = Math.max(v ? 4 : 0, Math.round(v / maxV * 100));
+      return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%">' +
+        '<span style="font-size:10px;font-family:monospace;color:var(--text);font-weight:700">' + (v || '') + '</span>' +
+        '<div style="width:100%;flex:1;display:flex;align-items:flex-end">' +
+        '<div style="width:100%;border-radius:4px 4px 0 0;background:var(--brand);height:' + pct + '%;min-height:' + (v ? 4 : 0) + 'px;transition:height .5s ease" title="' + monthLabels[i] + ': ' + v + ' deployed"></div>' +
+        '</div></div>';
+    }).join('');
   }
-  if (lblsEl) lblsEl.innerHTML = months.map(m=>`<span>${m}</span>`).join('');
+  if (lblsEl) lblsEl.innerHTML = monthLabels.map(function(m){ return '<span>' + m + '</span>'; }).join('');
 
-  // Status breakdown
-  const statusBreakdown={};
-  DB.applicants.forEach(a=>{statusBreakdown[a.status]=(statusBreakdown[a.status]||0)+1;});
-  const colors={'Deployed':'var(--green)','Applied':'var(--brand)','Screening':'var(--purple)',
-                'Interview':'var(--amber)','Medical':'var(--teal)','Rejected':'var(--red)'};
-  const breakdownEl = document.getElementById('analytics-breakdown');
+  // ── Status Breakdown ──────────────────────────────────────────────────
+  var statusBreakdown = {};
+  apps.forEach(function(a){ statusBreakdown[a.status] = (statusBreakdown[a.status] || 0) + 1; });
+  var colors = {
+    'Deployed':'var(--green)', 'Applied':'var(--brand)', 'Screening':'var(--purple)',
+    'Interview':'var(--amber)', 'Medical':'var(--teal)', 'Rejected':'var(--red)',
+    'Backout':'var(--amber)', 'Repatriated':'var(--red)', 'OWWA':'var(--green)',
+    'Visa':'var(--teal)', 'Processing':'var(--brand)', 'For Selection':'var(--muted)',
+  };
+  var breakdownEl = document.getElementById('analytics-breakdown');
   if (breakdownEl) {
-    breakdownEl.innerHTML = Object.entries(statusBreakdown).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`
-      <div style="margin-bottom:10px">
-        <div style="display:flex;justify-content:space-between;margin-bottom:5px">
-          <span style="font-size:12.5px;font-weight:700">${k}</span>
-          <span style="font-size:12px;font-family:monospace;color:var(--muted)">${v} (${DB.applicants.length?Math.round(v/DB.applicants.length*100):0}%)</span>
-        </div>
-        <div class="prog-bar"><div class="prog-fill" style="background:${colors[k]||'var(--brand)'};width:${DB.applicants.length?v/DB.applicants.length*100:0}%"></div></div>
-      </div>`).join('');
+    breakdownEl.innerHTML = Object.entries(statusBreakdown).sort(function(a,b){ return b[1]-a[1]; }).map(function(e) {
+      var k = e[0], v = e[1];
+      var pct = total ? Math.round(v / total * 100) : 0;
+      return '<div style="margin-bottom:10px">' +
+        '<div style="display:flex;justify-content:space-between;margin-bottom:5px">' +
+        '<span style="font-size:12.5px;font-weight:700">' + k + '</span>' +
+        '<span style="font-size:12px;font-family:monospace;color:var(--muted)">' + v + ' (' + pct + '%)</span>' +
+        '</div>' +
+        '<div class="prog-bar"><div class="prog-fill" style="background:' + (colors[k]||'var(--brand)') + ';width:' + pct + '%"></div></div>' +
+        '</div>';
+    }).join('');
   }
 
-  // Top destinations
-  const destMap={};
-  DB.applicants.forEach(a=>{if(a.job){const c=a.job.split('·').pop().trim();destMap[c]=(destMap[c]||0)+1;}});
-  const dests=Object.entries(destMap).sort((a,b)=>b[1]-a[1]).slice(0,6);
-  const destEl = document.getElementById('analytics-destinations');
+  // ── Top Destinations ──────────────────────────────────────────────────
+  var destMap = {};
+  apps.forEach(function(a){
+    var dest = a.destination || (a.job ? (a.job.split('·')[1]||'').trim() : '');
+    if (dest) destMap[dest] = (destMap[dest] || 0) + 1;
+  });
+  var dests  = Object.entries(destMap).sort(function(a,b){ return b[1]-a[1]; }).slice(0, 8);
+  var destEl = document.getElementById('analytics-destinations');
   if (destEl) {
-    destEl.innerHTML = dests.length ? dests.map(([c,n])=>`
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-        <span style="font-size:12.5px;font-weight:700">🌍 ${c}</span>
-        <span style="font-size:13px;font-weight:800;font-family:monospace">${n}</span>
-      </div>`).join('') : '<div style="color:var(--muted);font-size:12px">No data</div>';
+    destEl.innerHTML = dests.length ? dests.map(function(e, i) {
+      var pct = total ? Math.round(e[1] / total * 100) : 0;
+      return '<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">' +
+        '<div style="font-size:11px;font-weight:800;color:var(--muted);width:16px;text-align:right">' + (i+1) + '</div>' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="display:flex;justify-content:space-between;margin-bottom:3px">' +
+            '<span style="font-size:12.5px;font-weight:700">🌍 ' + e[0] + '</span>' +
+            '<span style="font-size:12px;font-family:monospace;font-weight:700">' + e[1] + ' <span style="color:var(--muted);font-weight:400">(' + pct + '%)</span></span>' +
+          '</div>' +
+          '<div class="prog-bar" style="height:4px"><div class="prog-fill" style="background:var(--brand);width:' + pct + '%"></div></div>' +
+        '</div></div>';
+    }).join('') : '<div style="color:var(--muted);font-size:12px">No destination data</div>';
   }
 
-  // Agent performance
-  const agentsEl = document.getElementById('analytics-agents');
+  // ── Agent Performance ────────────────────────────────────────────────
+  var agentsEl = document.getElementById('analytics-agents');
   if (agentsEl) {
-    const agentPerf=[...new Set(DB.applicants.map(a=>a.agent))].filter(Boolean).map(ag=>({
-      name:ag,
-      count:DB.applicants.filter(a=>a.agent===ag).length,
-      deployed:DB.applicants.filter(a=>a.agent===ag&&a.status==='Deployed').length
-    })).sort((a,b)=>b.count-a.count);
-    agentsEl.innerHTML = agentPerf.map(a=>`
-      <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)">
-        <div style="width:30px;height:30px;border-radius:8px;background:var(--brand-l);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:var(--brand);flex-shrink:0">${a.name.split(' ').map(n=>n[0]).join('')}</div>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:12.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${a.name}</div>
-          <div style="font-size:11px;color:var(--muted)">${a.count} applicant${a.count!==1?'s':''} · ${a.deployed} deployed</div>
-        </div>
-        <div style="font-size:13px;font-weight:800;font-family:monospace;color:var(--green)">${a.count?Math.round(a.deployed/a.count*100):0}%</div>
-      </div>`).join('');
+    var agentPerf = [];
+    var agentSeen = {};
+    apps.forEach(function(a) {
+      if (!a.agent) return;
+      if (!agentSeen[a.agent]) { agentSeen[a.agent] = { name: a.agent, total: 0, deployed: 0, pipeline: 0, backout: 0 }; agentPerf.push(agentSeen[a.agent]); }
+      agentSeen[a.agent].total++;
+      if (a.status === 'Deployed') agentSeen[a.agent].deployed++;
+      else if (['Backout','Rejected','Repatriated'].indexOf(a.status) !== -1) agentSeen[a.agent].backout++;
+      else agentSeen[a.agent].pipeline++;
+    });
+    agentPerf.sort(function(a,b){ return b.total - a.total; });
+    agentsEl.innerHTML = agentPerf.length ? agentPerf.map(function(a) {
+      var rate = a.total ? Math.round(a.deployed / a.total * 100) : 0;
+      var initials = a.name.split(' ').map(function(n){ return n[0]; }).join('').toUpperCase().slice(0,2);
+      return '<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)">' +
+        '<div style="width:34px;height:34px;border-radius:9px;background:var(--brand-l);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:var(--brand);flex-shrink:0">' + initials + '</div>' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-size:12.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + a.name + '</div>' +
+          '<div style="font-size:11px;color:var(--muted);margin-top:2px">' +
+            a.total + ' total · ' +
+            '<span style="color:var(--green)">' + a.deployed + ' deployed</span> · ' +
+            '<span style="color:var(--brand)">' + a.pipeline + ' active</span>' +
+            (a.backout ? ' · <span style="color:var(--red)">' + a.backout + ' lost</span>' : '') +
+          '</div>' +
+        '</div>' +
+        '<div style="text-align:right;flex-shrink:0">' +
+          '<div style="font-size:15px;font-weight:800;font-family:monospace;color:' + (rate >= 60 ? 'var(--green)' : rate >= 30 ? 'var(--amber)' : 'var(--red)') + '">' + rate + '%</div>' +
+          '<div style="font-size:10px;color:var(--muted)">deploy rate</div>' +
+        '</div>' +
+      '</div>';
+    }).join('') : '<div style="color:var(--muted);font-size:12px;padding:12px 0">No agent data</div>';
+  }
+
+  // ── Job Order Fill Rate ───────────────────────────────────────────────
+  var jobsEl = document.getElementById('analytics-jobs');
+  if (jobsEl) {
+    var employers = {};
+    DB.jobs.forEach(function(j) {
+      if (!j.employer) return;
+      if (!employers[j.employer]) employers[j.employer] = { employer: j.employer, slots: 0, filled: 0, status: j.status };
+      employers[j.employer].slots  += parseInt(j.slots)  || 0;
+      employers[j.employer].filled += parseInt(j.filled) || 0;
+    });
+    var jobList = Object.values(employers).sort(function(a,b){ return b.slots - a.slots; }).slice(0, 8);
+    jobsEl.innerHTML = jobList.length ? jobList.map(function(j) {
+      var pct = j.slots ? Math.round(j.filled / j.slots * 100) : 0;
+      var color = pct >= 100 ? 'var(--green)' : pct >= 60 ? 'var(--brand)' : pct >= 30 ? 'var(--amber)' : 'var(--red)';
+      return '<div style="margin-bottom:10px">' +
+        '<div style="display:flex;justify-content:space-between;margin-bottom:4px">' +
+          '<span style="font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60%">' + j.employer + '</span>' +
+          '<span style="font-size:11.5px;font-family:monospace;color:var(--muted)">' + j.filled + '/' + j.slots + ' <span style="color:' + color + ';font-weight:700">(' + pct + '%)</span></span>' +
+        '</div>' +
+        '<div class="prog-bar" style="height:6px"><div class="prog-fill" style="background:' + color + ';width:' + pct + '%"></div></div>' +
+      '</div>';
+    }).join('') : '<div style="color:var(--muted);font-size:12px">No job order data</div>';
+  }
+
+  // ── Medical Pass Rate ─────────────────────────────────────────────────
+  var medEl = document.getElementById('analytics-medical');
+  if (medEl) {
+    var passed  = apps.filter(function(a){ return a.medical === 'Passed'; }).length;
+    var failed  = apps.filter(function(a){ return a.medical === 'Failed'; }).length;
+    var pending = apps.filter(function(a){ return a.medical === 'Pending'; }).length;
+    var medTotal = passed + failed + pending;
+    medEl.innerHTML = medTotal ? [
+      { label:'Passed', val: passed, color:'var(--green)' },
+      { label:'Failed',  val: failed,  color:'var(--red)' },
+      { label:'Pending', val: pending, color:'var(--amber)' },
+    ].map(function(m) {
+      var pct = medTotal ? Math.round(m.val / medTotal * 100) : 0;
+      return '<div style="margin-bottom:8px">' +
+        '<div style="display:flex;justify-content:space-between;margin-bottom:3px">' +
+          '<span style="font-size:12px;font-weight:700;color:' + m.color + '">' + m.label + '</span>' +
+          '<span style="font-size:12px;font-family:monospace">' + m.val + ' (' + pct + '%)</span>' +
+        '</div>' +
+        '<div class="prog-bar" style="height:6px"><div class="prog-fill" style="background:' + m.color + ';width:' + pct + '%"></div></div>' +
+      '</div>';
+    }).join('') : '<div style="color:var(--muted);font-size:12px">No medical data</div>';
   }
 }
 
