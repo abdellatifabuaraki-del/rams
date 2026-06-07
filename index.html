@@ -11828,7 +11828,7 @@ function _renderExpensesTabInner(search) {
   if (kpisEl) {
     var total   = expenses.reduce(function(s,e){ return s+e.amount; }, 0);
     var charged = expenses.filter(function(e){ return e.status==='Charged'; }).reduce(function(s,e){ return s+e.amount; }, 0);
-    var agency  = expenses.filter(function(e){ return e.status==='Agency'; }).reduce(function(s,e){ return s+e.amount; }, 0);
+    var agency  = total - charged; // absorbed = everything NOT charged to an agent
     kpisEl.innerHTML = [
       { label:'Total Expenses', val:'₱'+total.toLocaleString(),   icon:'📊', bg:'var(--brand-l)', c:'var(--brand)' },
       { label:'Charged to Agents', val:'₱'+charged.toLocaleString(), icon:'💸', bg:'var(--rbg)',  c:'var(--red)' },
