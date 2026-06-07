@@ -7414,7 +7414,15 @@ function renderApplicants() {
     }
     if (savedJo) {
       joFilter.value = savedJo;
-      if (joFilter.value !== savedJo) savedJo = ''; // option doesn't exist — clear
+      if (joFilter.value !== savedJo) {
+        // Option no longer exists — clear the filter completely
+        _activeFilters.jo = '';
+        try {
+          var _fj2 = JSON.parse(localStorage.getItem('rams:filters:applicants')||'{}');
+          _fj2.jo = '';
+          localStorage.setItem('rams:filters:applicants', JSON.stringify(_fj2));
+        } catch(e) {}
+      }
     }
   }
   const start = (appPage-1)*APP_PER_PAGE;
