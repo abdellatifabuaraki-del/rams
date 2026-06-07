@@ -7371,7 +7371,15 @@ function renderApplicants() {
       o.text  = g.label;
       joFilter.appendChild(o);
     });
-    if (prevJo) joFilter.value = prevJo;
+    if (prevJo) {
+      joFilter.value = prevJo;
+      // If the dropdown now has this value and a filter should be active, re-apply
+      if (joFilter.value === prevJo && prevJo !== filteredApps._lastJo) {
+        filteredApps._lastJo = prevJo;
+        filterApplicants();
+        return; // filterApplicants calls renderApplicants — prevent double render
+      }
+    }
   }
   const start = (appPage-1)*APP_PER_PAGE;
   const pageApps = filteredApps.slice(start, start+APP_PER_PAGE);
