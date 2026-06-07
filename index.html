@@ -3962,7 +3962,7 @@ function _resolveAgentNames() {
     }
   });
   if (changed) {
-    filteredApps = [...getScopedApplicants()];
+    _reapplyFiltersIfActive();
     if (currentPage === 'applicants') renderApplicants();
     else if (currentPage === 'pipeline') renderKanban();
   }
@@ -7068,32 +7068,60 @@ function deleteApplicant(appId) {
 }
 
 
+// ── Re-apply active filters after data refresh — prevents poll clearing filters ─
+function _reapplyFiltersIfActive() {
+  try {
+    var saved = localStorage.getItem('rams:filters:applicants');
+    if (!saved) { filteredApps = [...getScopedApplicants()]; return; }
+    var f = JSON.parse(saved);
+    if (f.q || f.s || f.a || f.m || f.jo) {
+      filterApplicants(); // re-run with current dropdown state
+    } else {
+      filteredApps = [...getScopedApplicants()];
+    }
+  } catch(e) { filteredApps = [...getScopedApplicants()]; }
+}
+
 function filterApplicants() {
-  const q  = document.getElementById('app-search').value.toLowerCase();
-  const s  = document.getElementById('app-status-filter').value;
-  const a  = document.getElementById('app-agent-filter').value;
-  const m  = document.getElementById('app-medical-filter').value;
-  const jo = document.getElementById('app-joborder-filter') ? document.getElementById('app-joborder-filter').value : '';
-  // Persist filters so they survive page navigation
-  try { localStorage.setItem('rams:filters:applicants', JSON.stringify({q,s,a,m,jo})); } catch(e){}
+  var q  = document.getElementById('app-search').value.toLowerCase();
+  var s  = document.getElementById('app-status-filter').value;
+  var a  = document.getElementById('app-agent-filter').value;
+  var m  = document.getElementById('app-medical-filter').value;
+  var joEl = document.getElementById('app-joborder-filter');
+  var jo = joEl ? joEl.value : '';
+  try { localStorage.setItem('rams:filters:applicants', JSON.stringify({q:q,s:s,a:a,m:m,jo:jo})); } catch(e){}
+
+  // Build job matchIds set for employer-level filtering
+  var matchIds = null;
+  if (jo) {
+    matchIds = new Set();
+    var repJob = DB.jobs.find(function(j){ return j.id===jo || j._dbId===jo; });
+    var matchEmployer = repJob ? repJob.employer : null;
+    if (matchEmployer) {
+      DB.jobs.forEach(function(j){
+        if (j.employer === matchEmployer) {
+          if (j.id)   matchIds.add(j.id);
+          if (j._dbId) matchIds.add(j._dbId);
+        }
+      });
+    } else {
+      matchIds.add(jo);
+    }
+  }
+
   filteredApps = getScopedApplicants().filter(function(x) {
-    if (q  && !(x.name.toLowerCase().includes(q) || (x.displayId||x.id).toLowerCase().includes(q) || (x.contact||'').includes(q) || (x.passport||'').toLowerCase().includes(q))) return false;
-    if (s  && x.status  !== s)  return false;
-    if (a  && x.agent   !== a)  return false;
-    if (m  && x.medical !== m)  return false;
-    if (jo) {
-      // Find employer for the selected representative job (match by both id and _dbId)
-      var repJob = DB.jobs.find(function(j){ return j.id===jo || j._dbId===jo; });
-      var matchEmployer = repJob ? repJob.employer : null;
-      var matchIds = new Set();
-      if (matchEmployer) {
-        DB.jobs.filter(function(j){ return j.employer===matchEmployer; })
-          .forEach(function(j){ if(j.id) matchIds.add(j.id); if(j._dbId) matchIds.add(j._dbId); });
-      } else {
-        matchIds.add(jo);
-      }
-      // Applicant must have a _jobOrderId that belongs to this employer
-      if (!x._jobOrderId || !matchIds.has(x._jobOrderId)) return false;
+    if (s && x.status !== s) return false;
+    if (a && x.agent  !== a) return false;
+    if (m && x.medical !== m) return false;
+    if (q && !(
+      (x.name||'').toLowerCase().includes(q) ||
+      (x.displayId||x.id||'').toLowerCase().includes(q) ||
+      (x.contact||'').includes(q) ||
+      (x.passport||'').toLowerCase().includes(q)
+    )) return false;
+    if (matchIds !== null) {
+      if (!x._jobOrderId) return false;
+      if (!matchIds.has(x._jobOrderId)) return false;
     }
     return true;
   });
@@ -9380,6 +9408,7 @@ async function saveChatMessages(roomId, messages) {
 
 // ── Fetch messages from backend since last known timestamp ────────────
 async function _fetchChatMessages(roomId) {
+  if (!window._ramsSessionToken) return; // not logged in yet
   try {
     var defRoom  = _defaultRooms.find(function(r){ return r.id === roomId; });
     var apiRoomId = defRoom ? defRoom.name : roomId;
@@ -17148,7 +17177,7 @@ function saveViewerScope() {
   toast('Scope saved — ' + jobIds.length + ' job order' + (jobIds.length !== 1 ? 's' : '') + ' assigned', 'success');
   var me = getCurrentUser();
   if (me && me.email && me.email.toLowerCase() === _scopingUserEmail) {
-    filteredApps = [...getScopedApplicants()];
+    _reapplyFiltersIfActive();
     if (currentPage === 'applicants') renderApplicants();
     if (currentPage === 'jobs') renderJobs();
     if (currentPage === 'pipeline') renderKanban();
@@ -17854,7 +17883,7 @@ var _chatBadgeTick    = 0;
 function startChatPoll() {
   stopChatPoll();
   function _chatTick() {
-    if (document.hidden) { _chatPollTimer = setTimeout(_chatTick, 8000); return; }
+    if (document.hidden || !window._ramsSessionToken) { _chatPollTimer = setTimeout(_chatTick, 8000); return; }
     var me = (window._ramsSessionUser && window._ramsSessionUser.name) || '';
 
     // Poll current room every 2s for near-instant chat
