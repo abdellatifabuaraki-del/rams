@@ -7382,11 +7382,6 @@ function renderApplicants() {
   const joFilter = document.getElementById('app-joborder-filter');
   // Repopulate job order filter — group by employer (show employer once, not every position)
   if (joFilter) {
-    var prevJo = joFilter.value;
-    // If no current value, try restoring from saved filters
-    if (!prevJo) {
-      try { var _sj=JSON.parse(localStorage.getItem('rams:filters:applicants')||'{}'); prevJo=_sj.jo||''; } catch(e){}
-    }
     var usedJobIds = new Set(getScopedApplicants().map(function(a){ return a._jobOrderId; }).filter(Boolean));
     var usedJobs = DB.jobs.filter(function(j){ return usedJobIds.has(j.id) || usedJobIds.has(j._dbId); });
     // Group by employer so each employer appears once in the dropdown
@@ -7408,19 +7403,18 @@ function renderApplicants() {
     joFilter.innerHTML = '<option value="">All Job Orders</option>';
     grouped.forEach(function(g) {
       var o = document.createElement('option');
-      // Use _dbId (PostgreSQL UUID) as value since applicant._jobOrderId stores the DB UUID
       o.value = g.representativeDbId || g.representativeId;
       o.text  = g.label;
       joFilter.appendChild(o);
     });
-    if (prevJo) {
-      joFilter.value = prevJo;
-      // If the dropdown now has this value and a filter should be active, re-apply
-      if (joFilter.value === prevJo && prevJo !== filteredApps._lastJo) {
-        filteredApps._lastJo = prevJo;
-        filterApplicants();
-        return; // filterApplicants calls renderApplicants — prevent double render
-      }
+    // Restore from _activeFilters (source of truth) — not from DOM which gets wiped on rebuild
+    var savedJo = _activeFilters.jo || '';
+    if (!savedJo) {
+      try { var _fj = JSON.parse(localStorage.getItem('rams:filters:applicants')||'{}'); savedJo = _fj.jo||''; } catch(e) {}
+    }
+    if (savedJo) {
+      joFilter.value = savedJo;
+      if (joFilter.value !== savedJo) savedJo = ''; // option doesn't exist — clear
     }
   }
   const start = (appPage-1)*APP_PER_PAGE;
