@@ -4,6 +4,19 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>RAMS — Recruitment Agency Management System</title>
+<script>
+// Apply theme immediately to prevent flash — before any JS loads
+(function(){
+  try {
+    var s = localStorage.getItem('rams:settings:general');
+    if (s) {
+      var fields = JSON.parse(s);
+      var dm = fields.find(function(f){ return f.lbl === 'Dark Mode'; });
+      if (dm && dm.value) document.documentElement.setAttribute('data-theme','dark');
+    }
+  } catch(e) {}
+})();
+</script>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300;12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -5365,10 +5378,33 @@ document.addEventListener('click', e => {
 // THEME
 // ════════════════════════════════════════════════════════
 function toggleTheme() {
-  const html = document.documentElement;
+  const html   = document.documentElement;
   const isDark = html.getAttribute('data-theme') === 'dark';
-  html.setAttribute('data-theme', isDark ? 'light' : 'dark');
-  toast(isDark ? 'Light mode enabled' : 'Dark mode enabled', 'info');
+  const newTheme = isDark ? 'light' : 'dark';
+  html.setAttribute('data-theme', newTheme);
+  toast(isDark ? '☀️ Light mode enabled' : '🌙 Dark mode enabled', 'info');
+
+  // Persist to settings so it survives refresh
+  var general = SETTINGS_SECTIONS.general && SETTINGS_SECTIONS.general.fields;
+  if (general) {
+    var field = general.find(function(f){ return f.lbl === 'Dark Mode'; });
+    if (field) field.value = !isDark;
+  }
+  // Update the settings toggle button if visible
+  var toggles = document.querySelectorAll('#settings-content .toggle');
+  toggles.forEach(function(btn) {
+    if (btn.getAttribute('data-lbl') === 'Dark Mode') {
+      btn.classList.toggle('on', !isDark);
+    }
+  });
+  // Save to localStorage + Store
+  Store.set('rams:settings:general',
+    JSON.stringify(SETTINGS_SECTIONS.general ? SETTINGS_SECTIONS.general.fields : [])
+  ).catch(function(){});
+  try {
+    localStorage.setItem('rams:settings:general',
+      JSON.stringify(SETTINGS_SECTIONS.general ? SETTINGS_SECTIONS.general.fields : []));
+  } catch(e) {}
 }
 
 // ════════════════════════════════════════════════════════
