@@ -2733,6 +2733,21 @@ const RAILWAY_URL = 'https://rams-backend-production-399f.up.railway.app';
 const DEMO_EMAIL  = 'admin@rams.io';
 const DEMO_PASS   = 'password123';
 
+// ── Persistent read-state set — survives refresh and poll cycles ──────
+// Stored in localStorage so hard refresh doesn't flash previously-read notifications
+(function() {
+  try {
+    var stored = localStorage.getItem('rams:notif:readIds');
+    window._localReadIds = stored ? new Set(JSON.parse(stored)) : new Set();
+  } catch(e) { window._localReadIds = new Set(); }
+})();
+
+function _persistReadIds() {
+  try {
+    localStorage.setItem('rams:notif:readIds', JSON.stringify(Array.from(window._localReadIds)));
+  } catch(e) {}
+}
+
 // Map frontend role labels → backend DB role values
 function toDbRole(role) {
   var map = {
@@ -5574,10 +5589,11 @@ function markRead(id) {
   var n = DB.notifications.find(function(x){ return x.id === id; });
   if (n) {
     n.read = true;
-    // Persist read state so poll cycles don't flash it back as unread
+    // Persist read state so poll cycles and refresh don't flash it back as unread
     window._localReadIds = window._localReadIds || new Set();
     window._localReadIds.add(n.id);
     if (n._dbId) window._localReadIds.add(n._dbId);
+    _persistReadIds();
     autosave('notifications');
     Store.set('rams:shared:notifications', DB.notifications, true).catch(function(){});
     Store.set('rams:shared:notifications:ts', String(Date.now()), true).catch(function(){});
@@ -5590,11 +5606,12 @@ function markRead(id) {
 function markAllRead() {
   DB.notifications.forEach(function(n){
     n.read = true;
-    // Add to persistent read set — survives poll cycles
+    // Add to persistent read set — survives poll cycles and refresh
     window._localReadIds = window._localReadIds || new Set();
     window._localReadIds.add(n.id);
     if (n._dbId) window._localReadIds.add(n._dbId);
   });
+  _persistReadIds();
   autosave('notifications');
   Store.set('rams:shared:notifications', DB.notifications, true).catch(function(){});
   Store.set('rams:shared:notifications:ts', String(Date.now()), true).catch(function(){});
@@ -10598,6 +10615,8 @@ async function handleLogout() {
   await flushAutosave();
   window._ramsSessionUser  = null;
   window._ramsSessionToken = null;
+  window._localReadIds     = new Set();
+  try { localStorage.removeItem('rams:notif:readIds'); } catch(e) {}
   await Store.remove('rams:session:token');
   await Store.remove('rams:session:user');
   await Store.remove('rams:session:pass');
