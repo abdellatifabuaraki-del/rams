@@ -15807,8 +15807,9 @@ function updateFundsBalance() {
       var sym    = cur === 'PHP' ? '₱' : '$';
       afterEl.textContent = 'Current: ' + sym + curBal.toLocaleString() + ' → After: ' + sym + (curBal + amt).toLocaleString();
     } else {
-      var pendingAmt = DB.expenses.filter(function(e){ return e.status === 'Pending'; }).reduce(function(s,e){ return s + (e.amount||0); }, 0);
-      afterEl.textContent = 'Pending expenses: ₱' + pendingAmt.toLocaleString() + (amt ? ' → Covering ₱' + amt.toLocaleString() : '');
+      var pendingExps = DB.expenses.filter(function(e){ return e.status === 'Pending'; });
+      var pendingAmt  = pendingExps.reduce(function(s,e){ return s + (e.amount||0); }, 0);
+      afterEl.textContent = pendingExps.length + ' pending expense(s) · ₱' + pendingAmt.toLocaleString() + ' total — all will be marked Paid';
     }
   }
 }
@@ -15829,24 +15830,14 @@ function submitAddFunds() {
   var uname = (window._ramsSessionUser && window._ramsSessionUser.name) || 'Admin';
 
   if (dest === 'expenses') {
-    // Allocate fund to cover pending expenses — mark them as Paid up to the amount
-    var remaining = amount;
-    var covered   = 0;
-    var coveredCount = 0;
+    // Allocate fund to ALL pending expenses — mark them all as Paid
     var expFilter = DB.expenses.filter(function(e){
-      return e.status === 'Pending' && (cur === 'PHP') && (!expCat || e.category === expCat);
+      return e.status === 'Pending' && (!expCat || e.category === expCat);
     });
-    expFilter.forEach(function(e) {
-      if (remaining <= 0) return;
-      if (e.amount <= remaining) {
-        e.status   = 'Paid';
-        remaining -= e.amount;
-        covered   += e.amount;
-        coveredCount++;
-      }
-    });
+    var totalPending = expFilter.reduce(function(s,e){ return s + (e.amount||0); }, 0);
+    expFilter.forEach(function(e){ e.status = 'Paid'; });
     autosave('expenses');
-    // Also add to office ledger as a record
+    // Record in office ledger
     DB.officeLedger.push({
       id:       'OL-' + String(DB.officeLedger.length + 1).padStart(3, '0'),
       type:     'expense-allocation',
@@ -15863,9 +15854,8 @@ function submitAddFunds() {
     });
     autosave('officeLedger');
     apiCreateOfficeLedgerEntry(DB.officeLedger[DB.officeLedger.length - 1]).catch(function(){});
-    addAudit('UPDATE', 'Expenses', 'Fund ₱' + amount.toLocaleString() + ' allocated — ' + coveredCount + ' expense(s) marked Paid');
-    toast('₱' + covered.toLocaleString() + ' allocated — ' + coveredCount + ' expense(s) marked as Paid', 'success');
-    if (remaining > 0) toast('₱' + remaining.toLocaleString() + ' remaining (expenses exceed allocation)', 'info');
+    addAudit('UPDATE', 'Expenses', 'Fund ₱' + amount.toLocaleString() + ' allocated — ' + expFilter.length + ' expense(s) marked Paid (₱' + totalPending.toLocaleString() + ')');
+    toast(expFilter.length + ' expense(s) marked as Paid · ₱' + totalPending.toLocaleString() + ' covered', 'success');
     closeOverlay('overlay-add-funds');
     renderAccounting();
   } else {
