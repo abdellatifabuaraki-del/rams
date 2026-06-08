@@ -1474,7 +1474,6 @@ button[disabled][data-rbac-locked] {
     </div>
     <div class="pg-hdr-r" id="acc-hdr-actions">
       <button class="btn btn-s btn-sm" onclick="exportAccountingReport()">⬇ Export</button>
-      <button class="btn btn-ghost btn-sm" style="color:var(--red);border:1px solid var(--red)" onclick="resetAllExpenses()">↺ Reset</button>
       <button class="btn btn-p btn-sm" onclick="openAddExpense()">+ Record Expense</button>
     </div>
   </div>
@@ -6538,7 +6537,8 @@ function switchDrawerTab(tab, btn) {
     panel.innerHTML = docHeader + docList;
   }
   if (tab === 'expenses') {
-    var _canExp = getCurrentRole && !['Viewer'].includes(getCurrentRole());
+    var _canExp    = getCurrentRole && !['Viewer'].includes(getCurrentRole());
+    var _isAdminExp = getCurrentRole && getCurrentRole() === 'Admin';
     var exps   = DB.expenses.filter(function(e){ return e.applicant === app.name; });
     var total  = exps.reduce(function(s,e){ return s + (e.amount||0); }, 0);
 
@@ -6573,7 +6573,7 @@ function switchDrawerTab(tab, btn) {
             '<div style="display:flex;align-items:center;gap:8px;flex-shrink:0">' +
               '<span class="pill ' + (e.status==='Paid'?'pill-green':'pill-amber') + '">' + (e.status||'Pending') + '</span>' +
               '<span style="font-size:13px;font-weight:800;font-family:monospace">₱' + (e.amount||0).toLocaleString() + '</span>' +
-              (_canExp ? '<button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="confirmDelete(&quot;expense&quot;,&quot;' + e.id + '&quot;)">🗑</button>' : '') +
+              (_isAdminExp ? '<button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="confirmDelete(&quot;expense&quot;,&quot;' + e.id + '&quot;)">🗑</button>' : '') +
             '</div>' +
           '</div>';
         }).join('') +
@@ -11457,9 +11457,9 @@ function switchAccTab(tab, el) {
     else if (tab === 'ledger') hdra.innerHTML = '<button class="btn btn-s btn-sm" onclick="exportLedger()">⬇ Export Ledger</button><button class="btn btn-p btn-sm" onclick="openManualAdjustment()">+ Adjustment</button>';
     else if (tab === 'rules')  hdra.innerHTML = '<button class="btn btn-p btn-sm" onclick="openAddCountryRule()">+ Add Country</button>';
     else if (tab === 'employers') hdra.innerHTML = '<button class="btn btn-s btn-sm" onclick="exportEmployerFees()">⬇ Export</button>';
-    else if (tab === 'office') hdra.innerHTML = '<button class="btn btn-ghost btn-sm" style="color:var(--red);border:1px solid var(--red)" onclick="resetOfficeLedger()">↺ Reset</button><button class="btn btn-s btn-sm" onclick="exportOfficeLedger()">⬇ Export</button><button class="btn btn-s btn-sm" onclick="openAddFunds(\"PHP\")">+ Add Funds</button><button class="btn btn-p btn-sm" onclick="openOfficeExpense(\"PHP\")">− Expense</button>';
+    else if (tab === 'office') hdra.innerHTML = ((getCurrentRole && getCurrentRole() === 'Admin') ? '<button class="btn btn-ghost btn-sm" style="color:var(--red);border:1px solid var(--red)" onclick="resetOfficeLedger()">↺ Reset</button>' : '') + '<button class="btn btn-s btn-sm" onclick="exportOfficeLedger()">⬇ Export</button><button class="btn btn-s btn-sm" onclick="openAddFunds(\"PHP\")">+ Add Funds</button><button class="btn btn-p btn-sm" onclick="openOfficeExpense(\"PHP\")">− Expense</button>';
     else if (tab === 'invoices') hdra.innerHTML = '<button class="btn btn-p btn-sm" onclick="openNewInvoice()">+ New Invoice</button>';
-    else hdra.innerHTML = '<button class="btn btn-s btn-sm" onclick="exportAccountingReport()">⬇ Export</button><button class="btn btn-ghost btn-sm" style="color:var(--red);border:1px solid var(--red)" onclick="resetAllExpenses()">↺ Reset</button><button class="btn btn-p btn-sm" onclick="openAddExpense()">+ Record Expense</button>';
+    else hdra.innerHTML = '<button class="btn btn-s btn-sm" onclick="exportAccountingReport()">⬇ Export</button>' + ((getCurrentRole && getCurrentRole() === 'Admin') ? '<button class="btn btn-ghost btn-sm" style="color:var(--red);border:1px solid var(--red)" onclick="resetAllExpenses()">↺ Reset</button>' : '') + '<button class="btn btn-p btn-sm" onclick="openAddExpense()">+ Record Expense</button>';
   }
 
   if (tab === 'overview')     renderAccOverview();
@@ -11761,7 +11761,7 @@ function renderLedger() {
         (e.runningBalance>=0?'₱':'−₱')+Math.abs(e.runningBalance).toLocaleString()+
       '</td>'+
       (_isAdmin
-        ? '<td style="text-align:center;width:40px"><button class="btn btn-ghost btn-xs" style="color:var(--red);padding:3px 7px" onclick="deleteLedgerEntry(\''+e.id+'\')" title="Delete entry">🗑</button></td>'
+        ? '<td style="text-align:center;width:40px">' + ((getCurrentRole && getCurrentRole() === 'Admin') ? '<button class="btn btn-ghost btn-xs" style="color:var(--red);padding:3px 7px" onclick="deleteLedgerEntry(\''+e.id+'\')" title="Delete entry">🗑</button>' : '') + '</td>'
         : '<td></td>')+
     '</tr>';
   }).join('');
@@ -11869,7 +11869,7 @@ function _renderExpensesTabInner(search) {
       '<td style="text-align:right;white-space:nowrap">'+
         (app?'<button class="btn btn-ghost btn-xs" onclick="openDrawer(\''+app.id+'\')" title="View applicant">👤</button> ':'')+
         (agentId?'<button class="btn btn-sm" style="font-size:11px;background:var(--rbg);color:var(--red);border:1px solid #fca5a5" onclick="chargeExpenseToAgent(\''+e.id+'\',\''+agentId+'\')" >Charge Agent</button> ':'')+
-        '<button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="confirmDelete(\'expense\',\''+e.id+'\')" >🗑</button>'+
+        ((getCurrentRole && getCurrentRole() === 'Admin') ? '<button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="confirmDelete(\'expense\',\''+e.id+'\')" >🗑</button>' : '')+
       '</td>'+
     '</tr>';
   }).join('');
@@ -12060,6 +12060,9 @@ function renderCommissions() {
 
 // ── RESET COMMISSIONS — remove pending comms that don't match applicant status ──
 function resetCommissions() {
+  if ((typeof getCurrentRole === 'function') && getCurrentRole() !== 'Admin') {
+    toast('Only admins can reset commissions', 'error'); return;
+  }
   if (!hasPermission('Manage Accounting')) { toast('Your role cannot manage accounting','error'); return; }
   // Valid statuses for each tranche:
   // T1 (Medical Cleared 20%): applicant.medical === 'Passed' AND status not terminal-bad
@@ -12606,6 +12609,9 @@ function resetAgentBalanceToZero(agentId) {
 
 // ── deleteLedgerEntry — Admin-only permanent delete with balance reversal ─────────
 function deleteLedgerEntry(entryId) {
+  if ((typeof getCurrentRole === 'function') && getCurrentRole() !== 'Admin') {
+    toast('Only admins can delete ledger entries', 'error'); return;
+  }
   if ((typeof getCurrentRole === 'function') && getCurrentRole() !== 'Admin') {
     toast('Only Admins can delete ledger entries', 'error'); return;
   }
@@ -15117,7 +15123,7 @@ function saveInvoice() {
 }
 function viewInvoice(id) { var inv=(DB.invoices||[]).find(function(x){return x.id===id;}); if(!inv) return; _renderInvoicePrint(inv); openOverlay('overlay-invoice-print'); }
 function editInvoice(id) { var inv=(DB.invoices||[]).find(function(x){return x.id===id;}); if(!inv) return; _editingInvoiceId=id; openNewInvoice(); setTimeout(function(){ var t=document.getElementById('inv-modal-title'); if(t) t.textContent='🧾 Edit Invoice #'+inv.number; ['inv-number','inv-date','inv-counterpart','inv-charges-for','inv-employer-address','inv-notes'].forEach(function(id2){ var el=document.getElementById(id2),key=id2.replace('inv-','').replace(/-([a-z])/g,function(m,l){return l.toUpperCase();}); if(el&&inv[key]!=null) el.value=inv[key]; }); var pd=document.getElementById('inv-paid'); if(pd) pd.value=inv.paid||0; var sr=document.getElementById('inv-sar-rate'); if(sr) sr.value=inv.sarRate||3.75; var es=document.getElementById('inv-employer'); if(es) es.value=inv.employer; var rb=document.getElementById('inv-rows'); if(rb){ rb.innerHTML=''; (inv.rows||[]).forEach(function(r){ _addInvoiceRowData(r.applicant,r.particular,r.company,r.usd,inv.sarRate||3.75); }); } }, 100); }
-function deleteInvoice(id) { var inv=(DB.invoices||[]).find(function(x){return x.id===id;}); if(!inv||!confirm('Delete Invoice #'+inv.number+'?')) return; DB.invoices=(DB.invoices||[]).filter(function(x){return x.id!==id;}); autosave('invoices'); var dbId=inv._dbId||inv.id; if(dbId&&isUUID(dbId)) apiDeleteInvoice(dbId).then(function(r){if(r&&r.ok){try{_triggerImmediateSync();}catch(e){}}}).catch(function(){}); addAudit('DELETE','Invoice','Invoice #'+inv.number+' deleted'); toast('Invoice deleted','success'); renderInvoices(); }
+function deleteInvoice(id) { if ((typeof getCurrentRole === 'function') && getCurrentRole() !== 'Admin') { toast('Only admins can delete invoices', 'error'); return; } var inv=(DB.invoices||[]).find(function(x){return x.id===id;}); if(!inv||!confirm('Delete Invoice #'+inv.number+'?')) return; DB.invoices=(DB.invoices||[]).filter(function(x){return x.id!==id;}); autosave('invoices'); var dbId=inv._dbId||inv.id; if(dbId&&isUUID(dbId)) apiDeleteInvoice(dbId).then(function(r){if(r&&r.ok){try{_triggerImmediateSync();}catch(e){}}}).catch(function(){}); addAudit('DELETE','Invoice','Invoice #'+inv.number+' deleted'); toast('Invoice deleted','success'); renderInvoices(); }
 function previewInvoice() { var inv=_collectInvoiceData(); _renderInvoicePrint(inv); openOverlay('overlay-invoice-print'); }
 function _collectInvoiceData() {
   var rate=parseFloat((document.getElementById('inv-sar-rate')||{}).value)||3.75;
@@ -17243,6 +17249,9 @@ function saveViewerScope() {
 
 // ── Reset all expenses ────────────────────────────────────────────────
 function resetAllExpenses() {
+  if ((typeof getCurrentRole === 'function') && getCurrentRole() !== 'Admin') {
+    toast('Only admins can reset expenses', 'error'); return;
+  }
   if (!confirm('Clear ALL expense records? This cannot be undone.')) return;
   DB.expenses = [];
   filteredApps = [...getScopedApplicants()];
