@@ -15784,53 +15784,120 @@ function openAddFunds(currency) {
 }
 
 function updateFundsBalance() {
-  var cur = document.getElementById('funds-currency') ? document.getElementById('funds-currency').value : 'PHP';
-  var amt = parseFloat(document.getElementById('funds-amount') ? document.getElementById('funds-amount').value : 0) || 0;
-  var curBal = cur==='PHP' ? DB.officeFunds.balancePHP : DB.officeFunds.balanceUSD;
-  var sym    = cur==='PHP' ? '₱' : '$';
+  var cur    = document.getElementById('funds-currency') ? document.getElementById('funds-currency').value : 'PHP';
+  var amt    = parseFloat(document.getElementById('funds-amount') ? document.getElementById('funds-amount').value : 0) || 0;
+  var allocTo = document.querySelector('input[name="funds-allocate-to"]:checked');
+  var dest   = allocTo ? allocTo.value : 'office';
+
+  // Toggle expense category field
+  var expGrp = document.getElementById('funds-exp-category-grp');
+  if (expGrp) expGrp.style.display = dest === 'expenses' ? '' : 'none';
+
+  // Style radio labels
+  var offLabel = document.getElementById('funds-alloc-office') ? document.getElementById('funds-alloc-office').closest('label') : null;
+  var expLabel = document.getElementById('funds-alloc-expenses') ? document.getElementById('funds-alloc-expenses').closest('label') : null;
+  if (offLabel) { offLabel.style.borderColor = dest === 'office' ? 'var(--brand)' : 'var(--border)'; offLabel.style.background = dest === 'office' ? 'var(--brand-l)' : ''; }
+  if (expLabel) { expLabel.style.borderColor = dest === 'expenses' ? 'var(--brand)' : 'var(--border)'; expLabel.style.background = dest === 'expenses' ? 'var(--brand-l)' : ''; }
+
+  // Balance preview (only for office funds)
   var afterEl = document.getElementById('funds-after');
-  if (afterEl) afterEl.textContent = 'Current: '+sym+curBal.toLocaleString()+' → After: '+sym+(curBal+amt).toLocaleString();
+  if (afterEl) {
+    if (dest === 'office') {
+      var curBal = cur === 'PHP' ? DB.officeFunds.balancePHP : DB.officeFunds.balanceUSD;
+      var sym    = cur === 'PHP' ? '₱' : '$';
+      afterEl.textContent = 'Current: ' + sym + curBal.toLocaleString() + ' → After: ' + sym + (curBal + amt).toLocaleString();
+    } else {
+      var pendingAmt = DB.expenses.filter(function(e){ return e.status === 'Pending'; }).reduce(function(s,e){ return s + (e.amount||0); }, 0);
+      afterEl.textContent = 'Pending expenses: ₱' + pendingAmt.toLocaleString() + (amt ? ' → Covering ₱' + amt.toLocaleString() : '');
+    }
+  }
 }
 
 function submitAddFunds() {
-  var type   = document.getElementById('funds-type').value;
-  var cur    = document.getElementById('funds-currency').value;
-  var amount = parseFloat(document.getElementById('funds-amount').value)||0;
-  var source = (document.getElementById('funds-source').value||'').trim();
-  var date   = document.getElementById('funds-date').value;
-  var notes  = (document.getElementById('funds-notes').value||'').trim();
-  if (!amount || amount<=0) { toast('Enter a valid amount','error'); return; }
-  if (!date) { toast('Date is required','error'); return; }
+  var allocTo  = document.querySelector('input[name="funds-allocate-to"]:checked');
+  var dest     = allocTo ? allocTo.value : 'office';
+  var type     = document.getElementById('funds-type').value;
+  var cur      = document.getElementById('funds-currency').value;
+  var amount   = parseFloat(document.getElementById('funds-amount').value) || 0;
+  var source   = (document.getElementById('funds-source').value || '').trim();
+  var date     = document.getElementById('funds-date').value;
+  var notes    = (document.getElementById('funds-notes').value || '').trim();
+  var expCat   = document.getElementById('funds-exp-category') ? document.getElementById('funds-exp-category').value : '';
+  if (!amount || amount <= 0) { toast('Enter a valid amount', 'error'); return; }
+  if (!date) { toast('Date is required', 'error'); return; }
 
-  var user = null /* user via Store */;
-  var uname = user ? (JSON.parse(user).name||'Admin') : 'Admin';
-  var newBal = (cur==='PHP'?DB.officeFunds.balancePHP:DB.officeFunds.balanceUSD) + amount;
+  var uname = (window._ramsSessionUser && window._ramsSessionUser.name) || 'Admin';
 
-  DB.officeLedger.push({
-    id:         'OL-'+String(DB.officeLedger.length+1).padStart(3,'0'),
-    type:       'allocation',
-    currency:   cur,
-    amount:     amount,
-    balance:    newBal,
-    desc:       type.charAt(0).toUpperCase()+type.slice(1)+(source?' — '+source:''),
-    ref:        'ALLOC-'+String(Date.now()).slice(-5),
-    category:   null,
-    date:       date,
-    postedBy:   uname,
-    ts:         new Date().toISOString(),
-    notes:      notes,
-  });
-
-  autosave('officeLedger');
-  autosave('officeFunds');
-  var _lastEntry = DB.officeLedger[DB.officeLedger.length-1];
-  apiCreateOfficeLedgerEntry(_lastEntry).catch(function(){});
-  apiUpdateOfficeFunds(DB.officeFunds).catch(function(){});
-  addAudit('CREATE','Office Funds','Fund allocation: '+(cur==='PHP'?'₱':'$')+amount.toLocaleString()+' '+cur);
-  toast('₱'+(cur==='PHP'?amount.toLocaleString():amount.toLocaleString())+' '+cur+' allocated','success');
-  closeOverlay('overlay-add-funds');
-  recalcOfficeLedgerBalances();
-  renderOffice();
+  if (dest === 'expenses') {
+    // Allocate fund to cover pending expenses — mark them as Paid up to the amount
+    var remaining = amount;
+    var covered   = 0;
+    var coveredCount = 0;
+    var expFilter = DB.expenses.filter(function(e){
+      return e.status === 'Pending' && (cur === 'PHP') && (!expCat || e.category === expCat);
+    });
+    expFilter.forEach(function(e) {
+      if (remaining <= 0) return;
+      if (e.amount <= remaining) {
+        e.status   = 'Paid';
+        remaining -= e.amount;
+        covered   += e.amount;
+        coveredCount++;
+      }
+    });
+    autosave('expenses');
+    // Also add to office ledger as a record
+    DB.officeLedger.push({
+      id:       'OL-' + String(DB.officeLedger.length + 1).padStart(3, '0'),
+      type:     'expense-allocation',
+      currency: cur,
+      amount:   amount,
+      balance:  cur === 'PHP' ? DB.officeFunds.balancePHP : DB.officeFunds.balanceUSD,
+      desc:     'Fund allocated to expenses' + (expCat ? ' (' + expCat + ')' : '') + (source ? ' — ' + source : ''),
+      ref:      'EXP-ALLOC-' + String(Date.now()).slice(-5),
+      category: expCat || null,
+      date:     date,
+      postedBy: uname,
+      ts:       new Date().toISOString(),
+      notes:    notes,
+    });
+    autosave('officeLedger');
+    apiCreateOfficeLedgerEntry(DB.officeLedger[DB.officeLedger.length - 1]).catch(function(){});
+    addAudit('UPDATE', 'Expenses', 'Fund ₱' + amount.toLocaleString() + ' allocated — ' + coveredCount + ' expense(s) marked Paid');
+    toast('₱' + covered.toLocaleString() + ' allocated — ' + coveredCount + ' expense(s) marked as Paid', 'success');
+    if (remaining > 0) toast('₱' + remaining.toLocaleString() + ' remaining (expenses exceed allocation)', 'info');
+    closeOverlay('overlay-add-funds');
+    renderAccounting();
+  } else {
+    // Allocate to office funds
+    var newBal = (cur === 'PHP' ? DB.officeFunds.balancePHP : DB.officeFunds.balanceUSD) + amount;
+    if (cur === 'PHP') DB.officeFunds.balancePHP = newBal;
+    else               DB.officeFunds.balanceUSD = newBal;
+    DB.officeLedger.push({
+      id:       'OL-' + String(DB.officeLedger.length + 1).padStart(3, '0'),
+      type:     'allocation',
+      currency: cur,
+      amount:   amount,
+      balance:  newBal,
+      desc:     type.charAt(0).toUpperCase() + type.slice(1) + (source ? ' — ' + source : ''),
+      ref:      'ALLOC-' + String(Date.now()).slice(-5),
+      category: null,
+      date:     date,
+      postedBy: uname,
+      ts:       new Date().toISOString(),
+      notes:    notes,
+    });
+    autosave('officeLedger');
+    autosave('officeFunds');
+    var _lastEntry = DB.officeLedger[DB.officeLedger.length - 1];
+    apiCreateOfficeLedgerEntry(_lastEntry).catch(function(){});
+    apiUpdateOfficeFunds(DB.officeFunds).catch(function(){});
+    addAudit('CREATE', 'Office Funds', 'Fund allocation: ' + (cur === 'PHP' ? '₱' : '$') + amount.toLocaleString() + ' ' + cur);
+    toast((cur === 'PHP' ? '₱' : '$') + amount.toLocaleString() + ' ' + cur + ' added to office funds', 'success');
+    closeOverlay('overlay-add-funds');
+    recalcOfficeLedgerBalances();
+    renderOffice();
+  }
 }
 
 // ── OFFICE EXPENSE ────────────────────────────────────────────────────
@@ -18380,6 +18447,26 @@ async function loadSharedPermissions() {
       <button class="close-btn" onclick="closeOverlay('overlay-add-funds')">✕</button>
     </div>
     <div class="modal-body">
+      <!-- Allocate To -->
+      <div class="f-grp">
+        <label class="f-lbl">Allocate To <span class="req">*</span></label>
+        <div style="display:flex;gap:10px;margin-top:4px">
+          <label style="display:flex;align-items:center;gap:8px;flex:1;padding:10px 14px;border:1.5px solid var(--brand);border-radius:8px;cursor:pointer;background:var(--brand-l)">
+            <input type="radio" name="funds-allocate-to" value="office" id="funds-alloc-office" checked onchange="updateFundsBalance()">
+            <div>
+              <div style="font-size:13px;font-weight:700">🏢 Office Funds</div>
+              <div style="font-size:11px;color:var(--muted)">Adds to office balance</div>
+            </div>
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;flex:1;padding:10px 14px;border:1.5px solid var(--border);border-radius:8px;cursor:pointer" id="funds-alloc-exp-label">
+            <input type="radio" name="funds-allocate-to" value="expenses" id="funds-alloc-expenses" onchange="updateFundsBalance()">
+            <div>
+              <div style="font-size:13px;font-weight:700">💸 Expenses</div>
+              <div style="font-size:11px;color:var(--muted)">Covers pending expenses</div>
+            </div>
+          </label>
+        </div>
+      </div>
       <div class="f-row">
         <div class="f-grp">
           <label class="f-lbl">Type <span class="req">*</span></label>
@@ -18401,6 +18488,15 @@ async function loadSharedPermissions() {
         <label class="f-lbl">Amount <span class="req">*</span></label>
         <input class="f-inp" id="funds-amount" type="number" min="0" step="0.01" placeholder="0.00" oninput="updateFundsBalance()">
         <div style="font-size:11.5px;color:var(--muted);margin-top:4px" id="funds-after">Current balance: —</div>
+      </div>
+      <div class="f-grp" id="funds-exp-category-grp" style="display:none">
+        <label class="f-lbl">Expense Category</label>
+        <select class="f-inp" id="funds-exp-category">
+          <option value="">All Categories</option>
+          <option>Medical Exam</option><option>Documentation</option><option>Training</option>
+          <option>Transportation</option><option>Accommodation</option><option>OWWA</option>
+          <option>Visa</option><option>Others</option>
+        </select>
       </div>
       <div class="f-grp">
         <label class="f-lbl">Source / Reference</label>
