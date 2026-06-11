@@ -1852,7 +1852,6 @@ button[disabled][data-rbac-locked] {
             <select class="f-inp" id="office-ledger-type" onchange="renderOfficeLedger()" style="width:120px">
               <option value="all">All Types</option>
               <option value="allocation">Allocation</option>
-              <option value="expense-allocation">Exp. Allocation</option>
               <option value="refund">Refund</option>
               <option value="adjustment">Adjustment</option>
             </select>
@@ -15712,7 +15711,7 @@ function renderOfficeLedger() {
 
   // ── Office Fund Table (allocations, refunds, adjustments) ─────────────
   var fundEntries = DB.officeLedger.slice()
-    .filter(function(e){ return e.type !== 'expense'; })
+    .filter(function(e){ return e.type !== 'expense' && e.type !== 'expense-allocation'; })
     .sort(function(a,b){ return (b.ts||'').localeCompare(a.ts||''); });
   if (currFilter !== 'all') fundEntries = fundEntries.filter(function(e){ return e.currency === currFilter; });
   if (typeFilter !== 'all') fundEntries = fundEntries.filter(function(e){ return e.type === typeFilter; });
