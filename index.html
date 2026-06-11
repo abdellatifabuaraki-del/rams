@@ -18294,25 +18294,8 @@ function startChatPoll() {
           _fetchChatMessages(room.id).catch(function(){});
         }
       });
-      // DM discovery
-      if (me && DB.users && DB.users.length) {
-        DB.users.forEach(function(u) {
-          if (!u.name || u.name === me) return;
-          var dmId = _dmRoomId(me, u.name);
-          if (getChatDMs().find(function(d){ return d.id === dmId; })) return;
-          var tok = window._ramsSessionToken || '';
-          fetch(RAILWAY_URL + '/api/chat/messages/' + encodeURIComponent(dmId) + '?limit=1', {
-            headers: { 'Authorization': 'Bearer ' + tok },
-          }).then(function(res){ return res.ok ? res.json() : []; }).then(function(data) {
-            if (!Array.isArray(data) || !data.length) return;
-            var dms = getChatDMs();
-            if (!dms.find(function(d){ return d.id === dmId; })) {
-              dms.push({ id: dmId, name: u.name, type: 'dm', icon: '👤', unread: data.length });
-              saveChatDMs(dms); renderChatRooms(); _updateChatSidebarBadge();
-            }
-          }).catch(function(){});
-        });
-      }
+    // DM list is managed by backend /chat/dms — no auto-discovery needed
+    // _fetchChatDMs() on login handles restoring DMs across devices
       _updateChatSidebarBadge();
     }
     _chatPollTimer = setTimeout(_chatTick, 2000);
