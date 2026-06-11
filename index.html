@@ -1773,6 +1773,23 @@ button[disabled][data-rbac-locked] {
           <span>📤 <span id="cash-php-out">₱0</span> out</span>
           <span>📋 <span id="cash-php-count">0</span> transactions</span>
         </div>
+        <!-- Fund breakdown -->
+        <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div style="background:var(--s2);border-radius:8px;padding:8px 10px">
+            <div style="font-size:10px;font-weight:700;color:var(--muted);margin-bottom:3px">💸 EXPENSES FUND</div>
+            <div style="font-size:14px;font-weight:800;color:var(--red)" id="cash-php-exp-fund">₱0</div>
+            <div style="font-size:10px;color:var(--muted)" id="cash-php-exp-count">0 expenses</div>
+          </div>
+          <div style="background:var(--s2);border-radius:8px;padding:8px 10px">
+            <div style="font-size:10px;font-weight:700;color:var(--muted);margin-bottom:3px">🏢 OFFICE FUND</div>
+            <div style="font-size:14px;font-weight:800;color:var(--brand)" id="cash-php-office-fund">₱0</div>
+            <div style="font-size:10px;color:var(--muted)">allocated fund</div>
+          </div>
+        </div>
+        <div style="margin-top:8px;padding:6px 10px;background:var(--gbg);border-radius:8px;display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:10px;font-weight:700;color:var(--muted)">NET BALANCE</span>
+          <span style="font-size:13px;font-weight:800" id="cash-php-net">₱0</span>
+        </div>
       </div>
       <div class="cash-card cash-card-usd">
         <div class="cash-card-actions">
@@ -1786,6 +1803,23 @@ button[disabled][data-rbac-locked] {
           <span>📥 <span id="cash-usd-in">$0</span> in</span>
           <span>📤 <span id="cash-usd-out">$0</span> out</span>
           <span>📋 <span id="cash-usd-count">0</span> transactions</span>
+        </div>
+        <!-- Fund breakdown -->
+        <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div style="background:var(--s2);border-radius:8px;padding:8px 10px">
+            <div style="font-size:10px;font-weight:700;color:var(--muted);margin-bottom:3px">💸 EXPENSES FUND</div>
+            <div style="font-size:14px;font-weight:800;color:var(--red)" id="cash-usd-exp-fund">$0</div>
+            <div style="font-size:10px;color:var(--muted)" id="cash-usd-exp-count">0 expenses</div>
+          </div>
+          <div style="background:var(--s2);border-radius:8px;padding:8px 10px">
+            <div style="font-size:10px;font-weight:700;color:var(--muted);margin-bottom:3px">🏢 OFFICE FUND</div>
+            <div style="font-size:14px;font-weight:800;color:var(--green)" id="cash-usd-office-fund">$0</div>
+            <div style="font-size:10px;color:var(--muted)">allocated fund</div>
+          </div>
+        </div>
+        <div style="margin-top:8px;padding:6px 10px;background:var(--gbg);border-radius:8px;display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:10px;font-weight:700;color:var(--muted)">NET BALANCE</span>
+          <span style="font-size:13px;font-weight:800" id="cash-usd-net">$0</span>
         </div>
       </div>
     </div>
@@ -15550,6 +15584,34 @@ function renderOfficeCashCards() {
   setTxt('cash-usd-in',  '$'+usdIn.toLocaleString());
   setTxt('cash-usd-out', '$'+Math.round(usdLedgerOut).toLocaleString());
   setTxt('cash-usd-count', usdCnt);
+
+  // Expenses fund = total pending + paid expenses (not yet settled by agents)
+  var phpExpenses    = (DB.expenses||[]).filter(function(e){ return e.status !== 'Rejected' && e.status !== 'Charged'; });
+  var phpExpTotal    = phpExpenses.reduce(function(s,e){ return s+(parseFloat(e.amount)||0); }, 0);
+  var usdExpenses    = (DB.expenses||[]).filter(function(e){ return e.currency === 'USD' && e.status !== 'Rejected' && e.status !== 'Charged'; });
+  var usdExpTotal    = usdExpenses.reduce(function(s,e){ return s+(parseFloat(e.amount)||0); }, 0);
+
+  // Office fund = funds added via Add Funds (positive ledger entries)
+  var phpAllocated   = phpIn;
+  var usdAllocated   = usdIn;
+  var phpNet         = phpBalance;
+  var usdNet         = usdBalance;
+
+  setTxt('cash-php-exp-fund',    '₱' + Math.round(phpExpTotal).toLocaleString());
+  setTxt('cash-php-exp-count',   phpExpenses.length + ' expense' + (phpExpenses.length !== 1 ? 's' : ''));
+  setTxt('cash-php-office-fund', '₱' + Math.round(phpAllocated).toLocaleString());
+  setTxt('cash-php-net',         (phpNet < 0 ? '-₱' : '₱') + Math.abs(Math.round(phpNet)).toLocaleString());
+
+  setTxt('cash-usd-exp-fund',    '$' + usdExpTotal.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}));
+  setTxt('cash-usd-exp-count',   usdExpenses.length + ' expense' + (usdExpenses.length !== 1 ? 's' : ''));
+  setTxt('cash-usd-office-fund', '$' + usdAllocated.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}));
+  setTxt('cash-usd-net',         (usdNet < 0 ? '-$' : '$') + Math.abs(usdNet).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}));
+
+  // Color net balance
+  var phpNetEl = document.getElementById('cash-php-net');
+  if (phpNetEl) phpNetEl.style.color = phpNet < 0 ? 'var(--red)' : 'var(--green)';
+  var usdNetEl = document.getElementById('cash-usd-net');
+  if (usdNetEl) usdNetEl.style.color = usdNet < 0 ? 'var(--red)' : 'var(--green)';
 }
 
 // ── FLOW ROW ──────────────────────────────────────────────────────────
