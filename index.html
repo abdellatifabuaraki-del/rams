@@ -2923,6 +2923,12 @@ async function apiFetch(path, opts) {
   opts = opts || {};
   var method  = (opts.method || 'GET').toUpperCase();
   var token   = window._ramsSessionToken || '';
+
+  // Don't fire requests before login — prevents 401 flood on startup
+  if (!token && !path.includes('/auth/login') && !path.includes('/auth/register')) {
+    return { ok: false, status: 0, data: null };
+  }
+
   var headers = opts._noContentType
     ? { 'Authorization': 'Bearer ' + token }
     : Object.assign({ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, opts.headers || {});
