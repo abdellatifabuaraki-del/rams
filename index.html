@@ -1835,34 +1835,60 @@ button[disabled][data-rbac-locked] {
     <!-- Content grid -->
     <div style="display:grid;grid-template-columns:3fr 2fr;gap:16px;margin-bottom:16px">
 
-      <!-- Office Ledger -->
-      <div class="card" style="overflow:hidden">
-        <div class="office-ledger-hdr">
-          <div class="office-ledger-title">📒 Office Ledger</div>
-          <select class="f-inp" id="office-ledger-currency" onchange="renderOfficeLedger()" style="width:100px">
-            <option value="all">All</option>
-            <option value="PHP">PHP</option>
-            <option value="USD">USD</option>
-          </select>
-          <select class="f-inp" id="office-ledger-type" onchange="renderOfficeLedger()" style="width:120px">
-            <option value="all">All Types</option>
-            <option value="allocation">Allocation</option>
-            <option value="refund">Refund</option>
-            <option value="expense">Expense</option>
-            <option value="adjustment">Adjustment</option>
-          </select>
-          <button class="btn btn-s btn-sm" onclick="exportOfficeLedger()">⬇</button>
+      <!-- Office Ledger — two sections -->
+      <div style="display:flex;flex-direction:column;gap:16px">
+
+        <!-- Office Fund Ledger -->
+        <div class="card" style="overflow:hidden">
+          <div class="office-ledger-hdr">
+            <div class="office-ledger-title">🏢 Office Fund</div>
+            <select class="f-inp" id="office-ledger-currency" onchange="renderOfficeLedger()" style="width:100px">
+              <option value="all">All</option>
+              <option value="PHP">PHP</option>
+              <option value="USD">USD</option>
+            </select>
+            <button class="btn btn-s btn-sm" onclick="exportOfficeLedger()">⬇</button>
+          </div>
+          <table style="width:100%;border-collapse:collapse">
+            <thead>
+              <tr>
+                <th>Date</th><th>Type</th><th>Description</th>
+                <th style="text-align:right">Amount</th>
+                <th style="text-align:right">Balance</th>
+              </tr>
+            </thead>
+            <tbody id="office-fund-tbody"></tbody>
+          </table>
         </div>
-        <table style="width:100%;border-collapse:collapse">
-          <thead>
-            <tr>
-              <th>Date</th><th>Type</th><th>Description</th>
-              <th>Cat.</th><th style="text-align:right">Amount</th>
-              <th style="text-align:right">Balance</th>
-            </tr>
-          </thead>
-          <tbody id="office-ledger-tbody"></tbody>
-        </table>
+
+        <!-- Expenses Fund Ledger -->
+        <div class="card" style="overflow:hidden">
+          <div class="office-ledger-hdr">
+            <div class="office-ledger-title">💸 Expenses Fund</div>
+            <select class="f-inp" id="office-exp-ledger-currency" onchange="renderOfficeLedger()" style="width:100px">
+              <option value="all">All</option>
+              <option value="PHP">PHP</option>
+              <option value="USD">USD</option>
+            </select>
+            <select class="f-inp" id="office-exp-status-filter" onchange="renderOfficeLedger()" style="width:110px">
+              <option value="all">All Status</option>
+              <option value="Pending">Pending</option>
+              <option value="Paid">Paid</option>
+              <option value="Charged">Charged</option>
+            </select>
+          </div>
+          <table style="width:100%;border-collapse:collapse">
+            <thead>
+              <tr>
+                <th>Date</th><th>Applicant</th><th>Description</th>
+                <th>Status</th>
+                <th style="text-align:right">Amount</th>
+              </tr>
+            </thead>
+            <tbody id="office-expenses-tbody"></tbody>
+          </table>
+        </div>
+
       </div>
 
       <!-- Side panel: expense breakdown + refunds -->
@@ -15651,47 +15677,69 @@ function renderOfficeFlowRow() {
   }).join('');
 }
 function renderOfficeLedger() {
-  var currFilter = document.getElementById('office-ledger-currency') ? document.getElementById('office-ledger-currency').value : 'all';
-  var typeFilter = document.getElementById('office-ledger-type')     ? document.getElementById('office-ledger-type').value     : 'all';
-  var entries = DB.officeLedger.slice().sort(function(a,b){ return b.ts.localeCompare(a.ts); });
-  if (currFilter !== 'all') entries = entries.filter(function(e){ return e.currency===currFilter; });
-  if (typeFilter !== 'all') entries = entries.filter(function(e){ return e.type===typeFilter;     });
+  var currFilter      = (document.getElementById('office-ledger-currency')      || {}).value || 'all';
+  var expCurrFilter   = (document.getElementById('office-exp-ledger-currency')  || {}).value || 'all';
+  var expStatusFilter = (document.getElementById('office-exp-status-filter')    || {}).value || 'all';
 
-  var tbody = document.getElementById('office-ledger-tbody');
-  if (!tbody) return;
-  if (!entries.length) {
-    tbody.innerHTML = '<tr><td colspan="6"><div class="empty-state" style="padding:24px"><div class="empty-icon">📒</div><div class="empty-title">No entries found</div></div></td></tr>';
-    return;
+  var sym = function(cur) { return cur === 'PHP' ? '₱' : '$'; };
+  var isAdmin = (typeof getCurrentRole === 'function') && getCurrentRole() === 'Admin';
+  var typeCss  = { allocation:'lt-allocation', refund:'lt-refund', adjustment:'lt-adjustment', override:'lt-override', 'expense-allocation':'lt-allocation' };
+  var typeIcon = { allocation:'📥', refund:'↩', adjustment:'🔧', override:'⚠', 'expense-allocation':'💸' };
+
+  // ── Office Fund Table (allocations, refunds, adjustments) ─────────────
+  var fundEntries = DB.officeLedger.slice()
+    .filter(function(e){ return e.type !== 'expense'; })
+    .sort(function(a,b){ return (b.ts||'').localeCompare(a.ts||''); });
+  if (currFilter !== 'all') fundEntries = fundEntries.filter(function(e){ return e.currency === currFilter; });
+
+  var fundTbody = document.getElementById('office-fund-tbody');
+  if (fundTbody) {
+    if (!fundEntries.length) {
+      fundTbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);font-size:12px;padding:16px">No office fund entries</td></tr>';
+    } else {
+      fundTbody.innerHTML = fundEntries.map(function(e) {
+        var isNeg = e.amount < 0;
+        var dispAmt = sym(e.currency)+(isNeg?'-':'+')+Math.abs(e.amount).toLocaleString('en',{minimumFractionDigits:2});
+        var dispBal = e.balance !== undefined ? sym(e.currency)+Math.abs(e.balance).toLocaleString('en',{minimumFractionDigits:2}) : '—';
+        var delBtn  = isAdmin ? '<button onclick="deleteOfficeLedgerEntry(&quot;'+e.id+'&quot;)" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:14px;padding:2px 5px" title="Delete">🗑</button>' : '';
+        return '<tr>'+
+          '<td style="font-size:11px;font-family:monospace;color:var(--muted);white-space:nowrap">'+e.date+'</td>'+
+          '<td><span class="ledger-type-pill '+(typeCss[e.type]||'lt-allocation')+'">'+(typeIcon[e.type]||'•')+' '+e.type.charAt(0).toUpperCase()+e.type.slice(1)+'</span>'+
+            '<span class="pill '+(e.currency==='PHP'?'pill-blue':'pill-green')+'" style="font-size:10px;margin-left:4px">'+e.currency+'</span></td>'+
+          '<td style="font-size:12.5px;max-width:180px">'+e.desc+(e.ref?'<div style="font-size:10px;color:var(--dim);font-family:monospace">'+e.ref+'</div>':'')+'</td>'+
+          '<td style="text-align:right;font-weight:800;font-family:monospace;color:'+(isNeg?'var(--red)':'var(--green)')+'">'+dispAmt+'</td>'+
+          '<td style="text-align:right;font-weight:700;font-family:monospace;font-size:12px;color:'+(e.balance>=0?'var(--text)':'var(--red)')+'">'+dispBal+'</td>'+
+          '<td>'+delBtn+'</td></tr>';
+      }).join('');
+    }
   }
 
-  var typeCss  = { allocation:'lt-allocation', refund:'lt-refund', expense:'lt-expense', adjustment:'lt-adjustment', override:'lt-override' };
-  var typeIcon  = { allocation:'📥', refund:'↩', expense:'📤', adjustment:'🔧', override:'⚠' };
-  var sym = function(cur) { return cur==='PHP'?'₱':'$'; };
+  // ── Expenses Fund Table (from DB.expenses) ──────────────────────────────
+  var expEntries = (DB.expenses || []).slice()
+    .sort(function(a,b){ return (b.date||b.ts||'').localeCompare(a.date||a.ts||''); });
+  if (expCurrFilter !== 'all') expEntries = expEntries.filter(function(e){ return (e.currency||'PHP') === expCurrFilter; });
+  if (expStatusFilter !== 'all') expEntries = expEntries.filter(function(e){ return e.status === expStatusFilter; });
 
-  var isAdmin = (typeof getCurrentRole === 'function') && getCurrentRole() === 'Admin';
-  tbody.innerHTML = entries.map(function(e) {
-    var isNeg = e.amount < 0;
-    var dispAmt = sym(e.currency)+(isNeg?'-':'+')+(Math.abs(e.amount)).toLocaleString('en',{minimumFractionDigits:2});
-    var dispBal = e.balance !== undefined ? sym(e.currency)+Math.abs(e.balance).toLocaleString('en',{minimumFractionDigits:2}) : '—';
-    var delBtn = isAdmin
-      ? '<button onclick="deleteOfficeLedgerEntry(\''+e.id+'\')" '+
-        'style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:15px;padding:2px 6px;border-radius:4px;transition:color .15s" '+
-        'onmouseover="this.style.color=\'var(--red)\'" onmouseout="this.style.color=\'var(--muted)\'" '+
-        'title="Delete entry">🗑</button>'
-      : '';
-    return '<tr>'+
-      '<td style="font-size:11px;font-family:\'IBM Plex Mono\',monospace;color:var(--muted);white-space:nowrap">'+e.date+'</td>'+
-      '<td><span class="ledger-type-pill '+(typeCss[e.type]||'lt-allocation')+'">'+(typeIcon[e.type]||'•')+' '+e.type.charAt(0).toUpperCase()+e.type.slice(1)+'</span>'+
-        '<span class="pill '+(e.currency==='PHP'?'pill-blue':'pill-green')+'" style="font-size:10px;margin-left:4px">'+e.currency+'</span></td>'+
-      '<td style="font-size:12.5px;max-width:180px">'+e.desc+(e.ref?'<div style="font-size:10px;color:var(--dim);font-family:\'IBM Plex Mono\',monospace">'+e.ref+'</div>':'')+'</td>'+
-      '<td style="font-size:11.5px;color:var(--muted)">'+(e.category||'—')+'</td>'+
-      '<td style="text-align:right;font-weight:800;font-family:\'IBM Plex Mono\',monospace;color:'+(isNeg?'var(--red)':'var(--green)')+'">'+dispAmt+'</td>'+
-      '<td style="text-align:right;font-weight:700;font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:'+(e.balance>=0?'var(--text)':'var(--red)')+'">'+dispBal+'</td>'+
-      '<td style="text-align:right;padding:4px 6px">'+delBtn+'</td>'+
-    '</tr>';
-  }).join('');
+  var expTbody = document.getElementById('office-expenses-tbody');
+  if (expTbody) {
+    if (!expEntries.length) {
+      expTbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);font-size:12px;padding:16px">No expense entries</td></tr>';
+    } else {
+      var statusColor = { Pending:'var(--amber)', Paid:'var(--green)', Charged:'var(--brand)', Rejected:'var(--red)' };
+      expTbody.innerHTML = expEntries.map(function(e) {
+        var sc = statusColor[e.status] || 'var(--muted)';
+        var delBtn = isAdmin ? '<button onclick="confirmDelete(&quot;expense&quot;,&quot;'+e.id+'&quot;)" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:14px;padding:2px 5px" title="Delete">🗑</button>' : '';
+        return '<tr>'+
+          '<td style="font-size:11px;font-family:monospace;color:var(--muted);white-space:nowrap">'+(e.date||'—')+'</td>'+
+          '<td style="font-size:12px;font-weight:700">'+(e.applicant||'—')+'<div style="font-size:10px;color:var(--muted)">'+(e.category||'')+'</div></td>'+
+          '<td style="font-size:12px;max-width:160px">'+(e.desc||e.description||'—')+'</td>'+
+          '<td><span style="font-size:11px;font-weight:700;color:'+sc+';background:'+sc+'22;padding:2px 7px;border-radius:10px">'+e.status+'</span></td>'+
+          '<td style="text-align:right;font-weight:800;font-family:monospace;color:var(--red)">-₱'+parseFloat(e.amount||0).toLocaleString()+'</td>'+
+          '<td>'+delBtn+'</td></tr>';
+      }).join('');
+    }
+  }
 }
-
 // ── CATEGORY BREAKDOWN ────────────────────────────────────────────────
 function deleteOfficeLedgerEntry(entryId) {
   if ((typeof getCurrentRole === 'function') && getCurrentRole() !== 'Admin') {
