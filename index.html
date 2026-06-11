@@ -12954,6 +12954,18 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
       // Update agent totals
       agent.totalExpenses = (agent.totalExpenses || 0) + grandTotal;
 
+      // Sync all charged expenses to backend
+      uncharged.forEach(function(e) {
+        var dbId = e._dbId || e.id;
+        if (dbId && isUUID(dbId)) {
+          apiFetch('/expenses/' + dbId, {
+            method: 'PATCH',
+            body: JSON.stringify({ status: 'Charged', agent_id: agent._dbId || agent.id }),
+          }).catch(function(){});
+        }
+      });
+      autosave('expenses');
+
       addAudit(
         'UPDATE', 'Agent',
         newStatus + ': ₱' + grandTotal.toLocaleString() + ' (' + uncharged.length +
