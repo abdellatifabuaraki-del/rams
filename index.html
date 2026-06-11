@@ -12954,15 +12954,23 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
       // Update agent totals
       agent.totalExpenses = (agent.totalExpenses || 0) + grandTotal;
 
-      // Sync all charged expenses to backend
-      uncharged.forEach(function(e) {
+      // Sync all charged expenses to backend — only send status, not agent_id (avoids FK constraint issues)
+      var _chargePromises = uncharged.map(function(e) {
         var dbId = e._dbId || e.id;
-        if (dbId && isUUID(dbId)) {
-          apiFetch('/expenses/' + dbId, {
-            method: 'PATCH',
-            body: JSON.stringify({ status: 'Charged', agent_id: agent._dbId || agent.id }),
-          }).catch(function(){});
-        }
+        if (!dbId || !isUUID(dbId)) return Promise.resolve();
+        return apiFetch('/expenses/' + dbId, {
+          method: 'PATCH',
+          body: JSON.stringify({ status: 'Charged' }),
+        }).then(function(r) {
+          if (r && r.ok && r.data) {
+            e.status = r.data.status || 'Charged';
+          }
+        }).catch(function(){});
+      });
+      // After all PATCHes complete, re-render so UI shows updated statuses
+      Promise.all(_chargePromises).then(function() {
+        autosave('expenses');
+        if (typeof renderExpensesTab === 'function') renderExpensesTab();
       });
       autosave('expenses');
 
