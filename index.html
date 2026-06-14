@@ -4399,51 +4399,40 @@ function startPolling() {
       window._lastNotifFetch = Date.now();
       apiFetch('/notifications').then(function(r) {
         if (!r || !r.ok || !Array.isArray(r.data)) return;
+
+        // Build authoritative read map — localStorage persisted set takes priority over server
         var localReadMap = {};
-        (DB.notifications||[]).forEach(function(n){ if (n.read) localReadMap[n.id] = true; });
-        // Apply persistent read set — survives poll cycles
+        (DB.notifications||[]).forEach(function(n){ if (n.read) localReadMap[n.id] = true; if (n._dbId) localReadMap[n._dbId] = true; });
         if (window._localReadIds) window._localReadIds.forEach(function(id){ localReadMap[id] = true; });
 
-        // Apply server is_read=true (sticky: once read always read)
-        r.data.forEach(function(row) {
-          var sid = row.id;
-          if (sid && (row.is_read || localReadMap[sid])) row.is_read = true;
-        });
-
-  // Dedup merged notifications: same title+body = same event.
-  // Prefer the copy with a richer link (local NTF- wins over server copy with null link).
-  function _dedupeNotifs(arr) {
-    var seen = {};
-    var out = [];
-    arr.forEach(function(n) {
-      var key = (n.title || '') + '|' + (n.body || '');
-      if (!seen[key]) { seen[key] = n; out.push(n); }
-      else {
-        // Prefer the version that has a link with an id
-        var cur = seen[key];
-        var nHasId  = n.link && n.link.id;
-        var curHasId = cur.link && cur.link.id;
-        if (nHasId && !curHasId) {
-          // Replace stored with richer version
-          var idx = out.indexOf(cur);
-          out[idx] = n;
-          seen[key] = n;
-        }
-      }
-    });
-    return out;
-  }
         var _fromServer = r.data.map(function(n) {
-          return { id: n.id, _dbId: n.id, title: n.title, body: n.body||'',
+          return {
+            id:   n.id, _dbId: n.id,
+            title: n.title, body: n.body||'',
             type: n.type||'system',
-            read: !!(n.is_read || n.read || localReadMap[n.id]),  // is_read = server field, read = local
+            read: !!(n.is_read || localReadMap[n.id]),
             ts:   new Date(n.created_at||Date.now()).getTime(),
             time: new Date(n.created_at||Date.now()).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),
-            link: n.link ? (typeof n.link==='string'?JSON.parse(n.link):n.link) : null };
+            link: n.link ? (typeof n.link==='string'?JSON.parse(n.link):n.link) : null,
+          };
         });
+
+        // Keep local-only notifications (NTF-*) that haven't been synced to server yet
         var _serverIds = new Set(_fromServer.map(function(n){ return n.id; }));
-        var _localOnly = (DB.notifications||[]).filter(function(n){ return n.id && n.id.startsWith('NTF-') && !_serverIds.has(n.id); });
-        DB.notifications = _dedupeNotifs(_fromServer.concat(_localOnly)).sort(function(a,b){ return (b.ts||0)-(a.ts||0); });
+        var _localOnly = (DB.notifications||[]).filter(function(n){
+          return n.id && n.id.startsWith('NTF-') && !_serverIds.has(n.id);
+        });
+
+        // Merge + dedup by title|body — newest first, cap at 100
+        var seen = {};
+        DB.notifications = _fromServer.concat(_localOnly)
+          .sort(function(a,b){ return (b.ts||0)-(a.ts||0); })
+          .filter(function(n) {
+            var key = (n.title||'') + '|' + (n.body||'');
+            if (!seen[key]) { seen[key] = true; return true; }
+            return false;
+          }).slice(0, 100);
+
         autosave('notifications');
         renderNotifications();
       }).catch(function(){});
@@ -4672,33 +4661,36 @@ function _startNotifTicker() {
       window._notifBackendTs = now;
       apiFetch('/notifications').then(function(r) {
         if (!r || !r.ok || !Array.isArray(r.data) || r.data.length === 0) return;
+
         var localReadMap = {};
-        (DB.notifications||[]).forEach(function(n){ if (n.read) localReadMap[n.id] = true; });
-        // Apply persistent read set — survives poll cycles
+        (DB.notifications||[]).forEach(function(n){ if (n.read) localReadMap[n.id] = true; if (n._dbId) localReadMap[n._dbId] = true; });
         if (window._localReadIds) window._localReadIds.forEach(function(id){ localReadMap[id] = true; });
-        function _dedupeN(arr) {
-          var seen={},out=[];
-          arr.forEach(function(n){
-            var k=(n.title||'')+'|'+(n.body||'');
-            if(!seen[k]){seen[k]=n;out.push(n);}
-            else if(n.link&&n.link.id&&!(seen[k].link&&seen[k].link.id)){out[out.indexOf(seen[k])]=n;seen[k]=n;}
-          });
-          return out;
-        }
+
         var fromSrv = r.data.map(function(n){
-          return {id:n.id,_dbId:n.id,title:n.title,body:n.body||'',type:n.type||'system',
-            read:localReadMap[n.id]||!!n.is_read,
-            ts:new Date(n.created_at||Date.now()).getTime(),
-            time:new Date(n.created_at||Date.now()).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),
-            link:n.link?(typeof n.link==='string'?JSON.parse(n.link):n.link):null};
+          return { id:n.id, _dbId:n.id, title:n.title, body:n.body||'', type:n.type||'system',
+            read: !!(n.is_read || localReadMap[n.id]),
+            ts: new Date(n.created_at||Date.now()).getTime(),
+            time: new Date(n.created_at||Date.now()).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),
+            link: n.link?(typeof n.link==='string'?JSON.parse(n.link):n.link):null };
         });
-        var srvIds = new Set(fromSrv.map(function(n){return n.id;}));
-        var local  = (DB.notifications||[]).filter(function(n){return n.id&&n.id.startsWith('NTF-')&&!srvIds.has(n.id);});
-        var merged = _dedupeN(fromSrv.concat(local)).sort(function(a,b){return(b.ts||0)-(a.ts||0);});
-        if (JSON.stringify(merged.map(function(n){return n.id;})) !==
-            JSON.stringify((DB.notifications||[]).map(function(n){return n.id;}))) {
-          DB.notifications = merged;
-          autosave('notifications');
+
+        var srvIds   = new Set(fromSrv.map(function(n){ return n.id; }));
+        var localOnly = (DB.notifications||[]).filter(function(n){ return n.id && n.id.startsWith('NTF-') && !srvIds.has(n.id); });
+
+        var seen2 = {};
+        var merged = fromSrv.concat(localOnly)
+          .sort(function(a,b){ return (b.ts||0)-(a.ts||0); })
+          .filter(function(n){
+            var k = (n.title||'')+'|'+(n.body||'');
+            if (!seen2[k]){ seen2[k]=true; return true; } return false;
+          }).slice(0,100);
+
+        // Only update unread count if something actually changed
+        var prevUnread = (DB.notifications||[]).filter(function(n){ return !n.read; }).length;
+        DB.notifications = merged;
+        var newUnread  = merged.filter(function(n){ return !n.read; }).length;
+        autosave('notifications');
+        if (newUnread !== prevUnread || merged.length !== (DB.notifications||[]).length) {
           renderNotifications();
         }
       }).catch(function(){});
@@ -6242,14 +6234,21 @@ function pushNotif(title, body, type, link) {
     link:  link || null,   // { page, id } for deep navigation
   };
 
-  // Dedup: block identical title+body fired within the last 5 minutes
-  var DEDUP_WINDOW_MS = 5 * 60 * 1000;
+  // Dedup: block identical title+body fired within the last 24 hours
+  var DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000;
   var now_ts = Date.now();
   if (!DB.notifications) DB.notifications = [];
+
+  // Session-level dedup — fastest check, no array scan
+  if (!window._pushedNotifKeys) window._pushedNotifKeys = new Set();
+  var sessionKey = title + '|' + (body || '');
+  if (window._pushedNotifKeys.has(sessionKey)) return;
+
   var isDuplicate = DB.notifications.some(function(x) {
     return x.title === title && x.body === (body || '') && (now_ts - (x.ts || 0)) < DEDUP_WINDOW_MS;
   });
-  if (isDuplicate) return;
+  if (isDuplicate) { window._pushedNotifKeys.add(sessionKey); return; }
+  window._pushedNotifKeys.add(sessionKey);
   DB.notifications.unshift(n);
   // Cap at 50 to prevent unbounded growth
   if (DB.notifications.length > 50) DB.notifications = DB.notifications.slice(0, 50);
@@ -10942,6 +10941,7 @@ async function handleLogout() {
   window._ramsSessionUser  = null;
   window._ramsSessionToken = null;
   window._localReadIds     = new Set();
+  window._pushedNotifKeys  = new Set();
   try { localStorage.removeItem('rams:notif:readIds'); } catch(e) {}
   await Store.remove('rams:session:token');
   await Store.remove('rams:session:user');
