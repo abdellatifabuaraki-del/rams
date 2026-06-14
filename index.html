@@ -13690,6 +13690,9 @@ function openManualAdjustment() {
   if (!hasPermission('Manage Accounting')) {
     toast('Your role cannot post manual adjustments', 'error'); return;
   }
+  // Sync currentLedgerAgent from the ledger dropdown (in case user changed it)
+  var _ledSel = document.getElementById('ledger-agent-select');
+  if (_ledSel && _ledSel.value) currentLedgerAgent = _ledSel.value;
   var sel = document.getElementById('adj-agent');
   if (sel) {
     sel.innerHTML = DB.agents.map(function(a){
@@ -13698,6 +13701,13 @@ function openManualAdjustment() {
     // Pre-select the agent currently open in the ledger
     if (currentLedgerAgent) {
       sel.value = currentLedgerAgent;
+      // Fallback: try matching by _dbId in case of UUID vs local ID mismatch
+      if (sel.value !== currentLedgerAgent || !sel.value) {
+        var _matchedAdj = DB.agents.find(function(a){
+          return a.id === currentLedgerAgent || a._dbId === currentLedgerAgent;
+        });
+        if (_matchedAdj) sel.value = _matchedAdj.id;
+      }
     }
   }
   // Ensure agent names are resolved on all applicants before filtering
