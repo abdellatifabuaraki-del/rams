@@ -15764,14 +15764,15 @@ function renderOfficeLedger() {
   // Allocations made to expenses fund (from officeLedger with type='expense-allocation')
   DB.officeLedger.filter(function(e){ return e.type === 'expense-allocation'; }).forEach(function(e) {
     expFundEntries.push({
-      _type:    'allocation',
-      date:     e.date || '',
-      ts:       e.ts || '',
-      label:    e.desc || 'Fund Allocation',
-      ref:      e.ref || '',
-      currency: e.currency || 'PHP',
-      amount:   Math.abs(e.amount),  // positive = funds IN
-      status:   null,
+      _type:     'allocation',
+      _ledgerId: e.id,
+      date:      e.date || '',
+      ts:        e.ts || '',
+      label:     e.desc || 'Fund Allocation',
+      ref:       e.ref || '',
+      currency:  e.currency || 'PHP',
+      amount:    Math.abs(e.amount),
+      status:    null,
     });
   });
 
@@ -15817,6 +15818,7 @@ function renderOfficeLedger() {
         var dispBal = (e._balance < 0 ? '-₱' : '₱') + Math.abs(Math.round(e._balance)).toLocaleString();
 
         if (isIn) {
+          var allocDelBtn = isAdmin ? '<button onclick="deleteOfficeLedgerEntryById(\''+e._ledgerId+'\')" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:14px;padding:2px 5px" title="Delete">🗑</button>' : '';
           return '<tr style="background:var(--gbg)">'+
             '<td style="font-size:11px;font-family:monospace;color:var(--muted);white-space:nowrap">'+e.date+'</td>'+
             '<td colspan="2"><span style="font-size:11px;font-weight:700;background:var(--gbg);color:var(--green);padding:2px 7px;border-radius:10px;border:1px solid var(--green)">📥 Allocation</span>'+
@@ -15825,7 +15827,7 @@ function renderOfficeLedger() {
             '<td></td>'+
             '<td style="text-align:right;font-weight:800;font-family:monospace;color:var(--green)">'+dispAmt+'</td>'+
             '<td style="text-align:right;font-weight:700;font-family:monospace;font-size:12px;color:'+balColor+'">'+dispBal+'</td>'+
-            '<td></td>'+
+            '<td style="text-align:center">'+allocDelBtn+'</td>'+
           '</tr>';
         } else {
           var sc = statusColor[e.status] || 'var(--muted)';
@@ -15844,6 +15846,7 @@ function renderOfficeLedger() {
   }
 }
 // ── CATEGORY BREAKDOWN ────────────────────────────────────────────────
+function deleteOfficeLedgerEntryById(entryId) { deleteOfficeLedgerEntry(entryId); }
 function deleteOfficeLedgerEntry(entryId) {
   if ((typeof getCurrentRole === 'function') && getCurrentRole() !== 'Admin') {
     toast('Only Admins can delete office ledger entries', 'error'); return;
