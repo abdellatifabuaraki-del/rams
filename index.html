@@ -15257,8 +15257,19 @@ function saveInvoice() {
   if (!inv.rows.length) { toast('Add at least one row','error'); return; }
   if (!DB.invoices) DB.invoices=[];
   if (_editingInvoiceId) {
-    var idx=DB.invoices.findIndex(function(x){return x.id===_editingInvoiceId;});
-    if(idx!==-1){ DB.invoices[idx]=inv; apiUpdateInvoice(inv).then(function(r){ if(r&&r.ok){try{_triggerImmediateSync();}catch(e){}} }).catch(function(){}); }
+    var idx = DB.invoices.findIndex(function(x){ return x.id === _editingInvoiceId || x._dbId === _editingInvoiceId; });
+    if (idx !== -1) {
+      inv._dbId = DB.invoices[idx]._dbId || DB.invoices[idx].id;
+      inv.id    = DB.invoices[idx].id;
+      DB.invoices[idx] = inv;
+      apiUpdateInvoice(inv).then(function(r){ if(r&&r.ok){try{_triggerImmediateSync();}catch(e){}} }).catch(function(){});
+    } else {
+      // Fallback: _editingInvoiceId is the DB UUID itself
+      inv._dbId = _editingInvoiceId;
+      inv.id    = _editingInvoiceId;
+      DB.invoices.unshift(inv);
+      apiUpdateInvoice(inv).then(function(r){ if(r&&r.ok){try{_triggerImmediateSync();}catch(e){}} }).catch(function(){});
+    }
   } else {
     DB.invoices.unshift(inv);
     apiCreateInvoice(inv).then(function(r){ if(r&&r.ok){autosave('invoices');try{_triggerImmediateSync();}catch(e){}} }).catch(function(){});
@@ -15267,7 +15278,7 @@ function saveInvoice() {
   toast('Invoice #'+inv.number+' saved','success'); closeOverlay('overlay-invoice'); renderInvoices();
 }
 function viewInvoice(id) { var inv=(DB.invoices||[]).find(function(x){return x.id===id;}); if(!inv) return; _renderInvoicePrint(inv); openOverlay('overlay-invoice-print'); }
-function editInvoice(id) { var inv=(DB.invoices||[]).find(function(x){return x.id===id;}); if(!inv) return; _editingInvoiceId=id; openNewInvoice(); setTimeout(function(){ var t=document.getElementById('inv-modal-title'); if(t) t.textContent='🧾 Edit Invoice #'+inv.number; ['inv-number','inv-date','inv-counterpart','inv-charges-for','inv-employer-address','inv-notes'].forEach(function(id2){ var el=document.getElementById(id2),key=id2.replace('inv-','').replace(/-([a-z])/g,function(m,l){return l.toUpperCase();}); if(el&&inv[key]!=null) el.value=inv[key]; }); var pd=document.getElementById('inv-paid'); if(pd) pd.value=inv.paid||0; var sr=document.getElementById('inv-sar-rate'); if(sr) sr.value=inv.sarRate||3.75; var es=document.getElementById('inv-employer'); if(es) es.value=inv.employer; var rb=document.getElementById('inv-rows'); if(rb){ rb.innerHTML=''; (inv.rows||[]).forEach(function(r){ _addInvoiceRowData(r.applicant,r.particular,r.company,r.usd,inv.sarRate||3.75); }); } }, 100); }
+function editInvoice(id) { var inv=(DB.invoices||[]).find(function(x){return x.id===id||x._dbId===id;}); if(!inv) return; _editingInvoiceId = inv._dbId || inv.id; openNewInvoice(); setTimeout(function(){ var t=document.getElementById('inv-modal-title'); if(t) t.textContent='🧾 Edit Invoice #'+inv.number; ['inv-number','inv-date','inv-counterpart','inv-charges-for','inv-employer-address','inv-notes'].forEach(function(id2){ var el=document.getElementById(id2),key=id2.replace('inv-','').replace(/-([a-z])/g,function(m,l){return l.toUpperCase();}); if(el&&inv[key]!=null) el.value=inv[key]; }); var pd=document.getElementById('inv-paid'); if(pd) pd.value=inv.paid||0; var sr=document.getElementById('inv-sar-rate'); if(sr) sr.value=inv.sarRate||3.75; var es=document.getElementById('inv-employer'); if(es) es.value=inv.employer; var rb=document.getElementById('inv-rows'); if(rb){ rb.innerHTML=''; (inv.rows||[]).forEach(function(r){ _addInvoiceRowData(r.applicant,r.particular,r.company,r.usd,inv.sarRate||3.75); }); } }, 100); }
 function deleteInvoice(id) { if ((typeof getCurrentRole === 'function') && getCurrentRole() !== 'Admin') { toast('Only admins can delete invoices', 'error'); return; } var inv=(DB.invoices||[]).find(function(x){return x.id===id;}); if(!inv||!confirm('Delete Invoice #'+inv.number+'?')) return; DB.invoices=(DB.invoices||[]).filter(function(x){return x.id!==id;}); autosave('invoices'); var dbId=inv._dbId||inv.id; if(dbId&&isUUID(dbId)) apiDeleteInvoice(dbId).then(function(r){if(r&&r.ok){try{_triggerImmediateSync();}catch(e){}}}).catch(function(){}); addAudit('DELETE','Invoice','Invoice #'+inv.number+' deleted'); toast('Invoice deleted','success'); renderInvoices(); }
 function previewInvoice() { var inv=_collectInvoiceData(); _renderInvoicePrint(inv); openOverlay('overlay-invoice-print'); }
 function _collectInvoiceData() {
