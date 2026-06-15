@@ -10941,6 +10941,7 @@ async function _doLogin() {
 async function handleLogout() {
   stopPolling();
   stopChatPoll();
+  _stopInvoiceSync();
   await flushAutosave();
   window._ramsSessionUser  = null;
   window._ramsSessionToken = null;
@@ -15186,6 +15187,38 @@ function submitCountryRule() {
 }
 
 // ── INVOICE API ───────────────────────────────────────────────────────
+var _lastInvoiceTs = 0;
+var _invoiceSyncTimer = null;
+
+function _startInvoiceSync() {
+  if (_invoiceSyncTimer) return;
+  function _tick() {
+    if (!window._ramsSessionToken) { _invoiceSyncTimer = setTimeout(_tick, 5000); return; }
+    apiFetch('/invoices').then(function(r) {
+      if (!r || !r.ok || !Array.isArray(r.data)) return;
+      var latestTs = r.data.reduce(function(max, row) {
+        var t = new Date(row.updated_at || row.created_at || 0).getTime();
+        return t > max ? t : max;
+      }, 0);
+      if (latestTs > _lastInvoiceTs) {
+        _lastInvoiceTs = latestTs;
+        var prevCount = (DB.invoices||[]).length;
+        DB.invoices = r.data.map(function(row) {
+          var data = typeof row.data === 'string' ? JSON.parse(row.data||'{}') : (row.data||{});
+          return Object.assign({}, data, { id:row.id, _dbId:row.id, number:row.number||data.number, date:row.date||data.date, employer:row.employer||data.employer });
+        });
+        autosave('invoices');
+        if (currentPage === 'accounting') renderInvoices();
+      }
+    }).catch(function(){});
+    _invoiceSyncTimer = setTimeout(_tick, 3000);
+  }
+  _invoiceSyncTimer = setTimeout(_tick, 3000);
+}
+
+function _stopInvoiceSync() {
+  if (_invoiceSyncTimer) { clearTimeout(_invoiceSyncTimer); _invoiceSyncTimer = null; }
+}
 async function apiFetchInvoices() {
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
   if (!isLive) return;
@@ -15197,7 +15230,6 @@ async function apiFetchInvoices() {
       return Object.assign({}, data, { id:row.id, _dbId:row.id, number:row.number||data.number, date:row.date||data.date, employer:row.employer||data.employer });
     });
     autosave('invoices');
-    // Re-render if count changed (new invoice added by another user)
     if (DB.invoices.length !== prevCount && currentPage === 'accounting') {
       renderInvoices();
     }
@@ -15272,7 +15304,13 @@ function saveInvoice() {
     }
   } else {
     DB.invoices.unshift(inv);
-    apiCreateInvoice(inv).then(function(r){ if(r&&r.ok){autosave('invoices');try{_triggerImmediateSync();}catch(e){}} }).catch(function(){});
+    apiCreateInvoice(inv).then(function(r){
+      if (r && r.ok) {
+        autosave('invoices');
+        apiFetchInvoices().then(function(){ renderInvoices(); }).catch(function(){});
+        try { _triggerImmediateSync(); } catch(e) {}
+      }
+    }).catch(function(){});
   }
   autosave('invoices'); addAudit('CREATE','Invoice','Invoice #'+inv.number+' — '+inv.employer+' $'+inv.totalUSD.toLocaleString());
   toast('Invoice #'+inv.number+' saved','success'); closeOverlay('overlay-invoice'); renderInvoices();
@@ -17292,6 +17330,7 @@ _showApp = function(user) {
     startPolling();
     startChatPoll();
     _fetchChatDMs().catch(function(){});
+    _startInvoiceSync();
     if (typeof _startNotifTicker === "function") _startNotifTicker();
   }, 200);
 };
