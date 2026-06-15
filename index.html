@@ -15594,22 +15594,16 @@ function renderOfficeCashCards() {
   var f     = DB.officeFunds;
   var fx    = f.fxRate || 57.5;
 
-  // Cash IN: only explicit add-fund entries from office ledger
+  // Cash IN: positive officeLedger entries only
   var phpIn = DB.officeLedger.filter(function(e){ return e.currency==='PHP' && e.amount>0; }).reduce(function(s,e){ return s+e.amount; },0);
   var usdIn = DB.officeLedger.filter(function(e){ return e.currency==='USD' && e.amount>0; }).reduce(function(s,e){ return s+e.amount; },0);
 
-  // Cash OUT: office ledger negative entries + ALL expenses from DB.expenses
-  // (Office fund pays for all expenses before agents reimburse)
-  var phpLedgerOut = Math.abs(DB.officeLedger.filter(function(e){ return e.currency==='PHP' && e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0));
+  // Cash OUT: negative officeLedger entries only (office expenses, overrides)
+  var phpOut = Math.abs(DB.officeLedger.filter(function(e){ return e.currency==='PHP' && e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0));
   var usdLedgerOut = Math.abs(DB.officeLedger.filter(function(e){ return e.currency==='USD' && e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0));
 
-  // Include expenses from DB.expenses that aren't already in officeLedger
-  var dbExpTotal = (DB.expenses||[]).filter(function(e){ return e.status !== 'Rejected'; }).reduce(function(s,e){ return s+(parseFloat(e.amount)||0); },0);
-  // Only add the gap (avoid double-counting entries already in officeLedger)
-  var phpOut = Math.max(phpLedgerOut, dbExpTotal);
-
   var phpBalance = phpIn - phpOut;
-  var usdBalance = usdIn  - usdLedgerOut;
+  var usdBalance = usdIn - usdLedgerOut;
 
   // Keep stored value in sync — persist to Store + backend
   f.balancePHP = phpBalance;
@@ -15679,13 +15673,10 @@ function renderOfficeFlowRow() {
   var phpIn  = DB.officeLedger.filter(function(e){ return e.currency==='PHP'&&e.amount>0; }).reduce(function(s,e){ return s+e.amount; },0);
   var usdIn  = DB.officeLedger.filter(function(e){ return e.currency==='USD'&&e.amount>0; }).reduce(function(s,e){ return s+e.amount; },0);
 
-  // Cash OUT: office ledger entries + all expenses (office fund pays for all expenses)
+  // Cash OUT: only negative officeLedger entries (office expenses, overrides)
   var phpLedgerOut = Math.abs(DB.officeLedger.filter(function(e){ return e.currency==='PHP'&&e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0));
   var usdLedgerOut = Math.abs(DB.officeLedger.filter(function(e){ return e.currency==='USD'&&e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0));
-  var dbExpTotal   = (DB.expenses||[]).filter(function(e){ return e.status!=='Rejected'; }).reduce(function(s,e){ return s+(parseFloat(e.amount)||0); },0);
-
-  // Use whichever is higher (prevents double-count if expenses already in ledger)
-  var phpOut = Math.max(phpLedgerOut, dbExpTotal);
+  var phpOut = phpLedgerOut;
 
   // Total In / Net Balance — consistent with PHP card
   var totalInPHP  = phpIn  + usdIn  * fx;
