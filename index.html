@@ -15579,27 +15579,12 @@ function renderOffice() {
 
 // ── RECALCULATE RUNNING BALANCES ─────────────────────────────────────
 function recalcOfficeLedgerBalances() {
-  // Build combined timeline: office ledger entries + expenses as outflows
-  var combined = [];
-
-  // Office ledger entries (allocations, refunds, adjustments)
-  DB.officeLedger.forEach(function(e) {
-    combined.push({ ts: e.ts || e.date || '', currency: e.currency || 'PHP', amount: e.amount, _ref: e });
-  });
-
-  // Expenses as negative outflows from office fund (PHP only, not rejected)
-  (DB.expenses || []).filter(function(e){ return e.status !== 'Rejected'; }).forEach(function(e) {
-    combined.push({ ts: e.date || e.ts || '', currency: 'PHP', amount: -(parseFloat(e.amount) || 0), _isExp: true });
-  });
-
-  combined.sort(function(a, b){ return (a.ts||'').localeCompare(b.ts||''); });
-
   var phpBal = 0, usdBal = 0;
-  combined.forEach(function(e) {
-    if (e.currency === 'PHP') { phpBal += e.amount; if (e._ref) e._ref.balance = phpBal; }
-    else { usdBal += e.amount; if (e._ref) e._ref.balance = usdBal; }
+  var sorted = DB.officeLedger.slice().sort(function(a, b){ return (a.ts||'').localeCompare(b.ts||''); });
+  sorted.forEach(function(e) {
+    if (e.currency === 'PHP') { phpBal += e.amount; e.balance = phpBal; }
+    else { usdBal += e.amount; e.balance = usdBal; }
   });
-
   DB.officeFunds.balancePHP = phpBal;
   DB.officeFunds.balanceUSD = usdBal;
 }
