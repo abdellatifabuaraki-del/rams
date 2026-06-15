@@ -1878,10 +1878,10 @@ button[disabled][data-rbac-locked] {
         <div class="card" style="overflow:hidden">
           <div class="office-ledger-hdr">
             <div class="office-ledger-title">💸 Expenses Fund</div>
-            <select class="f-inp" id="office-exp-ledger-currency" onchange="renderOfficeLedger()" style="width:100px">
-              <option value="all">All</option>
-              <option value="PHP">PHP</option>
-              <option value="USD">USD</option>
+            <select class="f-inp" id="office-exp-type-filter" onchange="renderOfficeLedger()" style="width:120px">
+              <option value="all">All Types</option>
+              <option value="allocation">Allocations</option>
+              <option value="expense">Expenses</option>
             </select>
             <select class="f-inp" id="office-exp-status-filter" onchange="renderOfficeLedger()" style="width:110px">
               <option value="all">All Status</option>
@@ -15746,76 +15746,73 @@ function renderOfficeLedger() {
     }
   }
 
-  // ── Expenses Fund Table — allocations IN + expenses OUT + running balance ──
-  var expCurrFilter   = (document.getElementById('office-exp-ledger-currency')  || {}).value || 'all';
-  var expStatusFilter = (document.getElementById('office-exp-status-filter')    || {}).value || 'all';
+  // ── Expenses Fund: expense-allocations (IN) + DB.expenses (OUT) only ─────
+  var expTypeFilter   = (document.getElementById('office-exp-type-filter')   || {}).value || 'all';
+  var expStatusFilter = (document.getElementById('office-exp-status-filter') || {}).value || 'all';
 
-  // Build combined entries: allocations to expenses fund + individual expenses
   var expFundEntries = [];
 
-  // Allocations made to expenses fund (from officeLedger with type='expense-allocation')
-  DB.officeLedger.filter(function(e){ return e.type === 'expense-allocation'; }).forEach(function(e) {
-    expFundEntries.push({
-      _type:     'allocation',
-      _ledgerId: e.id,
-      date:      e.date || '',
-      ts:        e.ts || '',
-      label:     e.desc || 'Fund Allocation',
-      ref:       e.ref || '',
-      currency:  e.currency || 'PHP',
-      amount:    Math.abs(e.amount),
-      status:    null,
-    });
-  });
+  // Credits IN — only expense-allocation entries from officeLedger
+  if (expTypeFilter === 'all' || expTypeFilter === 'allocation') {
+    DB.officeLedger
+      .filter(function(e){ return e.type === 'expense-allocation'; })
+      .forEach(function(e) {
+        expFundEntries.push({
+          _type:     'allocation',
+          _ledgerId: e.id,
+          date:      e.date || '',
+          ts:        e.ts  || e.date || '',
+          label:     e.desc || 'Fund Allocation',
+          ref:       e.ref || '',
+          amount:    Math.abs(e.amount),   // positive = IN
+          status:    null,
+        });
+      });
+  }
 
-  // Expenses (funds OUT)
-  var allExp = (DB.expenses || []).filter(function(e){ return e.status !== 'Rejected'; });
-  if (expCurrFilter !== 'all') allExp = allExp.filter(function(e){ return (e.currency||'PHP') === expCurrFilter; });
-  if (expStatusFilter !== 'all') allExp = allExp.filter(function(e){ return e.status === expStatusFilter; });
-  allExp.forEach(function(e) {
-    expFundEntries.push({
-      _type:    'expense',
-      date:     e.date || '',
-      ts:       e.date || e.ts || '',
-      label:    e.desc || e.description || '—',
-      sub:      (e.applicant || '') + (e.category ? ' · ' + e.category : ''),
-      currency: e.currency || 'PHP',
-      amount:   -parseFloat(e.amount || 0),  // negative = funds OUT
-      status:   e.status,
-      id:       e.id,
+  // Debits OUT — only DB.expenses (applicant expenses), never office ledger expenses
+  if (expTypeFilter === 'all' || expTypeFilter === 'expense') {
+    var appExps = (DB.expenses || []).filter(function(e){ return e.status !== 'Rejected'; });
+    if (expStatusFilter !== 'all') appExps = appExps.filter(function(e){ return e.status === expStatusFilter; });
+    appExps.forEach(function(e) {
+      expFundEntries.push({
+        _type:  'expense',
+        date:   e.date || '',
+        ts:     e.date || e.ts || '',
+        label:  e.desc || e.description || '—',
+        sub:    (e.applicant || '') + (e.category ? ' · ' + e.category : ''),
+        amount: -(parseFloat(e.amount) || 0),  // negative = OUT
+        status: e.status,
+        id:     e.id,
+      });
     });
-  });
+  }
 
-  // Sort oldest to newest to compute running balance
+  // Sort oldest→newest to compute running balance, then reverse for display
   expFundEntries.sort(function(a, b){ return (a.ts||a.date||'').localeCompare(b.ts||b.date||''); });
-
-  // Compute running balance
-  var runBal = 0;
-  expFundEntries.forEach(function(e){ runBal += e.amount; e._balance = runBal; });
-
-  // Reverse for display (newest first)
+  var expRunBal = 0;
+  expFundEntries.forEach(function(e){ expRunBal += e.amount; e._balance = expRunBal; });
   expFundEntries.reverse();
 
   var expTbody = document.getElementById('office-expenses-tbody');
   if (expTbody) {
     if (!expFundEntries.length) {
-      expTbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);font-size:12px;padding:16px">No expense fund entries</td></tr>';
+      expTbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);font-size:12px;padding:16px">No entries</td></tr>';
     } else {
       var statusColor = { Pending:'var(--amber)', Paid:'var(--green)', Charged:'var(--brand)', Rejected:'var(--red)' };
       expTbody.innerHTML = expFundEntries.map(function(e) {
-        var isIn  = e._type === 'allocation';
-        var color = isIn ? 'var(--green)' : 'var(--red)';
-        var dispAmt = (isIn ? '+₱' : '-₱') + Math.abs(e.amount).toLocaleString('en',{minimumFractionDigits:0});
+        var isIn     = e._type === 'allocation';
+        var dispAmt  = (isIn ? '+₱' : '-₱') + Math.abs(e.amount).toLocaleString('en',{minimumFractionDigits:0});
         var balColor = e._balance >= 0 ? 'var(--text)' : 'var(--red)';
-        var dispBal = (e._balance < 0 ? '-₱' : '₱') + Math.abs(Math.round(e._balance)).toLocaleString();
+        var dispBal  = (e._balance < 0 ? '-₱' : '₱') + Math.abs(Math.round(e._balance)).toLocaleString();
 
         if (isIn) {
           var allocDelBtn = isAdmin ? '<button onclick="deleteOfficeLedgerEntryById(\''+e._ledgerId+'\')" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:14px;padding:2px 5px" title="Delete">🗑</button>' : '';
           return '<tr style="background:var(--gbg)">'+
             '<td style="font-size:11px;font-family:monospace;color:var(--muted);white-space:nowrap">'+e.date+'</td>'+
-            '<td colspan="2"><span style="font-size:11px;font-weight:700;background:var(--gbg);color:var(--green);padding:2px 7px;border-radius:10px;border:1px solid var(--green)">📥 Allocation</span>'+
+            '<td colspan="2"><span style="font-size:11px;font-weight:700;color:var(--green);background:var(--gbg);padding:2px 8px;border-radius:10px;border:1px solid var(--green)">📥 Allocation</span>'+
               '<div style="font-size:12px;font-weight:700;margin-top:3px">'+e.label+'</div>'+
-              (e.ref ? '<div style="font-size:10px;color:var(--muted);font-family:monospace">'+e.ref+'</div>' : '')+'</td>'+
+              (e.ref?'<div style="font-size:10px;color:var(--muted);font-family:monospace">'+e.ref+'</div>':'')+'</td>'+
             '<td></td>'+
             '<td style="text-align:right;font-weight:800;font-family:monospace;color:var(--green)">'+dispAmt+'</td>'+
             '<td style="text-align:right;font-weight:700;font-family:monospace;font-size:12px;color:'+balColor+'">'+dispBal+'</td>'+
