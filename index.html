@@ -15579,11 +15579,11 @@ function renderOffice() {
 
 // ── RECALCULATE RUNNING BALANCES ─────────────────────────────────────
 function recalcOfficeLedgerBalances() {
-  // Office fund ledger: ONLY allocation/deposit/transfer/refund/adjustment/override
+  // Office fund = allocations IN − office expenses OUT
   // expense-allocation belongs to expenses fund — excluded here
   var phpBal = 0, usdBal = 0;
   var sorted = DB.officeLedger
-    .filter(function(e){ return e.type !== 'expense-allocation' && e.type !== 'expense'; })
+    .filter(function(e){ return e.type !== 'expense-allocation'; })
     .slice().sort(function(a, b){ return (a.ts||'').localeCompare(b.ts||''); });
   sorted.forEach(function(e) {
     if (e.currency === 'PHP') { phpBal += e.amount; e.balance = phpBal; }
@@ -15599,7 +15599,7 @@ function renderOfficeCashCards() {
   var fx    = f.fxRate || 57.5;
 
   // Office Fund only — exclude expense-allocation (belongs to expenses fund)
-  var _of = DB.officeLedger.filter(function(e){ return e.type !== 'expense-allocation' && e.type !== 'expense'; });
+  var _of = DB.officeLedger.filter(function(e){ return e.type !== 'expense-allocation'; });
   var phpIn  = _of.filter(function(e){ return e.currency==='PHP' && e.amount>0; }).reduce(function(s,e){ return s+e.amount; },0);
   var usdIn  = _of.filter(function(e){ return e.currency==='USD' && e.amount>0; }).reduce(function(s,e){ return s+e.amount; },0);
   var phpOut = Math.abs(_of.filter(function(e){ return e.currency==='PHP' && e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0));
@@ -15672,8 +15672,8 @@ function renderOfficeFlowRow() {
   var f   = DB.officeFunds;
   var fx  = f.fxRate || 57.5;
 
-  // Office Fund only — exclude expense-allocation entries
-  var _of2 = DB.officeLedger.filter(function(e){ return e.type !== 'expense-allocation' && e.type !== 'expense'; });
+  // Office Fund: allocations IN, office expenses OUT — exclude only expense-allocation
+  var _of2 = DB.officeLedger.filter(function(e){ return e.type !== 'expense-allocation'; });
   var phpIn  = _of2.filter(function(e){ return e.currency==='PHP'&&e.amount>0; }).reduce(function(s,e){ return s+e.amount; },0);
   var usdIn  = _of2.filter(function(e){ return e.currency==='USD'&&e.amount>0; }).reduce(function(s,e){ return s+e.amount; },0);
   var phpOut = Math.abs(_of2.filter(function(e){ return e.currency==='PHP'&&e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0));
@@ -15719,7 +15719,7 @@ function renderOfficeLedger() {
 
   // ── Office Fund Table (allocations, refunds, adjustments) ─────────────
   var fundEntries = DB.officeLedger.slice()
-    .filter(function(e){ return e.type !== 'expense-allocation' && e.type !== 'expense'; })
+    .filter(function(e){ return e.type !== 'expense-allocation'; })
     .sort(function(a,b){ return (b.ts||'').localeCompare(a.ts||''); });
   if (currFilter !== 'all') fundEntries = fundEntries.filter(function(e){ return e.currency === currFilter; });
   if (typeFilter !== 'all') fundEntries = fundEntries.filter(function(e){ return e.type === typeFilter; });
