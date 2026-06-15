@@ -4547,7 +4547,11 @@ function startPolling() {
     apiFetchCountryRules().catch(function(){});
     apiFetchComplaints().catch(function(){});
     apiFetchDocuments().catch(function(){});
-    apiFetchInvoices().catch(function(){});
+    apiFetchInvoices().then(function() {
+      if (currentPage === 'accounting' && document.querySelector('.acc-tab.active[data-tab="invoices"]')) {
+        renderInvoices();
+      }
+    }).catch(function(){});
     // Refresh inquiries every ~60s so staff see new website inquiries promptly
     if (!window._lastInqFetch || Date.now()-window._lastInqFetch > 60000) {
       window._lastInqFetch = Date.now();
@@ -15187,11 +15191,16 @@ async function apiFetchInvoices() {
   if (!isLive) return;
   var r = await apiFetch('/invoices');
   if (r.ok && Array.isArray(r.data)) {
+    var prevCount = (DB.invoices||[]).length;
     DB.invoices = r.data.map(function(row) {
       var data = typeof row.data === 'string' ? JSON.parse(row.data||'{}') : (row.data||{});
       return Object.assign({}, data, { id:row.id, _dbId:row.id, number:row.number||data.number, date:row.date||data.date, employer:row.employer||data.employer });
     });
     autosave('invoices');
+    // Re-render if count changed (new invoice added by another user)
+    if (DB.invoices.length !== prevCount && currentPage === 'accounting') {
+      renderInvoices();
+    }
   }
 }
 async function apiCreateInvoice(inv) {
