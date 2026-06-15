@@ -15582,8 +15582,10 @@ function recalcOfficeLedgerBalances() {
   var phpBal = 0, usdBal = 0;
   var sorted = DB.officeLedger.slice().sort(function(a, b){ return (a.ts||'').localeCompare(b.ts||''); });
   sorted.forEach(function(e) {
-    if (e.currency === 'PHP') { phpBal += e.amount; e.balance = phpBal; }
-    else { usdBal += e.amount; e.balance = usdBal; }
+    // expense-allocation transfers money OUT of office fund to expenses fund
+    var amt = (e.type === 'expense-allocation') ? -Math.abs(e.amount) : e.amount;
+    if (e.currency === 'PHP') { phpBal += amt; e.balance = phpBal; }
+    else { usdBal += amt; e.balance = usdBal; }
   });
   DB.officeFunds.balancePHP = phpBal;
   DB.officeFunds.balanceUSD = usdBal;
@@ -15594,12 +15596,13 @@ function renderOfficeCashCards() {
   var f     = DB.officeFunds;
   var fx    = f.fxRate || 57.5;
 
-  // Cash IN: positive officeLedger entries only
-  var phpIn = DB.officeLedger.filter(function(e){ return e.currency==='PHP' && e.amount>0; }).reduce(function(s,e){ return s+e.amount; },0);
-  var usdIn = DB.officeLedger.filter(function(e){ return e.currency==='USD' && e.amount>0; }).reduce(function(s,e){ return s+e.amount; },0);
+  // Cash IN: only true fund additions (allocation, deposit, transfer, refund) — NOT expense-allocations
+  var phpIn = DB.officeLedger.filter(function(e){ return e.currency==='PHP' && e.amount>0 && e.type !== 'expense-allocation'; }).reduce(function(s,e){ return s+e.amount; },0);
+  var usdIn = DB.officeLedger.filter(function(e){ return e.currency==='USD' && e.amount>0 && e.type !== 'expense-allocation'; }).reduce(function(s,e){ return s+e.amount; },0);
 
-  // Cash OUT: negative officeLedger entries only (office expenses, overrides)
-  var phpOut = Math.abs(DB.officeLedger.filter(function(e){ return e.currency==='PHP' && e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0));
+  // Cash OUT: negative entries (office expenses, overrides) + expense-allocations transferred to expenses fund
+  var phpExpAlloc = DB.officeLedger.filter(function(e){ return e.currency==='PHP' && e.type === 'expense-allocation'; }).reduce(function(s,e){ return s+Math.abs(e.amount); },0);
+  var phpOut = Math.abs(DB.officeLedger.filter(function(e){ return e.currency==='PHP' && e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0)) + phpExpAlloc;
   var usdLedgerOut = Math.abs(DB.officeLedger.filter(function(e){ return e.currency==='USD' && e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0));
 
   var phpBalance = phpIn - phpOut;
@@ -15642,7 +15645,7 @@ function renderOfficeCashCards() {
   var usdExpTotal    = usdExpenses.reduce(function(s,e){ return s+(parseFloat(e.amount)||0); }, 0);
 
   // Office fund = funds added via Add Funds (positive ledger entries)
-  var phpAllocated   = phpIn;
+  var phpAllocated   = phpIn;  // phpIn already excludes expense-allocations
   var usdAllocated   = usdIn;
   var phpNet         = phpBalance;
   var usdNet         = usdBalance;
@@ -15669,14 +15672,15 @@ function renderOfficeFlowRow() {
   var f   = DB.officeFunds;
   var fx  = f.fxRate || 57.5;
 
-  // Cash IN from office ledger
-  var phpIn  = DB.officeLedger.filter(function(e){ return e.currency==='PHP'&&e.amount>0; }).reduce(function(s,e){ return s+e.amount; },0);
-  var usdIn  = DB.officeLedger.filter(function(e){ return e.currency==='USD'&&e.amount>0; }).reduce(function(s,e){ return s+e.amount; },0);
+  // Cash IN from office ledger — exclude expense-allocations (those are transfers out)
+  var phpIn  = DB.officeLedger.filter(function(e){ return e.currency==='PHP'&&e.amount>0&&e.type!=='expense-allocation'; }).reduce(function(s,e){ return s+e.amount; },0);
+  var usdIn  = DB.officeLedger.filter(function(e){ return e.currency==='USD'&&e.amount>0&&e.type!=='expense-allocation'; }).reduce(function(s,e){ return s+e.amount; },0);
 
-  // Cash OUT: only negative officeLedger entries (office expenses, overrides)
+  // Cash OUT: negative officeLedger entries + expense-allocations (transfers to expenses fund)
+  var phpExpAlloc2 = DB.officeLedger.filter(function(e){ return e.currency==='PHP' && e.type==='expense-allocation'; }).reduce(function(s,e){ return s+Math.abs(e.amount); },0);
   var phpLedgerOut = Math.abs(DB.officeLedger.filter(function(e){ return e.currency==='PHP'&&e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0));
   var usdLedgerOut = Math.abs(DB.officeLedger.filter(function(e){ return e.currency==='USD'&&e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0));
-  var phpOut = phpLedgerOut;
+  var phpOut = phpLedgerOut + phpExpAlloc2;
 
   // Total In / Net Balance — consistent with PHP card
   var totalInPHP  = phpIn  + usdIn  * fx;
