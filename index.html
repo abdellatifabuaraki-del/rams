@@ -1643,6 +1643,7 @@ button[disabled][data-rbac-locked] {
           <button class="btn btn-ghost btn-sm" onclick="clearCommissionFilters()" style="font-size:11.5px">Clear</button>
           <button class="btn btn-ghost btn-sm" onclick="backfillCommissions()" style="font-size:11.5px;color:var(--brand);border-color:var(--brand)" title="Create missing T1/T2/T3 commissions for deployed/OWWA/medical-passed applicants">⚡ Backfill</button>
           <button class="btn btn-ghost btn-sm" onclick="resetCommissions()" style="font-size:11.5px;color:var(--red);border-color:var(--red)" title="Remove pending commissions that don't match the applicant's current status">🔄 Fix Mismatches</button>
+          <button class="btn btn-ghost btn-sm" onclick="cleanDuplicateCommissions()" style="font-size:11.5px;color:var(--amber);border-color:var(--amber)" title="Permanently delete duplicate Reversed commission entries">🧹 Clean Duplicates</button>
           <span id="comm-filter-count" style="font-size:11px;color:var(--muted);margin-left:auto;white-space:nowrap"></span>
         </div>
       </div>
@@ -11990,6 +11991,16 @@ function _renderExpensesTabInner(search) {
 function renderCommissions() {
   var today = new Date();
 
+  // Deduplicate reversed commissions — hide extras where same applicant+tranche+agent has multiple Reversed
+  // Keep only the most recent Reversed per applicant+tranche+agent combo; hide older duplicates
+  var _seenReversed = {};
+  var _sortedByDate = DB.commissions.slice().sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
+  _sortedByDate.forEach(function(c) {
+    if (c.status !== 'Reversed') return;
+    var key = (c.applicantName||'').toLowerCase() + '|' + c.tranche + '|' + (c.agentId||'');
+    if (_seenReversed[key]) { c._hideDuplicate = true; } else { _seenReversed[key] = true; c._hideDuplicate = false; }
+  });
+
   // KPIs
   var kpisEl = document.getElementById('commission-kpis');
   if (kpisEl) {
@@ -12114,6 +12125,7 @@ function renderCommissions() {
     var fAgent  = (document.getElementById('comm-filter-agent')||{}).value||'';
 
     var filtered = DB.commissions.filter(function(cm) {
+      if (cm._hideDuplicate) return false; // hide ghost reversed duplicates
       if (fTranche && String(cm.tranche) !== fTranche) return false;
       if (fStatus  && cm.status !== fStatus) return false;
       if (fAgent) {
@@ -12460,6 +12472,36 @@ function releaseCommission(commId) {
   try{_triggerImmediateSync();}catch(e){}
   renderCommissions();
 }
+function cleanDuplicateCommissions() {
+  if (getCurrentRole() !== 'Admin') { toast('Admin only', 'error'); return; }
+
+  // Find all duplicate Reversed entries — same applicant+tranche+agent, keep newest
+  var seen = {};
+  var toDelete = [];
+  var sorted = DB.commissions.slice().sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
+  sorted.forEach(function(c) {
+    if (c.status !== 'Reversed') return;
+    var key = (c.applicantName||'').toLowerCase() + '|' + c.tranche + '|' + (c.agentId||'');
+    if (seen[key]) { toDelete.push(c); } else { seen[key] = true; }
+  });
+
+  if (!toDelete.length) { toast('No duplicate reversed commissions found', 'info'); return; }
+  if (!confirm('Delete ' + toDelete.length + ' duplicate Reversed commission entries?')) return;
+
+  toDelete.forEach(function(c) {
+    var dbId = c._dbId || c.id;
+    if (dbId && isUUID(dbId)) {
+      apiFetch('/commissions/' + dbId, { method: 'DELETE' }).catch(function(){});
+    }
+  });
+
+  var deleteIds = new Set(toDelete.map(function(c){ return c.id; }));
+  DB.commissions = DB.commissions.filter(function(c){ return !deleteIds.has(c.id); });
+  autosave('commissions');
+  toast('Removed ' + toDelete.length + ' duplicate entries', 'success');
+  renderCommissions();
+}
+
 function reverseCommission(commId) {
   var _role2 = getCurrentRole();
   if (_role2 !== 'Admin' && _role2 !== 'Finance') {
