@@ -12073,7 +12073,23 @@ function renderCommissions() {
         '<div style="text-align:right">'+
           '<div style="font-size:13px;font-weight:800;font-family:\'IBM Plex Mono\',monospace">'+(c.currency==='USD'?'$':'₱')+c.amount.toLocaleString()+' '+(c.currency||'PHP')+'</div>'+
           '<div style="font-size:11px;color:var(--muted)">'+(c.currency==='USD'?'≈ ₱'+Math.round(c.amount*((DB.officeFunds&&DB.officeFunds.fxRate)||57.5)).toLocaleString()+' PHP':'≈ $'+Math.round(c.amount/((DB.officeFunds&&DB.officeFunds.fxRate)||57.5)).toLocaleString()+' USD')+'</div>'+
-          '<button class="btn btn-sm" style="font-size:11px;margin-top:4px;background:var(--gbg);color:var(--green);border:1px solid #86efac" onclick="releaseCommission(\''+c.id+'\')">Release</button>'+
+          (function(){
+            var _canRelease = true;
+            var _lockMsg = '';
+            if (c.tranche > 1) {
+              var _prevT = c.tranche - 1;
+              var _prevRel = DB.commissions.find(function(x){
+                return x.tranche===_prevT && x.status==='Released' &&
+                  (x.applicantId===c.applicantId || (x.applicantName&&c.applicantName&&x.applicantName.toLowerCase()===c.applicantName.toLowerCase()));
+              });
+              if (!_prevRel) { _canRelease = false; _lockMsg = '🔒 T'+_prevT+' not yet released'; }
+            }
+            var _role = typeof getCurrentRole==='function' ? getCurrentRole() : '';
+            var _canAct = _role==='Admin' || _role==='Finance';
+            if (!_canAct) return '<div style="font-size:10px;color:var(--muted);margin-top:4px">Finance/Admin only</div>';
+            if (!_canRelease) return '<div style="font-size:10px;color:var(--amber);margin-top:4px">'+_lockMsg+'</div>';
+            return '<button class="btn btn-sm" style="font-size:11px;margin-top:4px;background:var(--gbg);color:var(--green);border:1px solid #86efac" onclick="releaseCommission(\''+c.id+'\')" >Release</button>';
+          })()+
         '</div>'+
       '</div>';
     }).join('') : '<div class="empty-state" style="padding:20px"><div class="empty-icon">✅</div><div class="empty-title" style="font-size:13px">No pending commissions</div></div>';
@@ -12156,7 +12172,14 @@ function renderCommissions() {
               if (isDup) {
                 return '<span style="font-size:10px;background:var(--rbg);color:var(--red);border:1px solid #fca5a5;padding:2px 7px;border-radius:5px;font-weight:700" title="T'+c.tranche+' already released for this applicant — reverse the duplicate first">⚠️ Duplicate</span>';
               }
-              return '<button class="btn btn-sm" style="font-size:11px;background:var(--gbg);color:var(--green);border:1px solid #86efac" onclick="releaseCommission(\''+c.id+'\')">Release</button>';
+              var _prevBlocked2 = c.tranche > 1 && !DB.commissions.find(function(x){
+                return x.tranche===(c.tranche-1) && x.status==='Released' &&
+                  (x.applicantId===c.applicantId||(x.applicantName&&c.applicantName&&x.applicantName.toLowerCase()===c.applicantName.toLowerCase()));
+              });
+              var _roleOk2 = typeof getCurrentRole==='function' && (getCurrentRole()==='Admin'||getCurrentRole()==='Finance');
+              if (!_roleOk2) return '<span style="font-size:10px;color:var(--muted)">Finance/Admin</span>';
+              if (_prevBlocked2) return '<span style="font-size:10px;color:var(--amber)">🔒 T'+(c.tranche-1)+' first</span>';
+              return '<button class="btn btn-sm" style="font-size:11px;background:var(--gbg);color:var(--green);border:1px solid #86efac" onclick="releaseCommission(\''+c.id+'\')" >Release</button>';
             }
             if (c.status === 'Released') {
               return '<button class="btn btn-sm" style="font-size:11px;background:var(--rbg);color:var(--red);border:1px solid #fca5a5" onclick="reverseCommission(\''+c.id+'\')">Reverse</button>';
@@ -12326,13 +12349,32 @@ function saveCommissionRates() {
 }
 
 function releaseCommission(commId) {
-  if (!hasPermission('Manage Accounting')) { toast('Your role cannot release or reverse commissions','error'); return; }
+  // Admin and Finance only
+  var _role = getCurrentRole();
+  if (_role !== 'Admin' && _role !== 'Finance') {
+    toast('Only Admin and Finance can release commissions', 'error'); return;
+  }
   var c = DB.commissions.find(function(x){ return x.id===commId; });
   if (!c) return;
 
-
   if (c.status !== 'Pending Release' && c.status !== 'In Guarantee') {
     toast('This commission cannot be released (status: '+c.status+')', 'error'); return;
+  }
+
+  // ── Tranche prerequisite check ────────────────────────────────────────
+  if (c.tranche > 1) {
+    var prevTranche = c.tranche - 1;
+    var prevReleased = DB.commissions.find(function(x) {
+      return x.tranche === prevTranche
+          && (x.applicantId === c.applicantId ||
+              (x.applicantName && c.applicantName &&
+               x.applicantName.toLowerCase() === c.applicantName.toLowerCase()))
+          && x.status === 'Released';
+    });
+    if (!prevReleased) {
+      toast('T' + prevTranche + ' must be released first before releasing T' + c.tranche + ' for ' + c.applicantName, 'error');
+      return;
+    }
   }
 
   // Block duplicate release for same tranche + applicant
@@ -12419,7 +12461,10 @@ function releaseCommission(commId) {
   renderCommissions();
 }
 function reverseCommission(commId) {
-  if (!hasPermission('Manage Accounting')) { toast('Your role cannot release or reverse commissions','error'); return; }
+  var _role2 = getCurrentRole();
+  if (_role2 !== 'Admin' && _role2 !== 'Finance') {
+    toast('Only Admin and Finance can reverse commissions', 'error'); return;
+  }
   var c = DB.commissions.find(function(x){ return x.id===commId; });
   if (!c) return;
 
