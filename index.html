@@ -1570,16 +1570,16 @@ button[disabled][data-rbac-locked] {
       <div style="padding:16px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
         <div style="font-size:14px;font-weight:800">All Expenses</div>
         <div style="display:flex;gap:8px;align-items:center">
-          <select class="f-inp" id="exp-agent-filter" onchange="renderExpensesTab()" style="width:160px">
+          <select class="f-inp" id="exp-agent-filter" onchange="_expFilterState.agent=this.value;renderExpensesTab()" style="width:160px">
             <option value="">All Agents</option>
           </select>
-          <select class="f-inp" id="exp-status-filter" onchange="renderExpensesTab()" style="width:140px">
+          <select class="f-inp" id="exp-status-filter" onchange="_expFilterState.status=this.value;renderExpensesTab()" style="width:140px">
             <option value="">All Status</option>
             <option>Agency</option><option>Charged</option><option>Paid</option><option>Pending</option>
           </select>
           <div class="filter-search" style="width:200px">
             <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <input type="text" placeholder="Search…" oninput="renderExpensesTab(this.value)">
+            <input type="text" placeholder="Search…" oninput="_expFilterState.q=this.value;renderExpensesTab(this.value)">
           </div>
         </div>
       </div>
@@ -11887,8 +11887,13 @@ function clearLedgerFilters() {
   renderLedger();
 }
 
-// ── EXPENSES TAB ──────────────────────────────────────────────────────
+// ── Expense filter state — persists across poll-triggered re-renders ──
+var _expFilterState = { q: '', agent: '', status: '' };
+
 function renderExpensesTab(search) {
+  // If called with a search string, update state
+  if (typeof search === 'string') _expFilterState.q = search;
+
   // Pull fresh expenses from PostgreSQL so all users see latest charged status
   if (!window._expTabFetching) {
     window._expTabFetching = true;
@@ -11909,31 +11914,43 @@ function _renderExpensesTabInner(search) {
   var agentF  = document.getElementById('exp-agent-filter');
   var statusF = document.getElementById('exp-status-filter');
 
+  // Restore filter state from memory (survives poll-triggered re-renders)
+  if (typeof search === 'string' && search) _expFilterState.q = search;
+
   // Populate agent filter — always repopulate so newly loaded agents appear
   if (agentF) {
-    var _agentFPrev = agentF.value;
+    var _agentFPrev = agentF.value || _expFilterState.agent;
     agentF.innerHTML = '<option value="">All Agents</option>';
     DB.agents.forEach(function(a){
       var o = document.createElement('option');
       o.value = a.name; o.text = a.name;
       agentF.appendChild(o);
     });
-    if (_agentFPrev) agentF.value = _agentFPrev;
+    if (_agentFPrev) { agentF.value = _agentFPrev; _expFilterState.agent = agentF.value; }
   }
 
+  // Restore status filter
+  if (statusF && !statusF.value && _expFilterState.status) {
+    statusF.value = _expFilterState.status;
+  }
+
+  // Read current values and persist to state
+  if (agentF)  _expFilterState.agent  = agentF.value  || _expFilterState.agent;
+  if (statusF) _expFilterState.status = statusF.value || _expFilterState.status;
+
   var expenses = DB.expenses.slice();
-  if (agentF && agentF.value) {
-    var _af = agentF.value;
+  if (agentF && (agentF.value || _expFilterState.agent)) {
+    var _af = agentF.value || _expFilterState.agent;
     expenses = expenses.filter(function(e){
-      // Use stored agentName first, fall back to applicant lookup
       if (e.agentName === _af) return true;
       var _a = e.applicantId ? DB.applicants.find(function(a){ return a.id===e.applicantId||a._dbId===e.applicantId; })
                              : (e.applicant ? DB.applicants.find(function(a){ return a.name===e.applicant; }) : null);
       return _a && _a.agent === _af;
     });
   }
-  if (statusF && statusF.value) expenses = expenses.filter(function(e){ return e.status===statusF.value; });
-  if (search) { var q=search.toLowerCase(); expenses = expenses.filter(function(e){ return (e.desc||'').toLowerCase().includes(q)||(e.applicant||'').toLowerCase().includes(q); }); }
+  if (statusF && (statusF.value || _expFilterState.status)) expenses = expenses.filter(function(e){ return e.status===(statusF.value||_expFilterState.status); });
+  var _activeQ = (typeof search === 'string' && search) ? search : _expFilterState.q;
+  if (_activeQ) { var q=_activeQ.toLowerCase(); expenses = expenses.filter(function(e){ return (e.desc||'').toLowerCase().includes(q)||(e.applicant||'').toLowerCase().includes(q); }); }
 
   // KPIs
   var kpisEl = document.getElementById('expense-kpis');
