@@ -1581,6 +1581,7 @@ button[disabled][data-rbac-locked] {
             <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             <input type="text" placeholder="Search…" oninput="_expFilterState.q=this.value;renderExpensesTab(this.value)">
           </div>
+          <button class="btn btn-s btn-sm" onclick="exportFilteredExpenses()" title="Export filtered expenses to CSV">⬇ Export</button>
         </div>
       </div>
       <table style="width:100%;border-collapse:collapse">
@@ -15590,6 +15591,61 @@ function backfillCommissions() {
   renderCommissions();
 }
 
+
+function exportFilteredExpenses() {
+  // Apply same filters as _renderExpensesTabInner
+  var expenses = DB.expenses.slice();
+
+  var _af = _expFilterState.agent;
+  if (_af) {
+    expenses = expenses.filter(function(e) {
+      if (e.agentName === _af) return true;
+      var _a = e.applicantId
+        ? DB.applicants.find(function(a){ return a.id===e.applicantId||a._dbId===e.applicantId; })
+        : (e.applicant ? DB.applicants.find(function(a){ return a.name===e.applicant; }) : null);
+      return _a && _a.agent === _af;
+    });
+  }
+  if (_expFilterState.status) {
+    expenses = expenses.filter(function(e){ return e.status === _expFilterState.status; });
+  }
+  if (_expFilterState.q) {
+    var q = _expFilterState.q.toLowerCase();
+    expenses = expenses.filter(function(e){
+      return (e.desc||'').toLowerCase().includes(q) || (e.applicant||'').toLowerCase().includes(q);
+    });
+  }
+
+  if (!expenses.length) { toast('No expenses to export', 'error'); return; }
+
+  var rows = [['Date','Applicant','Agent','Category','Description','Amount','Status','Reference'].join(',')];
+  expenses.forEach(function(e) {
+    rows.push([
+      e.date || '',
+      '"' + (e.applicant||'').replace(/"/g,'""') + '"',
+      '"' + (e.agentName||'').replace(/"/g,'""') + '"',
+      '"' + (e.category||'').replace(/"/g,'""') + '"',
+      '"' + (e.desc||'').replace(/"/g,'""') + '"',
+      e.amount || 0,
+      e.status || '',
+      '"' + (e.ref||'').replace(/"/g,'""') + '"',
+    ].join(','));
+  });
+
+  var label = [];
+  if (_expFilterState.agent)  label.push(_expFilterState.agent);
+  if (_expFilterState.status) label.push(_expFilterState.status);
+  if (_expFilterState.q)      label.push(_expFilterState.q);
+  var filename = 'expenses' + (label.length ? '_' + label.join('_').replace(/\s+/g,'-').toLowerCase() : '') + '_' + new Date().toISOString().split('T')[0] + '.csv';
+
+  var blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+  var url  = URL.createObjectURL(blob);
+  var lnk  = document.createElement('a');
+  lnk.href = url; lnk.download = filename;
+  lnk.click();
+  URL.revokeObjectURL(url);
+  toast('Exported ' + expenses.length + ' expense' + (expenses.length !== 1 ? 's' : ''), 'success');
+}
 
 function exportAccountingReport() {
   var rows = ['Agent,Commission,Expenses,Balance,Deployed,Backouts'];
