@@ -9350,7 +9350,7 @@ function saveExpense() {
   // Auto-trigger accounting if applicant status warrants it
   if (app) {
     var agent = DB.agents.find(function(a){ return a.name === app.agent; });
-    var autoCharge = ['Backout','Repatriated'].indexOf(app.status) !== -1;
+    var autoCharge = ['Backout','Repatriated','Rejected'].indexOf(app.status) !== -1;
     if (autoCharge) {
       // Resolve country rule for this applicant's destination
       var _country = app.job ? app.job.split('·').pop().trim() : '';
