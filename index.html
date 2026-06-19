@@ -1496,6 +1496,10 @@ button[disabled][data-rbac-locked] {
   <!-- OVERVIEW TAB -->
   <div class="acc-section active" id="acc-overview">
     <div class="stat-grid" id="accounting-stats"></div>
+
+    <!-- Pending Actions strip -->
+    <div id="acc-pending-actions" style="margin-bottom:16px"></div>
+
     <div style="display:grid;grid-template-columns:2fr 1fr;gap:16px">
       <div>
         <div style="font-size:14px;font-weight:800;margin-bottom:12px">⚠ Active Alerts</div>
@@ -1504,6 +1508,17 @@ button[disabled][data-rbac-locked] {
       <div>
         <div style="font-size:14px;font-weight:800;margin-bottom:12px">Top Agents by Balance</div>
         <div id="acc-top-agents"></div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+      <div class="card cp">
+        <div style="font-size:14px;font-weight:800;margin-bottom:14px">💰 Cash Flow Snapshot</div>
+        <div id="acc-cashflow"></div>
+      </div>
+      <div class="card cp">
+        <div style="font-size:14px;font-weight:800;margin-bottom:14px">📋 Recent Activity</div>
+        <div id="acc-recent-activity"></div>
       </div>
     </div>
   </div>
@@ -11614,17 +11629,22 @@ function renderAccounting() {
   // Update main KPIs
   var totalExp  = DB.expenses.reduce(function(s,e){ return s+e.amount; }, 0);
   var paid      = DB.expenses.filter(function(e){ return e.status==='Paid'; }).reduce(function(s,e){ return s+e.amount; }, 0);
+  var pendingExp= DB.expenses.filter(function(e){ return e.status==='Pending'; }).reduce(function(s,e){ return s+e.amount; }, 0);
   var pendingBal= DB.agents.reduce(function(s,a){ return s + (a.balance<0?Math.abs(a.balance):0); }, 0);
+  var receivable= DB.agents.reduce(function(s,a){ return s + (a.balance>0?a.balance:0); }, 0);
   var totalComm = DB.agents.reduce(function(s,a){ return s+a.totalCommission; }, 0);
+  var pendingFees = (DB.employerFees||[]).filter(function(f){ return f.status==='Pending'; }).reduce(function(s,f){ return s+(f.feeUSD||0); }, 0);
+  var releasedComm = DB.commissions.filter(function(c){ return c.status==='Released'; }).reduce(function(s,c){ return s+c.amount; }, 0);
+  var pendingRelease = DB.commissions.filter(function(c){ return c.status==='Pending Release'; }).reduce(function(s,c){ return s+c.amount; }, 0);
 
   var statsEl = document.getElementById('accounting-stats');
   if (statsEl) statsEl.innerHTML = [
-    { label:'Total Commissions',  val:'₱'+totalComm.toLocaleString(),   icon:'🏆', bg:'var(--gbg)',     c:'var(--green)'  },
-    { label:'Total Expenses',     val:'₱'+totalExp.toLocaleString(),    icon:'📊', bg:'var(--brand-l)', c:'var(--brand)'  },
-    { label:'Outstanding Debt',   val:'₱'+pendingBal.toLocaleString(),  icon:'⚠',  bg:'var(--rbg)',     c:'var(--red)'    },
-    { label:'Active Agents',      val:DB.agents.filter(function(a){ return a.status==='Active'; }).length, icon:'👥', bg:'var(--pbg)', c:'var(--purple)' },
+    { label:'Total Commissions',  val:'₱'+totalComm.toLocaleString(),   icon:'🏆', bg:'var(--gbg)',     c:'var(--green)',  sub:'₱'+releasedComm.toLocaleString()+' released' },
+    { label:'Total Expenses',     val:'₱'+totalExp.toLocaleString(),    icon:'📊', bg:'var(--brand-l)', c:'var(--brand)',  sub:'₱'+pendingExp.toLocaleString()+' pending' },
+    { label:'Outstanding Debt',   val:'₱'+pendingBal.toLocaleString(),  icon:'⚠',  bg:'var(--rbg)',     c:'var(--red)',    sub:'₱'+receivable.toLocaleString()+' receivable' },
+    { label:'Active Agents',      val:DB.agents.filter(function(a){ return a.status==='Active'; }).length, icon:'👥', bg:'var(--pbg)', c:'var(--purple)', sub:DB.agents.length+' total' },
   ].map(function(s) {
-    return '<div class="stat-card"><div class="stat-top"><div class="stat-icon" style="background:'+s.bg+';color:'+s.c+'">'+s.icon+'</div></div><div class="stat-val">'+s.val+'</div><div class="stat-lbl">'+s.label+'</div></div>';
+    return '<div class="stat-card"><div class="stat-top"><div class="stat-icon" style="background:'+s.bg+';color:'+s.c+'">'+s.icon+'</div></div><div class="stat-val">'+s.val+'</div><div class="stat-lbl">'+s.label+'</div>'+(s.sub?'<div style="font-size:10.5px;color:var(--muted);margin-top:3px">'+s.sub+'</div>':'')+'</div>';
   }).join('');
 
   renderAccOverview();
@@ -11708,6 +11728,87 @@ function renderAccOverview() {
         '</div>'+
       '</div>';
     }).join('');
+  }
+
+  // ── Pending Actions strip ──────────────────────────────────────────
+  var actionsEl = document.getElementById('acc-pending-actions');
+  if (actionsEl) {
+    var pendingExpCount  = DB.expenses.filter(function(e){ return e.status==='Pending'; }).length;
+    var pendingFeeCount  = (DB.employerFees||[]).filter(function(f){ return f.status==='Pending'; }).length;
+    var pendingRelCount  = DB.commissions.filter(function(c){ return c.status==='Pending Release'; }).length;
+    var pendingInvCount  = (DB.invoices||[]).filter(function(i){ return (i.balance||0) > 0; }).length;
+
+    var actions = [
+      { count: pendingExpCount, label: 'Pending Expenses', icon:'\ud83d\udcb8', color:'var(--amber)', tab:'expenses', tabIdx:3 },
+      { count: pendingFeeCount, label: 'Pending Employer Fees', icon:'\ud83c\udfe2', color:'var(--red)', tab:'employers', tabIdx:6 },
+      { count: pendingRelCount, label: 'Commissions Ready to Release', icon:'\ud83c\udfc6', color:'var(--green)', tab:'commissions', tabIdx:4 },
+      { count: pendingInvCount, label: 'Unpaid Invoices', icon:'\ud83d\udcc4', color:'var(--brand)', tab:'invoices', tabIdx:9 },
+    ].filter(function(a){ return a.count > 0; });
+
+    actionsEl.innerHTML = actions.length ? (
+      '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
+      actions.map(function(a) {
+        return '<div onclick="switchAccTab(\''+a.tab+'\',document.querySelectorAll(\'.acc-tab\')['+a.tabIdx+'])" ' +
+          'style="cursor:pointer;flex:1;min-width:180px;display:flex;align-items:center;gap:10px;padding:12px 16px;background:var(--card);border:1px solid var(--border);border-left:3px solid '+a.color+';border-radius:10px;transition:transform .15s" ' +
+          'onmouseover="this.style.transform=\'translateY(-2px)\'" onmouseout="this.style.transform=\'\'">' +
+          '<div style="font-size:20px">'+a.icon+'</div>' +
+          '<div><div style="font-size:18px;font-weight:800;color:'+a.color+'">'+a.count+'</div>' +
+          '<div style="font-size:11px;color:var(--muted)">'+a.label+'</div></div>' +
+        '</div>';
+      }).join('') +
+      '</div>'
+    ) : '';
+  }
+
+  // ── Cash Flow Snapshot ────────────────────────────────────────────
+  var cfEl = document.getElementById('acc-cashflow');
+  if (cfEl) {
+    var fx2     = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
+    var commIn  = DB.commissions.filter(function(c){ return c.status==='Released'; }).reduce(function(s,c){ return s+(c.currency==='USD'?Math.round(c.amount*fx2):c.amount); },0);
+    var expOut  = DB.expenses.reduce(function(s,e){ return s+e.amount; },0);
+    var feesIn  = (DB.employerFees||[]).filter(function(f){ return f.status==='Settled'; }).reduce(function(s,f){ return s+Math.round((f.feeUSD||0)*fx2); },0);
+    var net     = commIn + feesIn - expOut;
+
+    cfEl.innerHTML =
+      '<div style="display:flex;flex-direction:column;gap:10px">' +
+      [
+        { label:'Commissions Released',  val: commIn, color:'var(--green)', sign:'+' },
+        { label:'Employer Fees Settled', val: feesIn, color:'var(--green)', sign:'+' },
+        { label:'Total Expenses',        val: expOut, color:'var(--red)',   sign:'\u2212' },
+      ].map(function(r) {
+        return '<div style="display:flex;justify-content:space-between;align-items:center;padding-bottom:8px;border-bottom:1px solid var(--border)">' +
+          '<span style="font-size:12.5px;color:var(--text2)">'+r.label+'</span>' +
+          '<span style="font-size:13.5px;font-weight:800;font-family:monospace;color:'+r.color+'">'+r.sign+'\u20b1'+r.val.toLocaleString()+'</span>' +
+        '</div>';
+      }).join('') +
+      '<div style="display:flex;justify-content:space-between;align-items:center;padding-top:4px">' +
+        '<span style="font-size:13px;font-weight:800">Net Position</span>' +
+        '<span style="font-size:16px;font-weight:800;font-family:monospace;color:'+(net>=0?'var(--green)':'var(--red)')+'">'+(net>=0?'\u20b1':'\u2212\u20b1')+Math.abs(net).toLocaleString()+'</span>' +
+      '</div>' +
+      '</div>';
+  }
+
+  // ── Recent Activity (last financial events) ──────────────────────
+  var raEl = document.getElementById('acc-recent-activity');
+  if (raEl) {
+    var events = [];
+    DB.expenses.slice(-30).forEach(function(e) {
+      events.push({ ts: e.date||'', icon:'\ud83d\udcb8', text: (e.applicant||'Expense')+' \u2014 '+(e.desc||e.category||''), amt:'-\u20b1'+e.amount.toLocaleString(), color:'var(--red)' });
+    });
+    DB.commissions.filter(function(c){ return c.status==='Released'; }).slice(-15).forEach(function(c) {
+      events.push({ ts: c.releaseDate||c.date||'', icon:'\ud83c\udfc6', text: 'Commission released \u2014 '+(c.applicantName||''), amt:'+'+(c.currency==='USD'?'$':'\u20b1')+c.amount.toLocaleString(), color:'var(--green)' });
+    });
+    events.sort(function(a,b){ return (b.ts||'').localeCompare(a.ts||''); });
+    events = events.slice(0, 8);
+
+    raEl.innerHTML = events.length ? events.map(function(e) {
+      return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">' +
+        '<div style="font-size:16px">'+e.icon+'</div>' +
+        '<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+e.text+'</div>' +
+        '<div style="font-size:10.5px;color:var(--muted)">'+(e.ts||'\u2014')+'</div></div>' +
+        '<div style="font-size:12.5px;font-weight:800;font-family:monospace;color:'+e.color+';white-space:nowrap">'+e.amt+'</div>' +
+      '</div>';
+    }).join('') : '<div style="color:var(--muted);font-size:12px;padding:12px 0">No recent activity</div>';
   }
 }
 
