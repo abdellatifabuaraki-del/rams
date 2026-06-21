@@ -12132,14 +12132,25 @@ function _renderExpensesTabInner(search) {
 function renderCommissions() {
   var today = new Date();
 
-  // Deduplicate reversed commissions — hide extras where same applicant+tranche+agent has multiple Reversed
-  // Keep only the most recent Reversed per applicant+tranche+agent combo; hide older duplicates
-  var _seenReversed = {};
-  var _sortedByDate = DB.commissions.slice().sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
-  _sortedByDate.forEach(function(c) {
-    if (c.status !== 'Reversed') return;
-    var key = (c.applicantName||'').toLowerCase() + '|' + c.tranche + '|' + (c.agentId||'');
-    if (_seenReversed[key]) { c._hideDuplicate = true; } else { _seenReversed[key] = true; c._hideDuplicate = false; }
+  // Deduplicate commissions — hide extras where same applicant+tranche+agent has multiple entries of any status
+  // Keep the most relevant one per group; hide the rest
+  var statusRank2 = { 'Released': 3, 'Pending Release': 2, 'In Guarantee': 2, 'Reversed': 1 };
+  var _dupGroups = {};
+  DB.commissions.forEach(function(c) {
+    var key = (c.applicantName||'').toLowerCase().trim() + '|' + c.tranche + '|' + (c.agentId||'');
+    if (!_dupGroups[key]) _dupGroups[key] = [];
+    _dupGroups[key].push(c);
+  });
+  Object.keys(_dupGroups).forEach(function(key) {
+    var group = _dupGroups[key];
+    group.forEach(function(c){ c._hideDuplicate = false; });
+    if (group.length <= 1) return;
+    group.sort(function(a, b) {
+      var rankDiff = (statusRank2[b.status]||0) - (statusRank2[a.status]||0);
+      if (rankDiff !== 0) return rankDiff;
+      return (b.date||'').localeCompare(a.date||'');
+    });
+    for (var i = 1; i < group.length; i++) group[i]._hideDuplicate = true;
   });
 
   // KPIs
@@ -12184,6 +12195,7 @@ function renderCommissions() {
     var _badStatuses = new Set(['Backout','Rejected']);
     var _toAutoReverse = [];
     var pending = DB.commissions.filter(function(cm) {
+      if (cm._hideDuplicate) return false; // hide duplicate entries
       if (cm.status !== 'Pending Release') return false;
       // Lookup applicant by ID or name (case-insensitive)
       var linkedApp = DB.applicants.find(function(a){
@@ -12616,18 +12628,32 @@ function releaseCommission(commId) {
 function cleanDuplicateCommissions() {
   if (getCurrentRole() !== 'Admin') { toast('Admin only', 'error'); return; }
 
-  // Find all duplicate Reversed entries — same applicant+tranche+agent, keep newest
-  var seen = {};
-  var toDelete = [];
-  var sorted = DB.commissions.slice().sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
-  sorted.forEach(function(c) {
-    if (c.status !== 'Reversed') return;
-    var key = (c.applicantName||'').toLowerCase() + '|' + c.tranche + '|' + (c.agentId||'');
-    if (seen[key]) { toDelete.push(c); } else { seen[key] = true; }
+  // Find duplicate entries — same applicant+tranche+agent, regardless of status
+  // Keep the most useful one: prefer Released > Pending Release/In Guarantee > Reversed; tie-break by newest date
+  var statusRank = { 'Released': 3, 'Pending Release': 2, 'In Guarantee': 2, 'Reversed': 1 };
+  var groups = {};
+  DB.commissions.forEach(function(c) {
+    var key = (c.applicantName||'').toLowerCase().trim() + '|' + c.tranche + '|' + (c.agentId||'');
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(c);
   });
 
-  if (!toDelete.length) { toast('No duplicate reversed commissions found', 'info'); return; }
-  if (!confirm('Delete ' + toDelete.length + ' duplicate Reversed commission entries?')) return;
+  var toDelete = [];
+  Object.keys(groups).forEach(function(key) {
+    var group = groups[key];
+    if (group.length <= 1) return; // no duplicates
+    // Sort: highest status rank first, then newest date first
+    group.sort(function(a, b) {
+      var rankDiff = (statusRank[b.status]||0) - (statusRank[a.status]||0);
+      if (rankDiff !== 0) return rankDiff;
+      return (b.date||'').localeCompare(a.date||'');
+    });
+    // Keep the first (best), delete the rest
+    for (var i = 1; i < group.length; i++) toDelete.push(group[i]);
+  });
+
+  if (!toDelete.length) { toast('No duplicate commissions found', 'info'); return; }
+  if (!confirm('Delete ' + toDelete.length + ' duplicate commission entries? The most relevant entry will be kept for each applicant/tranche.')) return;
 
   toDelete.forEach(function(c) {
     var dbId = c._dbId || c.id;
