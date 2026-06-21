@@ -7461,7 +7461,9 @@ function _inlineSaveMedical(appId, newMedical) {
       var _t1Key = appId + ':T1';
       var _t1Exists = !!window._commissionFired[_t1Key]
         || DB.commissions.some(function(c){
-            return (c.applicantId===appId||c.applicantName===app.name) && c.tranche===1 && c.status!=='Reversed';
+            var idMatch   = c.applicantId === appId || c.applicantId === (app._dbId||'') || c.applicantId === (app.id||'');
+            var nameMatch = c.applicantName && app.name && c.applicantName.toLowerCase().trim() === app.name.toLowerCase().trim();
+            return (idMatch || nameMatch) && c.tranche===1 && c.status!=='Reversed';
            });
       if (_t1Exists) {
         toast('ℹ️ Medical commission for ' + app.name + ' already recorded — skipped', 'info');
@@ -13549,10 +13551,11 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
   function _trancheFired(n) {
     var key = applicantId + ':T' + n;
     if (window._commissionFired[key]) return true;
-    // Also check DB.commissions (populated from Store/API)
+    // Also check DB.commissions (populated from Store/API) — robust ID + case-insensitive name match
     return DB.commissions.some(function(c){
-      return (c.applicantId === applicantId || c.applicantName === app.name)
-          && c.tranche === n && c.status !== 'Reversed';
+      var idMatch   = c.applicantId === applicantId || c.applicantId === (app._dbId||'') || c.applicantId === (app.id||'');
+      var nameMatch = c.applicantName && app.name && c.applicantName.toLowerCase().trim() === app.name.toLowerCase().trim();
+      return (idMatch || nameMatch) && c.tranche === n && c.status !== 'Reversed';
     });
   }
   function _markTrancheFired(n) {
@@ -15715,7 +15718,7 @@ function backfillCommissions() {
     var total=(agent.commissionAmt!=null&&agent.commissionAmt>0)?agent.commissionAmt:15000, currency=agent.commissionCurrency||'PHP';
     var gp=rule?(rule.guaranteePeriod||6):6;
     var gEnd=(function(){ var d=new Date(); d.setMonth(d.getMonth()+gp); return d.toISOString().split('T')[0]; })();
-    function _hasT(n){ return DB.commissions.some(function(c){ return (c.applicantId===appId||c.applicantName===app.name)&&c.tranche===n&&c.status!=='Reversed'; }); }
+    function _hasT(n){ return DB.commissions.some(function(c){ var idMatch=c.applicantId===appId||c.applicantId===(app._dbId||'')||c.applicantId===(app.id||''); var nameMatch=c.applicantName&&app.name&&c.applicantName.toLowerCase().trim()===app.name.toLowerCase().trim(); return (idMatch||nameMatch)&&c.tranche===n&&c.status!=='Reversed'; }); }
     function _makeT(n,label,pct,trigger){ var amt=Math.round(total*pct); return {id:'COM-BF-'+Date.now()+'-'+String(appId).slice(-4)+'-T'+n,agentId:agent.id,applicantId:appId,applicantName:app.name,country:country||'Philippines',amount:amt,totalCommission:total,tranche:n,trancheLabel:label,currency:currency,status:'Pending Release',triggerStatus:trigger,triggerDate:today,guaranteeEnd:gEnd,releaseDate:null,_backfilled:true}; }
     if (app.medical==='Passed'&&!_hasT(1)){ var t1=_makeT(1,'Medical Cleared (20%)',0.20,'Medical Passed'); DB.commissions.push(t1); created.T1.push(app.name); apiCreateCommission(t1).then(function(r){if(r&&r.ok&&r.data&&r.data.id){t1._dbId=r.data.id;t1.id=r.data.id;autosave('commissions');}}).catch(function(){}); }
     if ((app.status==='OWWA'||app.status==='Processing')&&!_hasT(2)){ var t2=_makeT(2,app.status+' (20%)',0.20,app.status); DB.commissions.push(t2); created.T2.push(app.name); apiCreateCommission(t2).then(function(r){if(r&&r.ok&&r.data&&r.data.id){t2._dbId=r.data.id;t2.id=r.data.id;autosave('commissions');}}).catch(function(){}); }
