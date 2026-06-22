@@ -5558,7 +5558,7 @@ function renderNotifications() {
       var color     = typeColor[n.type] || 'var(--muted)';
       var actionLbl = _actionLabel(n);
       return '<div class="notif-item ' + (n.read ? '' : 'unread') + '" data-nid="' + n.id + '" ' +
-             'onclick="markRead(\'' + n.id + '\')" ' +
+             'onclick="navigateFromNotif(\'' + n.id + '\')" ' +
              'style="display:flex;align-items:flex-start;gap:10px;padding:11px 14px;' +
              'border-bottom:1px solid var(--border);' +
              'cursor:pointer;' +
