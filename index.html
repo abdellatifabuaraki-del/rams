@@ -12212,6 +12212,7 @@ function renderCommissions() {
   if (pendEl) {
     var _badStatuses = new Set(['Backout','Rejected']);
     var _toAutoReverse = [];
+    var _toClawback    = [];
     var pending = DB.commissions.filter(function(cm) {
       if (cm._hideDuplicate) return false; // hide duplicate entries
       if (cm.status !== 'Pending Release') return false;
@@ -12227,6 +12228,21 @@ function renderCommissions() {
       }
       return true;
     });
+
+    // Also catch ALREADY-RELEASED commissions whose applicant has since become Backout/Rejected
+    // These require a clawback (debit) since the agent already received the funds
+    DB.commissions.forEach(function(cm) {
+      if (cm.status !== 'Released') return;
+      if (cm._clawedBack) return; // already handled
+      var linkedApp = DB.applicants.find(function(a){
+        return a.id === cm.applicantId || a._dbId === cm.applicantId ||
+               (a.name && cm.applicantName && a.name.toLowerCase() === cm.applicantName.toLowerCase());
+      });
+      if (linkedApp && _badStatuses.has(linkedApp.status)) {
+        _toClawback.push(cm);
+      }
+    });
+
     // Auto-reverse stale commissions for Backout/Rejected applicants
     if (_toAutoReverse.length) {
       _toAutoReverse.forEach(function(cm) {
@@ -12239,6 +12255,44 @@ function renderCommissions() {
         }
       });
       autosave('commissions');
+      try { _triggerImmediateSync(); } catch(e) {}
+    }
+
+    // Clawback already-Released commissions — debit agent's ledger for the amount already paid out
+    if (_toClawback.length) {
+      _toClawback.forEach(function(cm) {
+        cm._clawedBack = true;
+        var agent = DB.agents.find(function(a){ return a.id === cm.agentId; });
+        var fx = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
+        var phpAmt = cm.currency === 'USD' ? Math.round(cm.amount * fx) : cm.amount;
+        if (agent) {
+          agent.balance = (agent.balance || 0) - phpAmt; // debit agent
+          var ledgerEntry = {
+            id: 'LDG-' + Date.now() + '-' + Math.floor(Math.random()*1000),
+            agentId: agent.id,
+            applicantId: cm.applicantId,
+            applicantName: cm.applicantName,
+            type: 'debit',
+            amount: phpAmt,
+            desc: 'Clawback — T' + cm.tranche + ' commission reversed (applicant ' + (cm.applicantName||'') + ' backed out/rejected after release)',
+            date: new Date().toISOString().slice(0,10),
+            ts: new Date().toISOString(),
+          };
+          DB.agentLedger.push(ledgerEntry);
+          apiCreateLedgerEntry && apiCreateLedgerEntry(ledgerEntry).catch(function(){});
+        }
+        var dbId = cm._dbId || cm.id;
+        if (dbId && isUUID(dbId)) {
+          apiFetch('/commissions/' + dbId, {
+            method: 'PATCH', body: JSON.stringify({ status: 'Reversed' }),
+          }).catch(function(){});
+        }
+        cm.status = 'Reversed';
+        toast('⚠️ Commission clawback: ' + (cm.applicantName||'') + ' T' + cm.tranche + ' — agent debited ₱' + phpAmt.toLocaleString(), 'error');
+      });
+      autosave('commissions');
+      autosave('agents');
+      autosave('agentLedger');
       try { _triggerImmediateSync(); } catch(e) {}
     }
     pendEl.innerHTML = pending.length ? pending.map(function(c) {
