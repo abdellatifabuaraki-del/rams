@@ -1486,7 +1486,7 @@ button[disabled][data-rbac-locked] {
     <button class="acc-tab" onclick="switchAccTab('ledger',this)" role="tab">📒 Ledger</button>
     <button class="acc-tab" onclick="switchAccTab('expenses',this)" role="tab">💸 Expenses</button>
     <button class="acc-tab" onclick="switchAccTab('commissions',this)" role="tab">🏆 Commissions</button>
-    <button class="acc-tab" onclick="switchAccTab('employers',this)" role="tab">🏢 Employers</button>
+    <button class="acc-tab" id="acc-tab-employers" onclick="switchAccTab('employers',this)" role="tab">🏢 Employers</button>
     <button class="acc-tab" onclick="switchAccTab('rules',this)" role="tab">⚙ Country Rules</button>
     <button class="acc-tab" onclick="switchAccTab('reports',this)" role="tab">📈 Reports</button>
     <button class="acc-tab" onclick="switchAccTab('office',this)" role="tab">🏢 Office Funds</button>
@@ -11595,6 +11595,14 @@ var editingRuleIdx        = -1;
 
 // ── ACCOUNTING TAB SWITCH ────────────────────────────────────────────
 function switchAccTab(tab, el) {
+  // Employers tab — Admin and Finance only
+  if (tab === 'employers') {
+    var _r = getCurrentRole();
+    if (_r !== 'Admin' && _r !== 'Finance') {
+      toast('Only Admin and Finance can view Employers', 'error');
+      return;
+    }
+  }
   currentAccTab = tab;
   document.querySelectorAll('.acc-tab').forEach(function(t){ t.classList.remove('active'); });
   document.querySelectorAll('.acc-section').forEach(function(s){ s.classList.remove('active'); });
@@ -11628,6 +11636,12 @@ function switchAccTab(tab, el) {
 
 // ── RENDER ACCOUNTING (main entry) ───────────────────────────────────
 function renderAccounting() {
+  // Hide Employers tab for non-Admin/Finance roles
+  var _empTab = document.getElementById('acc-tab-employers');
+  if (_empTab) {
+    var _r = getCurrentRole();
+    _empTab.style.display = (_r === 'Admin' || _r === 'Finance') ? '' : 'none';
+  }
   // Update main KPIs
   var totalExp  = DB.expenses.reduce(function(s,e){ return s+e.amount; }, 0);
   var paid      = DB.expenses.filter(function(e){ return e.status==='Paid'; }).reduce(function(s,e){ return s+e.amount; }, 0);
@@ -11740,9 +11754,11 @@ function renderAccOverview() {
     var pendingRelCount  = DB.commissions.filter(function(c){ return c.status==='Pending Release'; }).length;
     var pendingInvCount  = (DB.invoices||[]).filter(function(i){ return (i.balance||0) > 0; }).length;
 
+    var _accRole = getCurrentRole();
+    var _canSeeEmp = (_accRole === 'Admin' || _accRole === 'Finance');
     var actions = [
       { count: pendingExpCount, label: 'Pending Expenses', icon:'\ud83d\udcb8', color:'var(--amber)', tab:'expenses', tabIdx:3 },
-      { count: pendingFeeCount, label: 'Pending Employer Fees', icon:'\ud83c\udfe2', color:'var(--red)', tab:'employers', tabIdx:6 },
+      { count: (_canSeeEmp ? pendingFeeCount : 0), label: 'Pending Employer Fees', icon:'\ud83c\udfe2', color:'var(--red)', tab:'employers', tabIdx:6 },
       { count: pendingRelCount, label: 'Commissions Ready to Release', icon:'\ud83c\udfc6', color:'var(--green)', tab:'commissions', tabIdx:4 },
       { count: pendingInvCount, label: 'Unpaid Invoices', icon:'\ud83d\udcc4', color:'var(--brand)', tab:'invoices', tabIdx:9 },
     ].filter(function(a){ return a.count > 0; });
@@ -17465,6 +17481,17 @@ function applyRBAC() {
     var allowed = pages.indexOf(page) !== -1;
     item.style.display = allowed ? '' : 'none';
   });
+
+  // 1b. Employers tab — Admin and Finance only
+  var empTab = document.getElementById('acc-tab-employers');
+  if (empTab) {
+    var canSeeEmployers = (role === 'Admin' || role === 'Finance');
+    empTab.style.display = canSeeEmployers ? '' : 'none';
+    // If currently on the employers tab but no longer allowed, redirect to overview
+    if (!canSeeEmployers && typeof currentAccTab !== 'undefined' && currentAccTab === 'employers') {
+      switchAccTab('overview', document.querySelectorAll('.acc-tab')[0]);
+    }
+  }
 
   // 2. Show role badge in sidebar
   var roleEl = document.getElementById('sb-urole');
