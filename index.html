@@ -12272,8 +12272,8 @@ function renderCommissions() {
             agentId: agent.id,
             applicantId: cm.applicantId,
             applicantName: cm.applicantName,
-            type: 'debit',
-            amount: phpAmt,
+            type: 'adjustment',
+            amount: -phpAmt,  // negative = debit — agent owes this back
             desc: 'Clawback — T' + cm.tranche + ' commission reversed (applicant ' + (cm.applicantName||'') + ' backed out/rejected after release)',
             date: new Date().toISOString().slice(0,10),
             ts: new Date().toISOString(),
