@@ -2851,21 +2851,6 @@ const RAILWAY_URL = 'https://rams-backend-production-399f.up.railway.app';
 const DEMO_EMAIL  = 'admin@rams.io';
 const DEMO_PASS   = 'password123';
 
-// ── Persistent read-state set — survives refresh and poll cycles ──────
-// Stored in localStorage so hard refresh doesn't flash previously-read notifications
-(function() {
-  try {
-    var stored = localStorage.getItem('rams:notif:readIds');
-    window._localReadIds = stored ? new Set(JSON.parse(stored)) : new Set();
-  } catch(e) { window._localReadIds = new Set(); }
-})();
-
-function _persistReadIds() {
-  try {
-    localStorage.setItem('rams:notif:readIds', JSON.stringify(Array.from(window._localReadIds)));
-  } catch(e) {}
-}
-
 // Map frontend role labels → backend DB role values
 function toDbRole(role) {
   var map = {
@@ -4288,50 +4273,6 @@ var _POLL_ACTIVE   = 8000;   // 8s  when active (fast real-time sync)
 var _POLL_IDLE     = 20000;  // 20s when idle   (>90s no interaction)
 var _POLL_HIDDEN   = 0;      // paused when tab hidden
 
-// ── loadSharedNotifications — pull from shared Store if newer than local ─
-var _lastNotifTs = 0;
-async function loadSharedNotifications() {
-  try {
-    var tsRaw = await Store.get('rams:shared:notifications:ts', true);
-    var ts = tsRaw ? parseInt(typeof tsRaw === 'object' ? tsRaw.value : tsRaw) : 0;
-    if (!ts || ts <= _lastNotifTs) return; // nothing new since last check
-    _lastNotifTs = ts;
-    var raw = await Store.get('rams:shared:notifications', true);
-    var arr = raw
-      ? (Array.isArray(raw) ? raw
-         : (Array.isArray(raw.value) ? raw.value
-         : (typeof raw.value === 'string' ? JSON.parse(raw.value) : null)))
-      : null;
-    if (!Array.isArray(arr)) return;
-    // Preserve local read states when merging
-    var localReadMap = {};
-    (DB.notifications || []).forEach(function(n){ if (n.read) localReadMap[n.id] = true; });
-    // Also apply persistent read set — survives poll cycles even before server confirms
-    if (window._localReadIds) window._localReadIds.forEach(function(id){ localReadMap[id] = true; });
-    arr.forEach(function(n){ if (localReadMap[n.id] || localReadMap[n._dbId]) n.read = true; });
-    // Merge: keep any local NTF-* notifications not in the shared array,
-    // then deduplicate by title+body (prefer copy with richer link)
-    var sharedIds = new Set(arr.map(function(n){ return n.id; }));
-    var localExtra = (DB.notifications || []).filter(function(n){
-      return n.id && n.id.startsWith('NTF-') && !sharedIds.has(n.id);
-    });
-    function _dedupeShared(combined) {
-      var seen = {}, out = [];
-      combined.forEach(function(n) {
-        var key = (n.title || '') + '|' + (n.body || '');
-        if (!seen[key]) { seen[key] = n; out.push(n); }
-        else if (n.link && n.link.id && !(seen[key].link && seen[key].link.id)) {
-          out[out.indexOf(seen[key])] = n; seen[key] = n;
-        }
-      });
-      return out;
-    }
-    DB.notifications = _dedupeShared(arr.concat(localExtra)).sort(function(a,b){ return (b.ts||0)-(a.ts||0); });
-    autosave('notifications');
-    renderNotifications();
-  } catch(e) {}
-}
-
 function startPolling() {
   stopPolling();
   function _tick() {
@@ -4408,53 +4349,7 @@ function startPolling() {
         }
       }).catch(function(){});
     }
-    // Pull shared notifications if updated by another user
-    if (typeof loadSharedNotifications === 'function') {
-      loadSharedNotifications().catch(function(){});
-    }
-    // Also refresh notifications from backend every ~30s
-    if (!window._lastNotifFetch || Date.now() - window._lastNotifFetch > 30000) {
-      window._lastNotifFetch = Date.now();
-      apiFetch('/notifications').then(function(r) {
-        if (!r || !r.ok || !Array.isArray(r.data)) return;
-
-        // Build authoritative read map — localStorage persisted set takes priority over server
-        var localReadMap = {};
-        (DB.notifications||[]).forEach(function(n){ if (n.read) localReadMap[n.id] = true; if (n._dbId) localReadMap[n._dbId] = true; });
-        if (window._localReadIds) window._localReadIds.forEach(function(id){ localReadMap[id] = true; });
-
-        var _fromServer = r.data.map(function(n) {
-          return {
-            id:   n.id, _dbId: n.id,
-            title: n.title, body: n.body||'',
-            type: n.type||'system',
-            read: !!(n.is_read || localReadMap[n.id]),
-            ts:   new Date(n.created_at||Date.now()).getTime(),
-            time: new Date(n.created_at||Date.now()).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),
-            link: n.link ? (typeof n.link==='string'?JSON.parse(n.link):n.link) : null,
-          };
-        });
-
-        // Keep local-only notifications (NTF-*) that haven't been synced to server yet
-        var _serverIds = new Set(_fromServer.map(function(n){ return n.id; }));
-        var _localOnly = (DB.notifications||[]).filter(function(n){
-          return n.id && n.id.startsWith('NTF-') && !_serverIds.has(n.id);
-        });
-
-        // Merge + dedup by title|body — newest first, cap at 100
-        var seen = {};
-        DB.notifications = _fromServer.concat(_localOnly)
-          .sort(function(a,b){ return (b.ts||0)-(a.ts||0); })
-          .filter(function(n) {
-            var key = (n.title||'') + '|' + (n.body||'');
-            if (!seen[key]) { seen[key] = true; return true; }
-            return false;
-          }).slice(0, 100);
-
-        autosave('notifications');
-        renderNotifications();
-      }).catch(function(){});
-    }
+    // Notifications are handled by the dedicated _notifSync poller (see _startNotifTicker)
     // Sync office funds + ledger from other users/sessions
     if (Store) {
       Store.get('rams:shared:office:ts', true).then(function(ts) {
@@ -4665,60 +4560,59 @@ function stopPolling() {
   if (window._notifTickTimer) { clearInterval(window._notifTickTimer); window._notifTickTimer = null; }
 }
 
-// ── Dedicated 5s notification ticker — checks shared Store timestamp only,
-//    fetches full payload only when something is actually new ──────────────
+// ── _notifSync — single source of truth poller for notifications ──────────
+// Fetches from the backend, merges by server-confirmed read state, and
+// preserves any local NTF-* notifications not yet synced (e.g. POST in flight).
+// This is the ONLY place that mutates DB.notifications from a network fetch.
+async function _notifSync() {
+  if (!window._ramsSessionToken || window._ramsSessionToken === 'demo') return;
+  try {
+    var r = await apiFetch('/notifications');
+    if (!r || !r.ok || !Array.isArray(r.data)) return;
+
+    var fromServer = r.data.map(function(row) {
+      var lnk = null;
+      try { if (row.link) lnk = typeof row.link === 'string' ? JSON.parse(row.link) : row.link; } catch(e) {}
+      return {
+        id:    row.id,
+        _dbId: row.id,
+        title: row.title || '',
+        body:  row.body  || '',
+        type:  row.type  || 'system',
+        read:  !!row.is_read,          // server is the sole authority on read state
+        time:  row.created_at ? new Date(row.created_at).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }) : '',
+        ts:    row.created_at ? new Date(row.created_at).getTime() : 0,
+        link:  lnk,
+      };
+    });
+
+    // Keep local-only notifications not yet confirmed by the server
+    // (the POST in pushNotif is fire-and-forget, so there's a brief window
+    // where a brand-new notification only exists locally).
+    var serverIds = new Set(fromServer.map(function(n){ return n.id; }));
+    var localOnly = (DB.notifications || []).filter(function(n) {
+      return n.id && n.id.indexOf('NTF-') === 0 && !serverIds.has(n.id) && !serverIds.has(n._dbId);
+    });
+
+    DB.notifications = fromServer.concat(localOnly)
+      .sort(function(a, b){ return (b.ts || 0) - (a.ts || 0); })
+      .slice(0, 100);
+
+    autosave('notifications');
+    renderNotifications();
+  } catch(e) {}
+}
+
+// ── Notification polling ticker — single interval, single fetch path ─────
 function _startNotifTicker() {
   if (window._notifTickTimer) clearInterval(window._notifTickTimer);
   window._notifTickTimer = setInterval(function() {
-    if (!window._ramsSessionToken || document.hidden) return;
-    // Fast timestamp probe — no data transfer if nothing changed
-    Store.get('rams:shared:notifications:ts', true).then(function(raw) {
-      var ts = raw ? parseInt(typeof raw === 'object' ? raw.value : raw) : 0;
-      if (!ts || ts <= _lastNotifTs) return;
-      loadSharedNotifications().catch(function(){});
-    }).catch(function(){});
-    // Also hit backend every 15s (separate from 30s throttle on main poll)
-    var now = Date.now();
-    if (!window._notifBackendTs || now - window._notifBackendTs > 15000) {
-      window._notifBackendTs = now;
-      apiFetch('/notifications').then(function(r) {
-        if (!r || !r.ok || !Array.isArray(r.data) || r.data.length === 0) return;
-
-        var localReadMap = {};
-        (DB.notifications||[]).forEach(function(n){ if (n.read) localReadMap[n.id] = true; if (n._dbId) localReadMap[n._dbId] = true; });
-        if (window._localReadIds) window._localReadIds.forEach(function(id){ localReadMap[id] = true; });
-
-        var fromSrv = r.data.map(function(n){
-          return { id:n.id, _dbId:n.id, title:n.title, body:n.body||'', type:n.type||'system',
-            read: !!(n.is_read || localReadMap[n.id]),
-            ts: new Date(n.created_at||Date.now()).getTime(),
-            time: new Date(n.created_at||Date.now()).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),
-            link: n.link?(typeof n.link==='string'?JSON.parse(n.link):n.link):null };
-        });
-
-        var srvIds   = new Set(fromSrv.map(function(n){ return n.id; }));
-        var localOnly = (DB.notifications||[]).filter(function(n){ return n.id && n.id.startsWith('NTF-') && !srvIds.has(n.id); });
-
-        var seen2 = {};
-        var merged = fromSrv.concat(localOnly)
-          .sort(function(a,b){ return (b.ts||0)-(a.ts||0); })
-          .filter(function(n){
-            var k = (n.title||'')+'|'+(n.body||'');
-            if (!seen2[k]){ seen2[k]=true; return true; } return false;
-          }).slice(0,100);
-
-        // Only update unread count if something actually changed
-        var prevUnread = (DB.notifications||[]).filter(function(n){ return !n.read; }).length;
-        DB.notifications = merged;
-        var newUnread  = merged.filter(function(n){ return !n.read; }).length;
-        autosave('notifications');
-        if (newUnread !== prevUnread || merged.length !== (DB.notifications||[]).length) {
-          renderNotifications();
-        }
-      }).catch(function(){});
-    }
-  }, 5000);
+    if (document.hidden) return;
+    _notifSync();
+  }, 6000);
+  _notifSync(); // immediate first fetch on start
 }
+
 
 // Track user activity for idle detection
 ['click','keydown','mousemove','touchstart'].forEach(function(ev){
@@ -5138,45 +5032,7 @@ async function loadDB() {
       await apiFetchOfficeFunds().catch(function(){});
       await loadViewerScopes().catch(function(){});
       await loadSharedPermissions().catch(function(){});
-      // Fetch notifications from backend
-      var _nr = await apiFetch('/notifications');
-      if (_nr.ok && Array.isArray(_nr.data)) {
-
-  // Dedup merged notifications: same title+body = same event.
-  // Prefer the copy with a richer link (local NTF- wins over server copy with null link).
-  function _dedupeNotifs(arr) {
-    var seen = {};
-    var out = [];
-    arr.forEach(function(n) {
-      var key = (n.title || '') + '|' + (n.body || '');
-      if (!seen[key]) { seen[key] = n; out.push(n); }
-      else {
-        // Prefer the version that has a link with an id
-        var cur = seen[key];
-        var nHasId  = n.link && n.link.id;
-        var curHasId = cur.link && cur.link.id;
-        if (nHasId && !curHasId) {
-          // Replace stored with richer version
-          var idx = out.indexOf(cur);
-          out[idx] = n;
-          seen[key] = n;
-        }
-      }
-    });
-    return out;
-  }
-        var _nrFromServer = _nr.data.map(function(n) {
-          return { id: n.id, _dbId: n.id, title: n.title, body: n.body||'',
-            type: n.type||'system', read: !!(n.is_read || n.read), ts: new Date(n.created_at||Date.now()).getTime(),
-            time: new Date(n.created_at||Date.now()).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),
-            link: n.link ? (typeof n.link==='string' ? JSON.parse(n.link) : n.link) : null };
-        });
-        var _nrServerIds = new Set(_nrFromServer.map(function(n){ return n.id; }));
-        var _nrLocalOnly = (DB.notifications||[]).filter(function(n){ return n.id && n.id.startsWith('NTF-') && !_nrServerIds.has(n.id); });
-        DB.notifications = _dedupeNotifs(_nrFromServer.concat(_nrLocalOnly)).sort(function(a,b){ return (b.ts||0)-(a.ts||0); });
-        autosave('notifications');
-        renderNotifications(); // update badge count immediately after login
-      }
+      // Notifications handled by _notifSync (single source of truth)
     }
   } catch(e) {}
 
@@ -5202,71 +5058,6 @@ async function loadDB() {
       : 0;
   } catch(e) {}
 
-  // Load notifications from backend DB (authoritative) then merge with shared Store
-  try {
-    var _apiNotifs = await apiFetch('/notifications');
-    if (_apiNotifs && _apiNotifs.ok && Array.isArray(_apiNotifs.data)) {
-      // Map backend rows to frontend format, then merge with any local-only notifications
-
-  // Dedup merged notifications: same title+body = same event.
-  // Prefer the copy with a richer link (local NTF- wins over server copy with null link).
-  function _dedupeNotifs(arr) {
-    var seen = {};
-    var out = [];
-    arr.forEach(function(n) {
-      var key = (n.title || '') + '|' + (n.body || '');
-      if (!seen[key]) { seen[key] = n; out.push(n); }
-      else {
-        // Prefer the version that has a link with an id
-        var cur = seen[key];
-        var nHasId  = n.link && n.link.id;
-        var curHasId = cur.link && cur.link.id;
-        if (nHasId && !curHasId) {
-          // Replace stored with richer version
-          var idx = out.indexOf(cur);
-          out[idx] = n;
-          seen[key] = n;
-        }
-      }
-    });
-    return out;
-  }
-      var _anFromServer = _apiNotifs.data.map(function(row) {
-        var lnk = null;
-        try { if (row.link) lnk = typeof row.link === 'string' ? JSON.parse(row.link) : row.link; } catch(e){}
-        return {
-          id:    row.id,
-          _dbId: row.id,
-          title: row.title || '',
-          body:  row.body  || '',
-          type:  row.type  || 'system',
-          read:  !!row.is_read,
-          time:  row.created_at ? new Date(row.created_at).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }) : '',
-          ts:    row.created_at ? new Date(row.created_at).getTime() : 0,
-          link:  lnk,
-        };
-      });
-      var _anServerIds = new Set(_anFromServer.map(function(n){ return n.id; }));
-      var _anLocalOnly = (DB.notifications||[]).filter(function(n){ return n.id && n.id.startsWith('NTF-') && !_anServerIds.has(n.id); });
-      DB.notifications = _dedupeNotifs(_anFromServer.concat(_anLocalOnly)).sort(function(a,b){ return (b.ts||0)-(a.ts||0); });
-    }
-  } catch(e) {}
-
-  // Load shared notifications (cross-user) — prefer shared over private local copy
-  try {
-    var _sharedNotifs = await Store.get('rams:shared:notifications', true);
-    var _sharedNotifsArr = _sharedNotifs
-      ? (Array.isArray(_sharedNotifs) ? _sharedNotifs
-         : (Array.isArray(_sharedNotifs.value) ? _sharedNotifs.value
-         : (typeof _sharedNotifs.value === 'string' ? JSON.parse(_sharedNotifs.value) : [])))
-      : null;
-    if (_sharedNotifsArr && _sharedNotifsArr.length > 0) {
-      DB.notifications = _sharedNotifsArr;
-    }
-  } catch(e) {
-    // Fall back to private local notifications if shared read fails
-    console.warn('[RAMS] Shared notifications unavailable, using local copy');
-  }
   let loaded = false;
   for (const k of DB_KEYS) {
     const data = await Store.get('rams:db:' + k);
@@ -5618,12 +5409,10 @@ function navigateFromNotif(id) {
   var n = DB.notifications.find(function(x){ return x.id === id; });
   if (!n) return;
 
-  // Mark read locally + sync
+  // Mark read locally + sync to backend
   n.read = true;
   autosave('notifications');
-  Store.set('rams:shared:notifications', DB.notifications, true).catch(function(){});
-  Store.set('rams:shared:notifications:ts', String(Date.now()), true).catch(function(){});
-  if (n._dbId || (n.id && n.id.length === 36 && n.id.includes('-'))) {
+  if (isUUID(n._dbId || n.id)) {
     apiFetch('/notifications/' + (n._dbId || n.id) + '/read', { method: 'PATCH' }).catch(function(){});
   }
   renderNotifications();
@@ -5733,47 +5522,37 @@ function navigateFromNotif(id) {
 
 function markRead(id) {
   var n = DB.notifications.find(function(x){ return x.id === id; });
-  if (n) {
-    n.read = true;
-    // Persist read state so poll cycles and refresh don't flash it back as unread
-    window._localReadIds = window._localReadIds || new Set();
-    window._localReadIds.add(n.id);
-    if (n._dbId) window._localReadIds.add(n._dbId);
-    _persistReadIds();
-    autosave('notifications');
-    Store.set('rams:shared:notifications', DB.notifications, true).catch(function(){});
-    Store.set('rams:shared:notifications:ts', String(Date.now()), true).catch(function(){});
-    if (n._dbId || (n.id && n.id.length === 36 && n.id.includes('-'))) {
-      apiFetch('/notifications/' + (n._dbId || n.id) + '/read', { method: 'PATCH' }).catch(function(){});
-    }
-    renderNotifications();
+  if (!n || n.read) return;
+  n.read = true;
+  renderNotifications(); // optimistic UI update
+  autosave('notifications');
+  if (isUUID(n._dbId || n.id)) {
+    apiFetch('/notifications/' + (n._dbId || n.id) + '/read', { method: 'PATCH' }).catch(function(){});
   }
 }
+
 function markAllRead() {
-  DB.notifications.forEach(function(n){
-    n.read = true;
-    // Add to persistent read set — survives poll cycles and refresh
-    window._localReadIds = window._localReadIds || new Set();
-    window._localReadIds.add(n.id);
-    if (n._dbId) window._localReadIds.add(n._dbId);
+  var ids = [];
+  DB.notifications.forEach(function(n) {
+    if (!n.read) {
+      n.read = true;
+      var dbId = n._dbId || n.id;
+      if (isUUID(dbId)) ids.push(dbId);
+    }
   });
-  _persistReadIds();
-  autosave('notifications');
-  Store.set('rams:shared:notifications', DB.notifications, true).catch(function(){});
-  Store.set('rams:shared:notifications:ts', String(Date.now()), true).catch(function(){});
-  var ids = DB.notifications.filter(function(n){ return n._dbId||(n.id&&n.id.includes('-')&&n.id.length>20); }).map(function(n){ return n._dbId||n.id; });
-  if (ids.length) apiFetch('/notifications/mark-read',{method:'POST',body:JSON.stringify({ids:ids})}).catch(function(){});
   renderNotifications();
+  autosave('notifications');
+  if (ids.length) {
+    apiFetch('/notifications/mark-read', { method: 'POST', body: JSON.stringify({ ids: ids }) }).catch(function(){});
+  }
   toast('All notifications marked as read', 'success');
 }
+
 function clearAllNotifs() {
   DB.notifications = [];
-  autosave('notifications');
-  Store.set('rams:shared:notifications', [], true).catch(function(){});
-  Store.set('rams:shared:notifications:ts', String(Date.now()), true).catch(function(){});
-  // Clear from backend DB
-  apiFetch('/notifications/all', { method: 'DELETE' }).catch(function(){});
   renderNotifications();
+  autosave('notifications');
+  apiFetch('/notifications/all', { method: 'DELETE' }).catch(function(){});
   toast('Notifications cleared', 'success');
 }
 
@@ -6245,6 +6024,16 @@ function pushNotif(title, body, type, link) {
   var toggleLabel = toggleMap[type] || 'System Alerts';
   if (!_notifEnabled(toggleLabel)) return; // user has this category off
 
+  if (!DB.notifications) DB.notifications = [];
+
+  // Dedup: block identical title+body fired within the last 24 hours
+  var DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000;
+  var now_ts = Date.now();
+  var isDuplicate = DB.notifications.some(function(x) {
+    return x.title === title && x.body === (body || '') && (now_ts - (x.ts || 0)) < DEDUP_WINDOW_MS;
+  });
+  if (isDuplicate) return;
+
   var n = {
     id:    'NTF-' + Date.now() + '-' + Math.random().toString(36).slice(2,6),
     title: title,
@@ -6252,41 +6041,27 @@ function pushNotif(title, body, type, link) {
     time:  new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     read:  false,
     type:  type || 'system',
-    ts:    Date.now(),
+    ts:    now_ts,
     link:  link || null,   // { page, id } for deep navigation
   };
 
-  // Dedup: block identical title+body fired within the last 24 hours
-  var DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000;
-  var now_ts = Date.now();
-  if (!DB.notifications) DB.notifications = [];
-
-  // Session-level dedup — fastest check, no array scan
-  if (!window._pushedNotifKeys) window._pushedNotifKeys = new Set();
-  var sessionKey = title + '|' + (body || '');
-  if (window._pushedNotifKeys.has(sessionKey)) return;
-
-  var isDuplicate = DB.notifications.some(function(x) {
-    return x.title === title && x.body === (body || '') && (now_ts - (x.ts || 0)) < DEDUP_WINDOW_MS;
-  });
-  if (isDuplicate) { window._pushedNotifKeys.add(sessionKey); return; }
-  window._pushedNotifKeys.add(sessionKey);
   DB.notifications.unshift(n);
-  // Cap at 50 to prevent unbounded growth
-  if (DB.notifications.length > 50) DB.notifications = DB.notifications.slice(0, 50);
+  if (DB.notifications.length > 100) DB.notifications = DB.notifications.slice(0, 100);
+  autosave('notifications');
+  renderNotifications();
 
-  // Persist to shared Store (cross-user, low latency)
-  Store.set('rams:shared:notifications', DB.notifications, true).catch(function(){});
-  Store.set('rams:shared:notifications:ts', String(Date.now()), true).catch(function(){});
-  // Also persist to backend DB for permanent record across sessions/devices
+  // Persist to backend — sole source of truth across sessions/devices.
+  // On success, replace the local temp id with the server's real UUID so
+  // future read/delete operations target the correct row.
   apiFetch('/notifications', {
     method: 'POST',
     body: JSON.stringify({ title: title, body: body || '', type: type || 'info',
                            link: link ? JSON.stringify(link) : null })
+  }).then(function(r) {
+    if (r && r.ok && r.data && r.data.id) {
+      n._dbId = r.data.id;
+    }
   }).catch(function(){});
-  // Save to private Store as local cache
-  autosave('notifications');
-  renderNotifications();
 
   // Browser push notification (if permitted and page is not focused)
   if (_notifEnabled('Email Notifications') && typeof Notification !== 'undefined') {
@@ -8060,8 +7835,6 @@ function saveApplicant() {
           nx.link.id    = serverUUID;
           nx.link.altId = localId; // keep local as fallback
           autosave('notifications');
-          Store.set('rams:shared:notifications', DB.notifications, true).catch(function(){});
-          Store.set('rams:shared:notifications:ts', String(Date.now()), true).catch(function(){});
         }
       }
     }));
@@ -10983,12 +10756,11 @@ async function handleLogout() {
   stopPolling();
   stopChatPoll();
   _stopInvoiceSync();
+  if (window._notifTickTimer) { clearInterval(window._notifTickTimer); window._notifTickTimer = null; }
   await flushAutosave();
   window._ramsSessionUser  = null;
   window._ramsSessionToken = null;
-  window._localReadIds     = new Set();
-  window._pushedNotifKeys  = new Set();
-  try { localStorage.removeItem('rams:notif:readIds'); } catch(e) {}
+  DB.notifications = [];
   await Store.remove('rams:session:token');
   await Store.remove('rams:session:user');
   await Store.remove('rams:session:pass');
