@@ -2494,6 +2494,7 @@ button[disabled][data-rbac-locked] {
             <option>Hong Kong</option><option>Singapore</option><option>Japan</option>
             <option>South Korea</option><option>Germany</option><option>Canada</option>
             <option>United Kingdom</option><option>Australia</option><option>Italy</option>
+            <option>Slovenia</option>
             <option>Other</option>
           </select>
         </div>
@@ -11355,6 +11356,7 @@ DB.countryRules = [
   { id:'CR-008', country:'South Korea',  flag:'🇰🇷', guaranteePeriod:9,  commissionAmt:25000,   withholdPct:30, currency:'KRW', expenseRule:'partial', active:true  },
   { id:'CR-009', country:'Canada',       flag:'🇨🇦', guaranteePeriod:9,  commissionAmt:30000,   withholdPct:30, currency:'CAD', expenseRule:'partial', active:true  },
   { id:'CR-010', country:'Germany',      flag:'🇩🇪', guaranteePeriod:9,  commissionAmt:30000,   withholdPct:30, currency:'EUR', expenseRule:'partial', active:true  },
+  { id:'CR-011', country:'Slovenia',     flag:'🇸🇮', guaranteePeriod:9,  commissionAmt:30000,   withholdPct:30, currency:'EUR', expenseRule:'partial', active:true  },
 ];
 
 DB.commissions = [];
@@ -18749,7 +18751,7 @@ async function loadSharedPermissions() {
             <option>Kuwait</option><option>Bahrain</option><option>Oman</option>
             <option>Hong Kong</option><option>Singapore</option><option>Taiwan</option>
             <option>Japan</option><option>South Korea</option><option>Canada</option>
-            <option>Germany</option><option>Multiple</option>
+            <option>Germany</option><option>Slovenia</option><option>Multiple</option>
           </select>
         </div>
         <div class="f-grp">
