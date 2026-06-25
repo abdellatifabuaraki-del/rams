@@ -13695,7 +13695,8 @@ function openEditAgent(idx) {
 }
 
 function submitAgent() {
-  if (!hasPermission('Manage Accounting')) { toast('Your role cannot manage agents','error'); return; }
+  var _role = getCurrentRole();
+  if (_role !== 'Admin' && _role !== 'Manager') { toast('Your role cannot manage agents', 'error'); return; }
   var name  = (document.getElementById('ag-name').value||'').trim();
   var phone = (document.getElementById('ag-phone').value||'').trim();
   if (!name || !phone) { toast('Name and phone are required','error'); return; }
@@ -13745,7 +13746,7 @@ function submitAgent() {
 }
 
 function deleteAgent(idx) {
-  if (!hasPermission('Manage Accounting')) { toast('Your role cannot manage agents','error'); return; }
+  if (getCurrentRole() !== 'Admin') { toast('Only Admin can delete agents', 'error'); return; }
   var a = DB.agents[idx];
   if (!a) return;
   if (!confirm('Remove agent "'+a.name+'"? This cannot be undone.')) return;
