@@ -13697,12 +13697,28 @@ function openEditAgent(idx) {
 function submitAgent() {
   var _role = getCurrentRole();
   if (_role !== 'Admin' && _role !== 'Manager') { toast('Your role cannot manage agents', 'error'); return; }
+
+  // Find the next available AGT-### code — scan existing codes for the highest number used,
+  // not array length (which drifts if any agent was ever deleted)
+  function _nextAgentCode() {
+    var maxNum = 0;
+    DB.agents.forEach(function(a) {
+      var m = /^AGT-(\d+)$/.exec(a.code || '');
+      if (m) { var n = parseInt(m[1], 10); if (n > maxNum) maxNum = n; }
+    });
+    var candidate;
+    do {
+      maxNum++;
+      candidate = 'AGT-' + String(maxNum).padStart(3, '0');
+    } while (DB.agents.some(function(a){ return a.code === candidate; }));
+    return candidate;
+  }
   var name  = (document.getElementById('ag-name').value||'').trim();
   var phone = (document.getElementById('ag-phone').value||'').trim();
   if (!name || !phone) { toast('Name and phone are required','error'); return; }
   var data = {
     name: name,
-    code: (document.getElementById('ag-code').value||'').trim() || ('AGT-'+String(DB.agents.length+1).padStart(3,'0')),
+    code: (document.getElementById('ag-code').value||'').trim() || _nextAgentCode(),
     phone: phone,
     email: (document.getElementById('ag-email').value||'').trim(),
     country: document.getElementById('ag-country').value,
@@ -13726,7 +13742,12 @@ function submitAgent() {
     });
     toast('Agent updated','success');
   } else {
-    var newAgent = Object.assign(data,{id:'AGT-'+String(DB.agents.length+1).padStart(3,'0'),balance:0,totalCommission:0,totalExpenses:0,totalDeployed:0,backouts:0,repatriations:0});
+    // Ensure the local placeholder id never collides with an existing agent's id or code
+    var _localId = data.code;
+    while (DB.agents.some(function(a){ return a.id === _localId; })) {
+      _localId = _nextAgentCode();
+    }
+    var newAgent = Object.assign(data,{id:_localId,balance:0,totalCommission:0,totalExpenses:0,totalDeployed:0,backouts:0,repatriations:0});
     DB.agents.push(newAgent);
     addAudit('CREATE','Agent','Added agent: '+name);
     apiCreateAgent(newAgent).then(function(r){
@@ -18327,6 +18348,26 @@ async function apiCreateAgent(data) {
       notes:          data.notes || null,
     })
   });
+
+  // If the code collided with one the server has but our local copy didn't know about,
+  // refresh the real agent list and retry once with a freshly-generated code.
+  if (!r.ok && r.httpStatus === 409 && !data._codeRetried) {
+    await fetchAgents(); // pulls the true server-side list into DB.agents
+    var maxNum = 0;
+    DB.agents.forEach(function(a) {
+      var m = /^AGT-(\d+)$/.exec(a.code || '');
+      if (m) { var n = parseInt(m[1], 10); if (n > maxNum) maxNum = n; }
+    });
+    var retryCode;
+    do {
+      maxNum++;
+      retryCode = 'AGT-' + String(maxNum).padStart(3, '0');
+    } while (DB.agents.some(function(a){ return a.code === retryCode; }));
+    data.code = retryCode;
+    data._codeRetried = true;
+    return apiCreateAgent(data);
+  }
+
   if (r.ok && r.data && r.data.id) {
     data._dbId = r.data.id;
     data.id    = r.data.id;
