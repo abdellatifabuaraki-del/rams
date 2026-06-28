@@ -1857,68 +1857,103 @@ button[disabled][data-rbac-locked] {
       <div style="display:flex;flex-direction:column;gap:16px">
 
         <!-- Office Fund Ledger -->
-        <div class="card" style="overflow:hidden">
-          <div class="office-ledger-hdr">
+        <div class="card" style="overflow:hidden" id="office-fund-card">
+          <div class="office-ledger-hdr" style="cursor:pointer" onclick="_toggleLedgerFold('office-fund')">
             <div style="flex:1">
-              <div class="office-ledger-title">🏢 Office Fund</div>
+              <div class="office-ledger-title">
+                <span id="office-fund-fold-icon" style="display:inline-block;transition:transform .15s;margin-right:4px">▾</span>
+                🏢 Office Fund
+              </div>
               <div style="font-size:11px;color:var(--muted);margin-top:2px">
                 PHP: <span id="office-fund-bal-php" style="font-weight:700;color:var(--brand)">₱0</span>
                 &nbsp;·&nbsp;
                 USD: <span id="office-fund-bal-usd" style="font-weight:700;color:var(--green)">$0</span>
               </div>
             </div>
-            <select class="f-inp" id="office-ledger-type" onchange="renderOfficeLedger()" style="width:120px">
-              <option value="all">All Types</option>
-              <option value="allocation">Allocation</option>
-              <option value="refund">Refund</option>
-              <option value="adjustment">Adjustment</option>
-            </select>
-            <select class="f-inp" id="office-ledger-currency" onchange="renderOfficeLedger()" style="width:90px">
-              <option value="all">All</option>
-              <option value="PHP">PHP</option>
-              <option value="USD">USD</option>
-            </select>
-            <button class="btn btn-s btn-sm" onclick="exportOfficeLedger()">⬇</button>
+            <div onclick="event.stopPropagation()" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <select class="f-inp" id="office-fund-period" onchange="_onPeriodChange('office-fund')" style="width:120px">
+                <option value="all">All Time</option>
+                <option value="week">This Week</option>
+                <option value="month">This Month</option>
+                <option value="year">This Year</option>
+                <option value="custom">Custom Range…</option>
+              </select>
+              <input type="date" class="f-inp" id="office-fund-date-from" onchange="renderOfficeLedger()" style="width:128px;display:none">
+              <input type="date" class="f-inp" id="office-fund-date-to"   onchange="renderOfficeLedger()" style="width:128px;display:none">
+              <select class="f-inp" id="office-ledger-type" onchange="renderOfficeLedger()" style="width:120px">
+                <option value="all">All Types</option>
+                <option value="allocation">Allocation</option>
+                <option value="refund">Refund</option>
+                <option value="adjustment">Adjustment</option>
+              </select>
+              <select class="f-inp" id="office-ledger-currency" onchange="renderOfficeLedger()" style="width:90px">
+                <option value="all">All</option>
+                <option value="PHP">PHP</option>
+                <option value="USD">USD</option>
+              </select>
+              <button class="btn btn-s btn-sm" onclick="exportOfficeLedger()">⬇</button>
+            </div>
           </div>
-          <table style="width:100%;border-collapse:collapse">
-            <thead>
-              <tr>
-                <th>Date</th><th>Type</th><th>Description</th>
-                <th style="text-align:right">Amount</th>
-                <th style="text-align:right">Balance</th>
-              </tr>
-            </thead>
-            <tbody id="office-fund-tbody"></tbody>
-          </table>
+          <div id="office-fund-body">
+            <table style="width:100%;border-collapse:collapse">
+              <thead>
+                <tr>
+                  <th>Date</th><th>Type</th><th>Description</th>
+                  <th style="text-align:right">Amount</th>
+                  <th style="text-align:right">Balance</th>
+                </tr>
+              </thead>
+              <tbody id="office-fund-tbody"></tbody>
+            </table>
+          </div>
         </div>
 
         <!-- Expenses Fund Ledger -->
-        <div class="card" style="overflow:hidden">
-          <div class="office-ledger-hdr">
-            <div class="office-ledger-title">💸 Expenses Fund</div>
-            <select class="f-inp" id="office-exp-type-filter" onchange="renderOfficeLedger()" style="width:120px">
-              <option value="all">All Types</option>
-              <option value="allocation">Allocations</option>
-              <option value="expense">Expenses</option>
-            </select>
-            <select class="f-inp" id="office-exp-status-filter" onchange="renderOfficeLedger()" style="width:110px">
-              <option value="all">All Status</option>
-              <option value="Pending">Pending</option>
-              <option value="Paid">Paid</option>
-              <option value="Charged">Charged</option>
-            </select>
+        <div class="card" style="overflow:hidden" id="office-expenses-card">
+          <div class="office-ledger-hdr" style="cursor:pointer" onclick="_toggleLedgerFold('office-expenses')">
+            <div style="flex:1">
+              <div class="office-ledger-title">
+                <span id="office-expenses-fold-icon" style="display:inline-block;transition:transform .15s;margin-right:4px">▾</span>
+                💸 Expenses Fund
+              </div>
+            </div>
+            <div onclick="event.stopPropagation()" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <select class="f-inp" id="office-expenses-period" onchange="_onPeriodChange('office-expenses')" style="width:120px">
+                <option value="all">All Time</option>
+                <option value="week">This Week</option>
+                <option value="month">This Month</option>
+                <option value="year">This Year</option>
+                <option value="custom">Custom Range…</option>
+              </select>
+              <input type="date" class="f-inp" id="office-expenses-date-from" onchange="renderOfficeLedger()" style="width:128px;display:none">
+              <input type="date" class="f-inp" id="office-expenses-date-to"   onchange="renderOfficeLedger()" style="width:128px;display:none">
+              <select class="f-inp" id="office-exp-type-filter" onchange="renderOfficeLedger()" style="width:120px">
+                <option value="all">All Types</option>
+                <option value="allocation">Allocations</option>
+                <option value="expense">Expenses</option>
+              </select>
+              <select class="f-inp" id="office-exp-status-filter" onchange="renderOfficeLedger()" style="width:110px">
+                <option value="all">All Status</option>
+                <option value="Pending">Pending</option>
+                <option value="Paid">Paid</option>
+                <option value="Charged">Charged</option>
+              </select>
+              <button class="btn btn-s btn-sm" onclick="exportExpensesFundLedger()">⬇</button>
+            </div>
           </div>
-          <table style="width:100%;border-collapse:collapse">
-            <thead>
-              <tr>
-                <th>Date</th><th colspan="2">Description</th>
-                <th>Status</th>
-                <th style="text-align:right">Amount</th>
-                <th style="text-align:right">Balance</th>
-              </tr>
-            </thead>
-            <tbody id="office-expenses-tbody"></tbody>
-          </table>
+          <div id="office-expenses-body">
+            <table style="width:100%;border-collapse:collapse">
+              <thead>
+                <tr>
+                  <th>Date</th><th colspan="2">Description</th>
+                  <th>Status</th>
+                  <th style="text-align:right">Amount</th>
+                  <th style="text-align:right">Balance</th>
+                </tr>
+              </thead>
+              <tbody id="office-expenses-tbody"></tbody>
+            </table>
+          </div>
         </div>
 
       </div>
@@ -15934,7 +15969,87 @@ function renderOfficeFlowRow() {
     return '<div class="flow-item"><div class="flow-val" style="color:'+item.color+'">'+item.val+'</div><div class="flow-lbl">'+item.lbl+'</div></div>';
   }).join('');
 }
+
+// ── Ledger fold/collapse toggle — persists per-card across renders ────────
+var _ledgerFoldState = { 'office-fund': false, 'office-expenses': false }; // false = expanded
+
+function _toggleLedgerFold(key) {
+  _ledgerFoldState[key] = !_ledgerFoldState[key];
+  var body = document.getElementById(key + '-body');
+  var icon = document.getElementById(key + '-fold-icon');
+  if (body) body.style.display = _ledgerFoldState[key] ? 'none' : '';
+  if (icon) icon.style.transform = _ledgerFoldState[key] ? 'rotate(-90deg)' : 'rotate(0deg)';
+}
+
+// ── Period filter — shows/hides the custom date-range inputs ──────────────
+function _onPeriodChange(key) {
+  var period = (document.getElementById(key + '-period') || {}).value || 'all';
+  var fromEl = document.getElementById(key + '-date-from');
+  var toEl   = document.getElementById(key + '-date-to');
+  var showCustom = period === 'custom';
+  if (fromEl) fromEl.style.display = showCustom ? '' : 'none';
+  if (toEl)   toEl.style.display   = showCustom ? '' : 'none';
+  renderOfficeLedger();
+}
+
+// ── Resolve a period selector + optional custom range into {from, to} ─────
+// Returns null for 'all' (no filtering). Dates are inclusive, YYYY-MM-DD.
+function _resolvePeriodRange(key) {
+  var period = (document.getElementById(key + '-period') || {}).value || 'all';
+  if (period === 'all') return null;
+
+  var today = new Date();
+  var pad = function(n){ return String(n).padStart(2,'0'); };
+  var toISO = function(d){ return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()); };
+
+  if (period === 'custom') {
+    var from = (document.getElementById(key + '-date-from') || {}).value;
+    var to   = (document.getElementById(key + '-date-to')   || {}).value;
+    if (!from && !to) return null;
+    return { from: from || '0000-01-01', to: to || '9999-12-31' };
+  }
+
+  if (period === 'week') {
+    var d = new Date(today);
+    var dow = (d.getDay() + 6) % 7; // Monday = 0
+    d.setDate(d.getDate() - dow);
+    return { from: toISO(d), to: toISO(today) };
+  }
+
+  if (period === 'month') {
+    var first = new Date(today.getFullYear(), today.getMonth(), 1);
+    return { from: toISO(first), to: toISO(today) };
+  }
+
+  if (period === 'year') {
+    var jan1 = new Date(today.getFullYear(), 0, 1);
+    return { from: toISO(jan1), to: toISO(today) };
+  }
+
+  return null;
+}
+
+function _inRange(dateStr, range) {
+  if (!range || !dateStr) return true;
+  var d = String(dateStr).slice(0, 10); // tolerate full ISO timestamps too
+  return d >= range.from && d <= range.to;
+}
+
 function renderOfficeLedger() {
+  // Restore fold/collapse state and custom-range input visibility on every render
+  ['office-fund', 'office-expenses'].forEach(function(key) {
+    var body = document.getElementById(key + '-body');
+    var icon = document.getElementById(key + '-fold-icon');
+    if (body) body.style.display = _ledgerFoldState[key] ? 'none' : '';
+    if (icon) icon.style.transform = _ledgerFoldState[key] ? 'rotate(-90deg)' : 'rotate(0deg)';
+    var period = (document.getElementById(key + '-period') || {}).value || 'all';
+    var fromEl = document.getElementById(key + '-date-from');
+    var toEl   = document.getElementById(key + '-date-to');
+    var showCustom = period === 'custom';
+    if (fromEl) fromEl.style.display = showCustom ? '' : 'none';
+    if (toEl)   toEl.style.display   = showCustom ? '' : 'none';
+  });
+
   var currFilter      = (document.getElementById('office-ledger-currency')      || {}).value || 'all';
   var typeFilter      = (document.getElementById('office-ledger-type')          || {}).value || 'all';
   var expCurrFilter   = (document.getElementById('office-exp-ledger-currency')  || {}).value || 'all';
@@ -15959,6 +16074,8 @@ function renderOfficeLedger() {
     .sort(function(a,b){ return (b.ts||'').localeCompare(a.ts||''); });
   if (currFilter !== 'all') fundEntries = fundEntries.filter(function(e){ return e.currency === currFilter; });
   if (typeFilter !== 'all') fundEntries = fundEntries.filter(function(e){ return e.type === typeFilter; });
+  var fundRange = _resolvePeriodRange('office-fund');
+  if (fundRange) fundEntries = fundEntries.filter(function(e){ return _inRange(e.date, fundRange); });
 
   var fundTbody = document.getElementById('office-fund-tbody');
   if (fundTbody) {
@@ -16023,6 +16140,11 @@ function renderOfficeLedger() {
       });
     });
   }
+
+  // Apply period filter before computing running balance, so the balance
+  // column reflects a running total for the selected statement period
+  var expRange = _resolvePeriodRange('office-expenses');
+  if (expRange) expFundEntries = expFundEntries.filter(function(e){ return _inRange(e.date, expRange); });
 
   // Sort oldest→newest to compute running balance, then reverse for display
   expFundEntries.sort(function(a, b){ return (a.ts||a.date||'').localeCompare(b.ts||b.date||''); });
@@ -16559,16 +16681,62 @@ function submitOfficeAdjustment() {
 
 // ── EXPORT ────────────────────────────────────────────────────────────
 function exportOfficeLedger() {
+  var currFilter = (document.getElementById('office-ledger-currency') || {}).value || 'all';
+  var typeFilter = (document.getElementById('office-ledger-type')     || {}).value || 'all';
+  var range      = _resolvePeriodRange('office-fund');
+
+  var entries = DB.officeLedger.slice()
+    .filter(function(e){ return e.type !== 'expense-allocation'; })
+    .sort(function(a,b){ return (b.ts||'').localeCompare(a.ts||''); });
+  if (currFilter !== 'all') entries = entries.filter(function(e){ return e.currency === currFilter; });
+  if (typeFilter !== 'all') entries = entries.filter(function(e){ return e.type === typeFilter; });
+  if (range) entries = entries.filter(function(e){ return _inRange(e.date, range); });
+
   var rows = ['Date,Type,Currency,Amount,Balance,Category,Description,Reference,Posted By'];
-  DB.officeLedger.slice().sort(function(a,b){ return b.ts.localeCompare(a.ts); }).forEach(function(e){
+  entries.forEach(function(e){
     rows.push([e.date,e.type,e.currency,e.amount,e.balance||'',e.category||'','"'+e.desc+'"',e.ref||'',e.postedBy||''].join(','));
   });
   var blob = new Blob([rows.join('\n')],{type:'text/csv'});
   var a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'office_ledger_'+new Date().toISOString().split('T')[0]+'.csv';
+  a.download = 'office_fund_ledger_'+new Date().toISOString().split('T')[0]+'.csv';
   a.click();
-  toast('Office ledger exported','success');
+  toast('Office Fund ledger exported (' + entries.length + ' entries)', 'success');
+}
+
+function exportExpensesFundLedger() {
+  var typeFilter   = (document.getElementById('office-exp-type-filter')   || {}).value || 'all';
+  var statusFilter = (document.getElementById('office-exp-status-filter') || {}).value || 'all';
+  var range        = _resolvePeriodRange('office-expenses');
+
+  var rowsData = [];
+
+  if (typeFilter === 'all' || typeFilter === 'allocation') {
+    DB.officeLedger.filter(function(e){ return e.type === 'expense-allocation'; }).forEach(function(e) {
+      rowsData.push({ date: e.date || '', type: 'Allocation', status: '', amount: Math.abs(e.amount), desc: e.desc || 'Fund Allocation', ref: e.ref || '' });
+    });
+  }
+  if (typeFilter === 'all' || typeFilter === 'expense') {
+    var appExps = (DB.expenses || []).filter(function(e){ return e.status !== 'Rejected'; });
+    if (statusFilter !== 'all') appExps = appExps.filter(function(e){ return e.status === statusFilter; });
+    appExps.forEach(function(e) {
+      rowsData.push({ date: e.date || '', type: 'Expense', status: e.status || '', amount: -(parseFloat(e.amount)||0), desc: (e.applicant?e.applicant+' — ':'')+(e.desc||e.description||''), ref: '' });
+    });
+  }
+
+  if (range) rowsData = rowsData.filter(function(r){ return _inRange(r.date, range); });
+  rowsData.sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
+
+  var rows = ['Date,Type,Status,Amount,Description,Reference'];
+  rowsData.forEach(function(r){
+    rows.push([r.date, r.type, r.status, r.amount, '"'+(r.desc||'').replace(/"/g,'""')+'"', r.ref].join(','));
+  });
+  var blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'expenses_fund_ledger_'+new Date().toISOString().split('T')[0]+'.csv';
+  a.click();
+  toast('Expenses Fund ledger exported (' + rowsData.length + ' entries)', 'success');
 }
 
 // ── HOOK INTO switchAccTab ────────────────────────────────────────────
