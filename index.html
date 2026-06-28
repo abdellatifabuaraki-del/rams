@@ -1858,19 +1858,16 @@ button[disabled][data-rbac-locked] {
 
         <!-- Office Fund Ledger -->
         <div class="card" style="overflow:hidden" id="office-fund-card">
-          <div class="office-ledger-hdr" style="cursor:pointer" onclick="_toggleLedgerFold('office-fund')">
+          <div class="office-ledger-hdr">
             <div style="flex:1">
-              <div class="office-ledger-title">
-                <span id="office-fund-fold-icon" style="display:inline-block;transition:transform .15s;margin-right:4px">▾</span>
-                🏢 Office Fund
-              </div>
+              <div class="office-ledger-title">🏢 Office Fund</div>
               <div style="font-size:11px;color:var(--muted);margin-top:2px">
                 PHP: <span id="office-fund-bal-php" style="font-weight:700;color:var(--brand)">₱0</span>
                 &nbsp;·&nbsp;
                 USD: <span id="office-fund-bal-usd" style="font-weight:700;color:var(--green)">$0</span>
               </div>
             </div>
-            <div onclick="event.stopPropagation()" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
               <select class="f-inp" id="office-fund-period" onchange="_onPeriodChange('office-fund')" style="width:120px">
                 <option value="all">All Time</option>
                 <option value="week">This Week</option>
@@ -1878,15 +1875,15 @@ button[disabled][data-rbac-locked] {
                 <option value="year">This Year</option>
                 <option value="custom">Custom Range…</option>
               </select>
-              <input type="date" class="f-inp" id="office-fund-date-from" onchange="renderOfficeLedger()" style="width:128px;display:none">
-              <input type="date" class="f-inp" id="office-fund-date-to"   onchange="renderOfficeLedger()" style="width:128px;display:none">
-              <select class="f-inp" id="office-ledger-type" onchange="renderOfficeLedger()" style="width:120px">
+              <input type="date" class="f-inp" id="office-fund-date-from" onchange="_ledgerFilterChanged('office-fund')" style="width:128px;display:none">
+              <input type="date" class="f-inp" id="office-fund-date-to"   onchange="_ledgerFilterChanged('office-fund')" style="width:128px;display:none">
+              <select class="f-inp" id="office-ledger-type" onchange="_ledgerFilterChanged('office-fund')" style="width:120px">
                 <option value="all">All Types</option>
                 <option value="allocation">Allocation</option>
                 <option value="refund">Refund</option>
                 <option value="adjustment">Adjustment</option>
               </select>
-              <select class="f-inp" id="office-ledger-currency" onchange="renderOfficeLedger()" style="width:90px">
+              <select class="f-inp" id="office-ledger-currency" onchange="_ledgerFilterChanged('office-fund')" style="width:90px">
                 <option value="all">All</option>
                 <option value="PHP">PHP</option>
                 <option value="USD">USD</option>
@@ -1894,6 +1891,7 @@ button[disabled][data-rbac-locked] {
               <button class="btn btn-s btn-sm" onclick="exportOfficeLedger()">⬇</button>
             </div>
           </div>
+          <div id="office-fund-totals" style="display:flex;gap:24px;padding:12px 18px;border-bottom:1px solid var(--border);background:var(--card-alt,rgba(0,0,0,.015))"></div>
           <div id="office-fund-body">
             <table style="width:100%;border-collapse:collapse">
               <thead>
@@ -1906,18 +1904,16 @@ button[disabled][data-rbac-locked] {
               <tbody id="office-fund-tbody"></tbody>
             </table>
           </div>
+          <div id="office-fund-pager" style="display:flex;justify-content:space-between;align-items:center;padding:10px 18px;border-top:1px solid var(--border);font-size:12px"></div>
         </div>
 
         <!-- Expenses Fund Ledger -->
         <div class="card" style="overflow:hidden" id="office-expenses-card">
-          <div class="office-ledger-hdr" style="cursor:pointer" onclick="_toggleLedgerFold('office-expenses')">
+          <div class="office-ledger-hdr">
             <div style="flex:1">
-              <div class="office-ledger-title">
-                <span id="office-expenses-fold-icon" style="display:inline-block;transition:transform .15s;margin-right:4px">▾</span>
-                💸 Expenses Fund
-              </div>
+              <div class="office-ledger-title">💸 Expenses Fund</div>
             </div>
-            <div onclick="event.stopPropagation()" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
               <select class="f-inp" id="office-expenses-period" onchange="_onPeriodChange('office-expenses')" style="width:120px">
                 <option value="all">All Time</option>
                 <option value="week">This Week</option>
@@ -1925,14 +1921,14 @@ button[disabled][data-rbac-locked] {
                 <option value="year">This Year</option>
                 <option value="custom">Custom Range…</option>
               </select>
-              <input type="date" class="f-inp" id="office-expenses-date-from" onchange="renderOfficeLedger()" style="width:128px;display:none">
-              <input type="date" class="f-inp" id="office-expenses-date-to"   onchange="renderOfficeLedger()" style="width:128px;display:none">
-              <select class="f-inp" id="office-exp-type-filter" onchange="renderOfficeLedger()" style="width:120px">
+              <input type="date" class="f-inp" id="office-expenses-date-from" onchange="_ledgerFilterChanged('office-expenses')" style="width:128px;display:none">
+              <input type="date" class="f-inp" id="office-expenses-date-to"   onchange="_ledgerFilterChanged('office-expenses')" style="width:128px;display:none">
+              <select class="f-inp" id="office-exp-type-filter" onchange="_ledgerFilterChanged('office-expenses')" style="width:120px">
                 <option value="all">All Types</option>
                 <option value="allocation">Allocations</option>
                 <option value="expense">Expenses</option>
               </select>
-              <select class="f-inp" id="office-exp-status-filter" onchange="renderOfficeLedger()" style="width:110px">
+              <select class="f-inp" id="office-exp-status-filter" onchange="_ledgerFilterChanged('office-expenses')" style="width:110px">
                 <option value="all">All Status</option>
                 <option value="Pending">Pending</option>
                 <option value="Paid">Paid</option>
@@ -1941,6 +1937,7 @@ button[disabled][data-rbac-locked] {
               <button class="btn btn-s btn-sm" onclick="exportExpensesFundLedger()">⬇</button>
             </div>
           </div>
+          <div id="office-expenses-totals" style="display:flex;gap:24px;padding:12px 18px;border-bottom:1px solid var(--border);background:var(--card-alt,rgba(0,0,0,.015))"></div>
           <div id="office-expenses-body">
             <table style="width:100%;border-collapse:collapse">
               <thead>
@@ -1954,6 +1951,7 @@ button[disabled][data-rbac-locked] {
               <tbody id="office-expenses-tbody"></tbody>
             </table>
           </div>
+          <div id="office-expenses-pager" style="display:flex;justify-content:space-between;align-items:center;padding:10px 18px;border-top:1px solid var(--border);font-size:12px"></div>
         </div>
 
       </div>
@@ -15970,19 +15968,23 @@ function renderOfficeFlowRow() {
   }).join('');
 }
 
-// ── Ledger fold/collapse toggle — persists per-card across renders ────────
-var _ledgerFoldState = { 'office-fund': false, 'office-expenses': false }; // false = expanded
+// ── Ledger pagination state — 30 rows per page, persists per-card ────────
+var PAGE_SIZE = 30;
+var _ledgerPage = { 'office-fund': 1, 'office-expenses': 1 };
 
-function _toggleLedgerFold(key) {
-  _ledgerFoldState[key] = !_ledgerFoldState[key];
-  var body = document.getElementById(key + '-body');
-  var icon = document.getElementById(key + '-fold-icon');
-  if (body) body.style.display = _ledgerFoldState[key] ? 'none' : '';
-  if (icon) icon.style.transform = _ledgerFoldState[key] ? 'rotate(-90deg)' : 'rotate(0deg)';
+function _ledgerFilterChanged(key) {
+  _ledgerPage[key] = 1; // reset to first page whenever a filter changes
+  renderOfficeLedger();
+}
+
+function _ledgerGoToPage(key, page) {
+  _ledgerPage[key] = page;
+  renderOfficeLedger();
 }
 
 // ── Period filter — shows/hides the custom date-range inputs ──────────────
 function _onPeriodChange(key) {
+  _ledgerPage[key] = 1; // reset to first page when the period changes
   var period = (document.getElementById(key + '-period') || {}).value || 'all';
   var fromEl = document.getElementById(key + '-date-from');
   var toEl   = document.getElementById(key + '-date-to');
@@ -16036,12 +16038,8 @@ function _inRange(dateStr, range) {
 }
 
 function renderOfficeLedger() {
-  // Restore fold/collapse state and custom-range input visibility on every render
+  // Restore custom-range input visibility on every render
   ['office-fund', 'office-expenses'].forEach(function(key) {
-    var body = document.getElementById(key + '-body');
-    var icon = document.getElementById(key + '-fold-icon');
-    if (body) body.style.display = _ledgerFoldState[key] ? 'none' : '';
-    if (icon) icon.style.transform = _ledgerFoldState[key] ? 'rotate(-90deg)' : 'rotate(0deg)';
     var period = (document.getElementById(key + '-period') || {}).value || 'all';
     var fromEl = document.getElementById(key + '-date-from');
     var toEl   = document.getElementById(key + '-date-to');
@@ -16077,12 +16075,39 @@ function renderOfficeLedger() {
   var fundRange = _resolvePeriodRange('office-fund');
   if (fundRange) fundEntries = fundEntries.filter(function(e){ return _inRange(e.date, fundRange); });
 
+  // ── Period totals — sum of allocations-in vs. expenses/adjustments-out, per currency ──
+  var fundTotalsEl = document.getElementById('office-fund-totals');
+  if (fundTotalsEl) {
+    var fundTotals = {}; // { PHP: {in, out}, USD: {in, out} }
+    fundEntries.forEach(function(e) {
+      var cur = e.currency || 'PHP';
+      if (!fundTotals[cur]) fundTotals[cur] = { in: 0, out: 0 };
+      if (e.amount >= 0) fundTotals[cur].in  += e.amount;
+      else                fundTotals[cur].out += Math.abs(e.amount);
+    });
+    var fundTotalsHtml = Object.keys(fundTotals).map(function(cur) {
+      var t = fundTotals[cur];
+      return '<div><span style="font-size:11px;color:var(--muted)">Total In ('+cur+')</span><br>'+
+        '<span style="font-weight:800;font-family:monospace;color:var(--green)">'+sym(cur)+t.in.toLocaleString('en',{minimumFractionDigits:2})+'</span></div>'+
+        '<div><span style="font-size:11px;color:var(--muted)">Total Out ('+cur+')</span><br>'+
+        '<span style="font-weight:800;font-family:monospace;color:var(--red)">'+sym(cur)+t.out.toLocaleString('en',{minimumFractionDigits:2})+'</span></div>';
+    }).join('');
+    fundTotalsEl.innerHTML = fundTotalsHtml || '<span style="font-size:12px;color:var(--muted)">No entries in this period</span>';
+  }
+
+  // ── Pagination — 30 rows per page ──────────────────────────────────────
+  var fundTotalPages = Math.max(1, Math.ceil(fundEntries.length / PAGE_SIZE));
+  if (_ledgerPage['office-fund'] > fundTotalPages) _ledgerPage['office-fund'] = fundTotalPages;
+  if (_ledgerPage['office-fund'] < 1) _ledgerPage['office-fund'] = 1;
+  var fundPageStart = (_ledgerPage['office-fund'] - 1) * PAGE_SIZE;
+  var fundPageEntries = fundEntries.slice(fundPageStart, fundPageStart + PAGE_SIZE);
+
   var fundTbody = document.getElementById('office-fund-tbody');
   if (fundTbody) {
-    if (!fundEntries.length) {
+    if (!fundPageEntries.length) {
       fundTbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);font-size:12px;padding:16px">No office fund entries</td></tr>';
     } else {
-      fundTbody.innerHTML = fundEntries.map(function(e) {
+      fundTbody.innerHTML = fundPageEntries.map(function(e) {
         var isNeg = e.amount < 0;
         var dispAmt = sym(e.currency)+(isNeg?'-':'+')+Math.abs(e.amount).toLocaleString('en',{minimumFractionDigits:2});
         var dispBal = e.balance !== undefined ? sym(e.currency)+Math.abs(e.balance).toLocaleString('en',{minimumFractionDigits:2}) : '—';
@@ -16098,6 +16123,7 @@ function renderOfficeLedger() {
       }).join('');
     }
   }
+  _renderLedgerPager('office-fund', fundEntries.length, fundTotalPages);
 
   // ── Expenses Fund: expense-allocations (IN) + DB.expenses (OUT) only ─────
   var expTypeFilter   = (document.getElementById('office-exp-type-filter')   || {}).value || 'all';
@@ -16152,13 +16178,36 @@ function renderOfficeLedger() {
   expFundEntries.forEach(function(e){ expRunBal += e.amount; e._balance = expRunBal; });
   expFundEntries.reverse();
 
+  // ── Period totals — total allocations IN vs. total expenses OUT (PHP) ──
+  var expTotalsEl = document.getElementById('office-expenses-totals');
+  if (expTotalsEl) {
+    var totalAlloc = expFundEntries.filter(function(e){ return e._type === 'allocation'; }).reduce(function(s,e){ return s + e.amount; }, 0);
+    var totalExp   = expFundEntries.filter(function(e){ return e._type === 'expense'; }).reduce(function(s,e){ return s + Math.abs(e.amount); }, 0);
+    expTotalsEl.innerHTML = expFundEntries.length ? (
+      '<div><span style="font-size:11px;color:var(--muted)">Total Allocations</span><br>'+
+      '<span style="font-weight:800;font-family:monospace;color:var(--green)">+₱'+totalAlloc.toLocaleString()+'</span></div>'+
+      '<div><span style="font-size:11px;color:var(--muted)">Total Expenses</span><br>'+
+      '<span style="font-weight:800;font-family:monospace;color:var(--red)">-₱'+totalExp.toLocaleString()+'</span></div>'+
+      '<div><span style="font-size:11px;color:var(--muted)">Net for Period</span><br>'+
+      '<span style="font-weight:800;font-family:monospace;color:'+((totalAlloc-totalExp)>=0?'var(--text)':'var(--red)')+'">'+
+      ((totalAlloc-totalExp)<0?'-₱':'₱')+Math.abs(totalAlloc-totalExp).toLocaleString()+'</span></div>'
+    ) : '<span style="font-size:12px;color:var(--muted)">No entries in this period</span>';
+  }
+
+  // ── Pagination — 30 rows per page ──────────────────────────────────────
+  var expTotalPages = Math.max(1, Math.ceil(expFundEntries.length / PAGE_SIZE));
+  if (_ledgerPage['office-expenses'] > expTotalPages) _ledgerPage['office-expenses'] = expTotalPages;
+  if (_ledgerPage['office-expenses'] < 1) _ledgerPage['office-expenses'] = 1;
+  var expPageStart = (_ledgerPage['office-expenses'] - 1) * PAGE_SIZE;
+  var expPageEntries = expFundEntries.slice(expPageStart, expPageStart + PAGE_SIZE);
+
   var expTbody = document.getElementById('office-expenses-tbody');
   if (expTbody) {
-    if (!expFundEntries.length) {
+    if (!expPageEntries.length) {
       expTbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);font-size:12px;padding:16px">No entries</td></tr>';
     } else {
       var statusColor = { Pending:'var(--amber)', Paid:'var(--green)', Charged:'var(--brand)', Rejected:'var(--red)' };
-      expTbody.innerHTML = expFundEntries.map(function(e) {
+      expTbody.innerHTML = expPageEntries.map(function(e) {
         var isIn     = e._type === 'allocation';
         var dispAmt  = (isIn ? '+₱' : '-₱') + Math.abs(e.amount).toLocaleString('en',{minimumFractionDigits:0});
         var balColor = e._balance >= 0 ? 'var(--text)' : 'var(--red)';
@@ -16191,6 +16240,37 @@ function renderOfficeLedger() {
       }).join('');
     }
   }
+  _renderLedgerPager('office-expenses', expFundEntries.length, expTotalPages);
+}
+
+// ── Shared pager control renderer — Prev / page numbers / Next ───────────
+function _renderLedgerPager(key, totalCount, totalPages) {
+  var el = document.getElementById(key + '-pager');
+  if (!el) return;
+  var current = _ledgerPage[key];
+  if (totalCount === 0) { el.innerHTML = ''; return; }
+
+  var rangeStart = (current - 1) * PAGE_SIZE + 1;
+  var rangeEnd   = Math.min(current * PAGE_SIZE, totalCount);
+
+  var btn = function(label, page, disabled, active) {
+    return '<button class="btn btn-s btn-sm" '+(disabled?'disabled':'onclick="_ledgerGoToPage(\''+key+'\','+page+')"')+
+      ' style="min-width:30px;padding:4px 8px;'+(active?'background:var(--brand);color:#fff;border-color:var(--brand);':'')+
+      (disabled?'opacity:.4;cursor:default;':'')+'">'+label+'</button>';
+  };
+
+  var pageBtns = [];
+  pageBtns.push(btn('‹', current - 1, current === 1, false));
+  // Show up to 5 page numbers centered on current
+  var startP = Math.max(1, current - 2);
+  var endP   = Math.min(totalPages, startP + 4);
+  startP = Math.max(1, endP - 4);
+  for (var p = startP; p <= endP; p++) pageBtns.push(btn(String(p), p, false, p === current));
+  pageBtns.push(btn('›', current + 1, current === totalPages, false));
+
+  el.innerHTML =
+    '<span style="color:var(--muted)">Showing '+rangeStart+'–'+rangeEnd+' of '+totalCount+'</span>'+
+    '<div style="display:flex;gap:4px">'+pageBtns.join('')+'</div>';
 }
 // ── CATEGORY BREAKDOWN ────────────────────────────────────────────────
 function deleteOfficeLedgerEntryById(entryId) { deleteOfficeLedgerEntry(entryId); }
