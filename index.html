@@ -536,7 +536,7 @@ tr:hover td{background:var(--s2);}
 .inline-edit-wrap{position:relative;display:inline-flex;align-items:center;gap:4px;cursor:pointer}
 .inline-edit-wrap:hover .inline-edit-icon{opacity:1}
 .inline-edit-icon{font-size:11px;color:var(--muted);opacity:0;transition:opacity .15s;flex-shrink:0}
-.inline-edit-sel{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;z-index:2;font-size:0}
+.inline-edit-sel{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;z-index:2;font-size:inherit}
 .inline-edit-wrap:hover{background:var(--s2);border-radius:20px;padding-right:4px}top:0;right:-580px;width:560px;height:100vh;background:var(--surface);border-left:1px solid var(--border);z-index:900;display:flex;flex-direction:column;transition:right .28s cubic-bezier(.4,0,.2,1);box-shadow:var(--lg);}
 .applicant-drawer.active{right:0;}
 .drawer-hdr{padding:18px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
@@ -7199,11 +7199,32 @@ function _inlineSaveStatus(appId, newStatus) {
       if (!hasProcessing) missing.push('Processing or OWWA');
       toast('⛔ Cannot deploy ' + app.name + ' — required stage' + (missing.length > 1 ? 's' : '') +
         ' not completed: ' + missing.join(', '), 'error');
-      // Reset the dropdown back to the current status
       var sel = document.querySelector('[data-app-id="' + appId + '"] .status-select, select[onchange*="' + appId + '"]');
       if (sel) sel.value = oldStatus;
       renderApplicants();
       return;
+    }
+
+    // ── Stage gate: employer fee must be settled before deploying ──────
+    // Find the employer fee for this applicant's job order
+    var appEmployer = app.employer || (app.job ? app.job.split('·')[0].trim() : '');
+    if (!appEmployer && app._jobOrderId) {
+      var jo = DB.jobs.find(function(j){ return j.id === app._jobOrderId || j._dbId === app._jobOrderId; });
+      if (jo) appEmployer = jo.employer;
+    }
+    if (appEmployer) {
+      var fee = (DB.employerFees || []).find(function(f){
+        return f.employer && f.employer.toLowerCase().trim() === appEmployer.toLowerCase().trim()
+            && f.status !== 'Settled';
+      });
+      if (fee) {
+        toast('⛔ Cannot deploy ' + app.name + ' — employer fee for ' + appEmployer +
+          ' is not yet settled ($' + (fee.feeUSD || 0).toLocaleString() + ' ' + fee.status + ')', 'error');
+        var selF = document.querySelector('[data-app-id="' + appId + '"] .status-select, select[onchange*="' + appId + '"]');
+        if (selF) selF.value = oldStatus;
+        renderApplicants();
+        return;
+      }
     }
   }
 
