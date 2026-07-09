@@ -2520,7 +2520,7 @@ button[disabled][data-rbac-locked] {
       <div class="form-row">
         <div class="form-group">
           <label class="form-label">Destination Country</label>
-          <select class="form-input" id="a-destination">
+          <select class="form-input" id="a-destination" onchange="_onDestinationChange()">
             <option value="">— Select Country —</option>
             <option>Saudi Arabia</option><option>UAE</option><option>Qatar</option>
             <option>Kuwait</option><option>Bahrain</option><option>Oman</option>
@@ -18177,44 +18177,76 @@ async function _manualSync() {
 
 
 // ── Job order selector for applicant modal ────────────────────────────
+function _onDestinationChange() {
+  // When destination changes, clear the current job order selection and
+  // repopulate the dropdown showing only jobs for the newly selected country
+  var hiddenId = document.getElementById('a-job-order-id');
+  var jobSel   = document.getElementById('a-job-order');
+  var jobTxt   = document.getElementById('a-job');
+  var info     = document.getElementById('a-job-info');
+  if (hiddenId) hiddenId.value = '';
+  if (jobSel)   jobSel.value   = '';
+  if (jobTxt)   jobTxt.value   = '';
+  if (info)     info.style.display = 'none';
+  _populateJobOrderSelect(''); // repopulate with empty selection, filtered by new destination
+}
+
 function _populateJobOrderSelect(selectedId) {
   var sel = document.getElementById('a-job-order');
   var hiddenId = document.getElementById('a-job-order-id');
   if (!sel) return;
-  // Set hidden input immediately
   if (hiddenId) hiddenId.value = selectedId || '';
 
-  // Clear and rebuild options
+  // Read the currently selected destination country to filter by
+  var destEl = document.getElementById('a-destination');
+  var selectedDest = destEl ? destEl.value.trim().toLowerCase() : '';
+
   sel.innerHTML = '<option value="">— Select Job Order —</option>';
 
-  // Sort: Open and In Progress first, then others
-  var allJobs = DB.jobs.slice().sort(function(a, b) {
-    var order = { 'Open': 0, 'In Progress': 0, 'Filled': 1, 'On Hold': 2, 'Closed': 3 };
-    return (order[a.status] !== undefined ? order[a.status] : 9) - (order[b.status] !== undefined ? order[b.status] : 9);
+  // Only show Open and In Progress jobs
+  var activeJobs = DB.jobs.filter(function(j) {
+    return j.status === 'Open' || j.status === 'In Progress';
   });
 
-  if (allJobs.length === 0) {
-    var opt = document.createElement('option');
-    opt.value = ''; opt.text = 'No job orders in system';
-    opt.disabled = true;
-    sel.appendChild(opt);
+  // If a destination is selected, further filter to that country only
+  if (selectedDest) {
+    activeJobs = activeJobs.filter(function(j) {
+      return (j.country || j.destination || '').toLowerCase() === selectedDest;
+    });
+  }
+
+  // Sort: Open first, then In Progress; within each group, most slots left first
+  activeJobs.sort(function(a, b) {
+    var order = { 'Open': 0, 'In Progress': 1 };
+    var statusDiff = (order[a.status] || 0) - (order[b.status] || 0);
+    if (statusDiff !== 0) return statusDiff;
+    var aLeft = (a.slots||0) - (a.filled||0);
+    var bLeft = (b.slots||0) - (b.filled||0);
+    return bLeft - aLeft; // more slots left = higher priority
+  });
+
+  if (activeJobs.length === 0) {
+    var noOpt = document.createElement('option');
+    noOpt.value = ''; noOpt.disabled = true;
+    noOpt.text = selectedDest
+      ? 'No active job orders for ' + (destEl ? destEl.value : selectedDest)
+      : 'No active job orders in system';
+    sel.appendChild(noOpt);
   } else {
-    allJobs.forEach(function(j) {
+    activeJobs.forEach(function(j) {
       var opt = document.createElement('option');
       opt.value = j.id;
       var slotsLeft = (j.slots||0) - (j.filled||0);
-      var isFull = (j.filled||0) >= (j.slots||1);
-      var statusTag = (j.status !== 'Open') ? ' [' + j.status + ']' : '';
-      opt.text = j.title + ' @ ' + (j.employer||'') + ' · ' + (j.country||'') +
-                 ' (' + (isFull ? 'FULL' : slotsLeft + ' left') + ')' + statusTag;
-      var activeStatuses = ['Open', 'In Progress'];
-      if (!activeStatuses.includes(j.status)) opt.style.color = 'var(--muted)';
+      var isFull    = (j.filled||0) >= (j.slots||1);
+      var statusTag = j.status === 'In Progress' ? ' [In Progress]' : '';
+      opt.text = j.title + ' @ ' + (j.employer||'') + ' · ' + (j.country||j.destination||'') +
+                 ' (' + (isFull ? 'FULL' : slotsLeft + ' slot' + (slotsLeft !== 1 ? 's' : '') + ' left') + ')' + statusTag;
+      if (isFull) opt.style.color = 'var(--muted)';
       if (j.id === selectedId) { opt.selected = true; opt.style.color = ''; }
       sel.appendChild(opt);
     });
   }
 
-  // Trigger info display if a job is pre-selected
   if (selectedId) _onJobOrderSelect();
 }
 
@@ -18240,11 +18272,12 @@ function _onJobOrderSelect() {
   // Auto-fill job title and destination
   if (jobTxt) jobTxt.value = job.title;
   if (destSel) {
-    // Try to match destination country from job
     var opts = Array.from(destSel.options);
-    var match = opts.find(function(o) { return o.value && job.country && job.country.toLowerCase().includes(o.value.toLowerCase()); });
+    var match = opts.find(function(o) { return o.value && job.country && job.country.toLowerCase() === o.value.toLowerCase(); });
     if (match) destSel.value = match.value;
     else destSel.value = job.country || '';
+    // Re-populate the dropdown filtered to this country (keeps the current selection)
+    _populateJobOrderSelect(jobId);
   }
 
   // Show job info card
