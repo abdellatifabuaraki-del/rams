@@ -2500,7 +2500,7 @@ button[disabled][data-rbac-locked] {
         </div>
         <div class="form-group">
           <label class="form-label">Category <span class="req">*</span></label>
-          <select class="form-input" id="a-category">
+          <select class="form-input" id="a-category" onchange="_populateJobOrderSelect(document.getElementById('a-job-order-id').value)">
             <option value="">— Select —</option>
             <option value="Skilled">Skilled</option>
             <option value="Household">Household</option>
@@ -2700,9 +2700,19 @@ button[disabled][data-rbac-locked] {
         </div>
         <div class="form-row">
           <div class="form-group">
+            <label class="form-label">Category</label>
+            <select class="form-input" id="j-category">
+              <option value="">— Select Category —</option>
+              <option value="Household">Household</option>
+              <option value="Skilled">Skilled</option>
+            </select>
+          </div>
+          <div class="form-group">
             <label class="form-label">Application Deadline</label>
             <input type="date" class="form-input" id="j-deadline">
           </div>
+        </div>
+        <div class="form-row">
           <div class="form-group">
             <label class="form-label">Status</label>
             <select class="form-input" id="j-status">
@@ -3254,6 +3264,7 @@ function mapJob(row) {
     filled:         parseInt(row.filled) || 0,
     salary:         row.salary || (row.salary_min ? '₱' + Number(row.salary_min).toLocaleString() + '/mo' : ''),
     status:         row.status || 'Open',
+    category:       row.category || '',
     deadline:       row.deadline ? row.deadline.slice(0, 10) : '',
     employerFeeUSD: parseFloat(row.employer_fee_usd || row.employerFeeUSD) || 0,
     _dbId:          row.id,
@@ -3403,6 +3414,7 @@ async function apiCreateJob(data) {
     status:           validJobStatuses.includes(data.status) ? data.status : 'Open',
     deadline:         (data.deadline && data.deadline !== 'TBD') ? data.deadline : null,
     employer_fee_usd: parseFloat(data.employerFeeUSD) || 0,
+    category:         data.category || null,
   };
   var r = await apiFetch('/jobs', { method: 'POST', body: JSON.stringify(payload) });
   if (r.ok) { data._dbId = r.data.id; data.id = r.data.id; }
@@ -3425,6 +3437,7 @@ async function apiUpdateJob(data) {
       status:           validJobStatuses.includes(data.status) ? data.status : 'Open',
       deadline:         (data.deadline && data.deadline !== 'TBD') ? data.deadline : null,
       employer_fee_usd: parseFloat(data.employerFeeUSD) || 0,
+      category:         data.category || null,
     })
   });
 }
@@ -8656,6 +8669,7 @@ function _resetJobModal() {
   document.getElementById('j-edit-dbid').value  = '';
   document.getElementById('j-employer').value   = '';
   document.getElementById('j-country').value    = '';
+  document.getElementById('j-category').value   = '';
   document.getElementById('j-deadline').value   = '';
   document.getElementById('j-status').value     = 'Open';
   document.getElementById('j-positions-list').innerHTML = '';
@@ -8686,6 +8700,7 @@ function openEditJob(jobId) {
   document.getElementById('j-edit-dbid').value          = job._dbId || job.id;
   document.getElementById('j-employer').value           = job.employer || '';
   document.getElementById('j-country').value            = job.country  || '';
+  document.getElementById('j-category').value           = job.category || '';
   document.getElementById('j-deadline').value           = (job.deadline && job.deadline !== 'TBD') ? job.deadline : '';
   document.getElementById('j-status').value             = job.status   || 'Open';
 
@@ -8705,6 +8720,7 @@ function saveJob() {
   if (!hasPermission('Manage Job Orders')) { toast('Your role cannot manage job orders','error'); return; }
   var employer = document.getElementById('j-employer').value.trim();
   var country  = document.getElementById('j-country').value.trim();
+  var category = (document.getElementById('j-category') || {}).value || '';
   var deadline = document.getElementById('j-deadline').value || 'TBD';
   var status   = document.getElementById('j-status').value || 'Open';
   var editId   = document.getElementById('j-edit-id').value;
@@ -8769,7 +8785,7 @@ function saveJob() {
       } else {
         // ── CREATE truly new position ───────────────────────────────
         var newJob = {
-          id: genId('JOB'), employer: employer, country: country,
+          id: genId('JOB'), employer: employer, country: country, category: category,
           deadline: deadline, status: status, title: pos.title,
           slots: pos.slots, filled: pos.filled,
           salary: pos.salary || 'TBD', employerFeeUSD: pos.employerFeeUSD || 0,
@@ -8815,6 +8831,7 @@ function saveJob() {
         id:             genId('JOB'),
         employer:       employer,
         country:        country,
+        category:       category,
         deadline:       deadline,
         status:         status,
         title:          pos.title,
@@ -18197,14 +18214,9 @@ function _populateJobOrderSelect(selectedId) {
   if (!sel) return;
   if (hiddenId) hiddenId.value = selectedId || '';
 
-  // Read the currently selected destination country to filter by
-  var destEl = document.getElementById('a-destination');
-  var selectedDest = destEl ? destEl.value.trim().toLowerCase() : '';
-
   sel.innerHTML = '<option value="">— Select Job Order —</option>';
 
   // Recompute filled count from actual applicants as the authoritative source
-  // (the job.filled field can lag behind if server sync is delayed)
   var filledByJob = {};
   DB.applicants.forEach(function(a) {
     var jid = a._jobOrderId || a.jobOrderId;
@@ -18213,13 +18225,23 @@ function _populateJobOrderSelect(selectedId) {
     }
   });
 
+  // Get selected destination and applicant category for filtering
+  var destEl    = document.getElementById('a-destination');
+  var catEl     = document.getElementById('a-category');
+  var selectedDest     = destEl ? destEl.value : '';
+  var selectedCategory = catEl  ? catEl.value  : '';
+
   // Only show Open and In Progress jobs that still have slots available
   var activeJobs = DB.jobs.filter(function(j) {
     if (j.status !== 'Open' && j.status !== 'In Progress') return false;
     var realFilled = filledByJob[j.id] || filledByJob[j._dbId] || j.filled || 0;
     var slotsLeft  = (parseInt(j.slots) || 0) - realFilled;
-    j._computedFilled = realFilled; // cache for use in option rendering below
-    return slotsLeft > 0; // exclude fully consumed job orders
+    if (slotsLeft <= 0) return false; // fully consumed
+    if (selectedDest && j.country !== selectedDest) return false; // wrong country
+    // Match job category to applicant category (if both are set)
+    if (selectedCategory && j.category && j.category !== selectedCategory) return false;
+    j._computedFilled = realFilled;
+    return true;
   });
 
   // If a destination is selected, further filter to that country only
