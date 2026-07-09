@@ -18236,20 +18236,24 @@ function _populateJobOrderSelect(selectedId) {
     if (j.status !== 'Open' && j.status !== 'In Progress') return false;
     var realFilled = filledByJob[j.id] || filledByJob[j._dbId] || j.filled || 0;
     var slotsLeft  = (parseInt(j.slots) || 0) - realFilled;
-    if (slotsLeft <= 0) return false; // fully consumed
-    if (selectedDest && j.country !== selectedDest) return false; // wrong country
-    // Match job category to applicant category (if both are set)
-    if (selectedCategory && j.category && j.category !== selectedCategory) return false;
+    if (slotsLeft <= 0) return false;
+
+    // Filter by destination country (case-insensitive)
+    if (selectedDest) {
+      var jobCountry = (j.country || j.destination || '').toLowerCase().trim();
+      if (jobCountry !== selectedDest.toLowerCase().trim()) return false;
+    }
+
+    // Filter by category:
+    // If applicant has a category AND the job has a category, they must match.
+    // Jobs with no category set are shown for any applicant category (backwards-compatible).
+    if (selectedCategory && j.category) {
+      if (j.category !== selectedCategory) return false;
+    }
+
     j._computedFilled = realFilled;
     return true;
   });
-
-  // If a destination is selected, further filter to that country only
-  if (selectedDest) {
-    activeJobs = activeJobs.filter(function(j) {
-      return (j.country || j.destination || '').toLowerCase() === selectedDest;
-    });
-  }
 
   // Sort: Open first, then In Progress; within each group, most slots left first
   activeJobs.sort(function(a, b) {
