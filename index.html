@@ -18203,9 +18203,11 @@ function _populateJobOrderSelect(selectedId) {
 
   sel.innerHTML = '<option value="">— Select Job Order —</option>';
 
-  // Only show Open and In Progress jobs
+  // Only show Open and In Progress jobs that still have slots available
   var activeJobs = DB.jobs.filter(function(j) {
-    return j.status === 'Open' || j.status === 'In Progress';
+    if (j.status !== 'Open' && j.status !== 'In Progress') return false;
+    var slotsLeft = (parseInt(j.slots) || 0) - (parseInt(j.filled) || 0);
+    return slotsLeft > 0; // exclude fully consumed job orders
   });
 
   // If a destination is selected, further filter to that country only
@@ -18237,12 +18239,10 @@ function _populateJobOrderSelect(selectedId) {
       var opt = document.createElement('option');
       opt.value = j.id;
       var slotsLeft = (j.slots||0) - (j.filled||0);
-      var isFull    = (j.filled||0) >= (j.slots||1);
       var statusTag = j.status === 'In Progress' ? ' [In Progress]' : '';
       opt.text = j.title + ' @ ' + (j.employer||'') + ' · ' + (j.country||j.destination||'') +
-                 ' (' + (isFull ? 'FULL' : slotsLeft + ' slot' + (slotsLeft !== 1 ? 's' : '') + ' left') + ')' + statusTag;
-      if (isFull) opt.style.color = 'var(--muted)';
-      if (j.id === selectedId) { opt.selected = true; opt.style.color = ''; }
+                 ' (' + slotsLeft + ' slot' + (slotsLeft !== 1 ? 's' : '') + ' left)' + statusTag;
+      if (j.id === selectedId) { opt.selected = true; }
       sel.appendChild(opt);
     });
   }
