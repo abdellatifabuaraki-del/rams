@@ -18203,10 +18203,22 @@ function _populateJobOrderSelect(selectedId) {
 
   sel.innerHTML = '<option value="">— Select Job Order —</option>';
 
+  // Recompute filled count from actual applicants as the authoritative source
+  // (the job.filled field can lag behind if server sync is delayed)
+  var filledByJob = {};
+  DB.applicants.forEach(function(a) {
+    var jid = a._jobOrderId || a.jobOrderId;
+    if (jid && a.status !== 'Backout' && a.status !== 'Rejected' && a.status !== 'Repatriated') {
+      filledByJob[jid] = (filledByJob[jid] || 0) + 1;
+    }
+  });
+
   // Only show Open and In Progress jobs that still have slots available
   var activeJobs = DB.jobs.filter(function(j) {
     if (j.status !== 'Open' && j.status !== 'In Progress') return false;
-    var slotsLeft = (parseInt(j.slots) || 0) - (parseInt(j.filled) || 0);
+    var realFilled = filledByJob[j.id] || filledByJob[j._dbId] || j.filled || 0;
+    var slotsLeft  = (parseInt(j.slots) || 0) - realFilled;
+    j._computedFilled = realFilled; // cache for use in option rendering below
     return slotsLeft > 0; // exclude fully consumed job orders
   });
 
@@ -18238,8 +18250,9 @@ function _populateJobOrderSelect(selectedId) {
     activeJobs.forEach(function(j) {
       var opt = document.createElement('option');
       opt.value = j.id;
-      var slotsLeft = (j.slots||0) - (j.filled||0);
-      var statusTag = j.status === 'In Progress' ? ' [In Progress]' : '';
+      var realFilled = j._computedFilled || j.filled || 0;
+      var slotsLeft  = (j.slots||0) - realFilled;
+      var statusTag  = j.status === 'In Progress' ? ' [In Progress]' : '';
       opt.text = j.title + ' @ ' + (j.employer||'') + ' · ' + (j.country||j.destination||'') +
                  ' (' + slotsLeft + ' slot' + (slotsLeft !== 1 ? 's' : '') + ' left)' + statusTag;
       if (j.id === selectedId) { opt.selected = true; }
