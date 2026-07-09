@@ -8778,6 +8778,7 @@ function saveJob() {
         existingPos.employerFeeUSD = pos.employerFeeUSD || 0;
         existingPos.employer       = employer;
         existingPos.country        = country;
+        existingPos.category       = category;
         existingPos.deadline       = deadline;
         existingPos.status         = status;
         apiUpdateJob(existingPos).catch(function(e){ console.warn('PATCH job failed', e); });
