@@ -7617,8 +7617,8 @@ function editApplicant(id) {
   if (!hasPermission('Edit Applicants')) {
     toast('Your role cannot edit applicants', 'error'); return;
   }
-  const a = DB.applicants.find(x => x.id === id);
-  if (!a) return;
+  const a = DB.applicants.find(x => x.id === id || x._dbId === id);
+  if (!a) { toast('Applicant not found — try refreshing the page', 'error'); return; }
   document.getElementById('applicant-modal-title').textContent = 'Edit Applicant';
   document.getElementById('applicant-modal-sub').textContent = `Editing ${a.name}`;
   document.getElementById('a-name').value = a.name;
@@ -7646,27 +7646,31 @@ function saveApplicant() {
   if (!name) { toast('Full name is required', 'error'); document.getElementById('a-name').classList.add('error'); return; }
   document.getElementById('a-name').classList.remove('error');
 
-  // ── Required field validation ──────────────────────────────────────
-  var genderEl   = document.getElementById('a-gender');
-  var categoryEl = document.getElementById('a-category');
-  var dobEl      = document.getElementById('a-dob');
-
-  var missingFields = [];
-  if (genderEl && !genderEl.value)     { missingFields.push('Gender');         genderEl.classList.add('error'); }
-  else if (genderEl)                   { genderEl.classList.remove('error'); }
-
-  if (categoryEl && !categoryEl.value) { missingFields.push('Category');       categoryEl.classList.add('error'); }
-  else if (categoryEl)                 { categoryEl.classList.remove('error'); }
-
-  if (dobEl && !dobEl.value)           { missingFields.push('Date of Birth');  dobEl.classList.add('error'); }
-  else if (dobEl)                      { dobEl.classList.remove('error'); }
-
-  if (missingFields.length) {
-    toast('Please fill in: ' + missingFields.join(', '), 'error');
-    return;
-  }
-
   const editId = document.getElementById('a-name').dataset.editId;
+
+  // ── Required field validation — enforced for NEW applicants only ────────
+  // Existing applicants encoded before these fields were required can still
+  // be edited and saved without filling them in (to avoid blocking staff).
+  if (!editId) {
+    var genderEl   = document.getElementById('a-gender');
+    var categoryEl = document.getElementById('a-category');
+    var dobEl      = document.getElementById('a-dob');
+
+    var missingFields = [];
+    if (genderEl && !genderEl.value)     { missingFields.push('Gender');        genderEl.classList.add('error'); }
+    else if (genderEl)                   { genderEl.classList.remove('error'); }
+
+    if (categoryEl && !categoryEl.value) { missingFields.push('Category');      categoryEl.classList.add('error'); }
+    else if (categoryEl)                 { categoryEl.classList.remove('error'); }
+
+    if (dobEl && !dobEl.value)           { missingFields.push('Date of Birth'); dobEl.classList.add('error'); }
+    else if (dobEl)                      { dobEl.classList.remove('error'); }
+
+    if (missingFields.length) {
+      toast('Please fill in: ' + missingFields.join(', '), 'error');
+      return;
+    }
+  }
   const data = {
     id: editId || genId('APP'), name,
     status: document.getElementById('a-status').value,
