@@ -18237,6 +18237,11 @@ function _populateJobOrderSelect(selectedId) {
     if (j.status !== 'Open' && j.status !== 'In Progress') return false;
     var realFilled = filledByJob[j.id] || filledByJob[j._dbId] || j.filled || 0;
     var slotsLeft  = (parseInt(j.slots) || 0) - realFilled;
+
+    // Always include the currently-assigned job order so it's never lost on edit
+    var isCurrentlyAssigned = selectedId && (j.id === selectedId || j._dbId === selectedId);
+    if (isCurrentlyAssigned) { j._computedFilled = realFilled; return true; }
+
     if (slotsLeft <= 0) return false;
 
     // Filter by destination country (case-insensitive)
