@@ -18296,8 +18296,10 @@ function _populateJobOrderSelect(selectedId) {
     });
   }
 
-  if (selectedId) _onJobOrderSelect();
+  if (selectedId && !_populatingJobOrder) _onJobOrderSelect();
 }
+
+var _populatingJobOrder = false;
 
 function _onJobOrderSelect() {
   var sel   = document.getElementById('a-job-order');
@@ -18325,8 +18327,12 @@ function _onJobOrderSelect() {
     var match = opts.find(function(o) { return o.value && job.country && job.country.toLowerCase() === o.value.toLowerCase(); });
     if (match) destSel.value = match.value;
     else destSel.value = job.country || '';
-    // Re-populate the dropdown filtered to this country (keeps the current selection)
-    _populateJobOrderSelect(jobId);
+    // Re-populate filtered to this country — but guard against infinite recursion
+    if (!_populatingJobOrder) {
+      _populatingJobOrder = true;
+      _populateJobOrderSelect(jobId);
+      _populatingJobOrder = false;
+    }
   }
 
   // Show job info card
