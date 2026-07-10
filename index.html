@@ -13925,6 +13925,11 @@ function openManualAdjustment() {
   var hint = document.getElementById('adj-php-equiv'); if (hint) hint.style.display = 'none';
   _updateAdjCurrencyLabel();
   openOverlay('overlay-adjustment');
+  // Default date to today
+  var adjDateEl = document.getElementById('adj-date');
+  if (adjDateEl && !adjDateEl.value) {
+    adjDateEl.value = new Date().toISOString().split('T')[0];
+  }
 }
 
 // Filter adj-applicant dropdown to only show applicants linked to the selected agent
@@ -19221,6 +19226,10 @@ async function loadSharedPermissions() {
         <select class="f-inp" id="adj-applicant">
           <option value="">— None —</option>
         </select>
+      </div>
+      <div class="f-grp">
+        <label class="f-lbl">Date <span class="req">*</span></label>
+        <input class="f-inp" id="adj-date" type="date">
       </div>
       <div class="f-grp">
         <label class="f-lbl">Description <span class="req">*</span></label>
