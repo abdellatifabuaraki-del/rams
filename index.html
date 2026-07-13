@@ -14545,11 +14545,20 @@ function _doStatusChangeDeployed(applicantId, oldStatus, deployDate) {
 
   if (!_trancheFired3()) {
     if (!agent) {
-      // Agent not found — warn admin and skip T3 (user must assign agent first or use Backfill)
       toast('⚠️ Deployed: No agent found for ' + app.name +
         ' — T3 commission skipped. Assign an agent then use ⚡ Backfill Commissions.', 'error');
     } else {
-    var _dc = _resolveCommission();
+    // Inline commission resolver — _resolveCommission is a closure in onApplicantStatusChange
+    // and not accessible here, so we duplicate the logic
+    var _dc = (function() {
+      var country  = app.job ? app.job.split('·').pop().trim() : (app.destination || '');
+      var rule     = DB.countryRules.find(function(r){ return r.country === country && r.active; })
+                  || DB.countryRules.find(function(r){ return r.active; });
+      var agentHasRate = agent && agent.commissionAmt != null && agent.commissionAmt > 0;
+      var total    = agentHasRate ? agent.commissionAmt : (rule ? rule.commissionAmt : 15000);
+      var currency = agentHasRate ? (agent.commissionCurrency || 'PHP') : (rule ? (rule.commissionCurrency || 'PHP') : 'PHP');
+      return { country: country || 'Philippines', rule: rule, total: total, currency: currency };
+    })();
     var t3amt = Math.round(_dc.total * 0.60);
     var _gp   = _dc.rule ? (_dc.rule.guaranteePeriod||6) : 6;
     // Guarantee period calculated from ACTUAL deployment date
@@ -15675,7 +15684,7 @@ function backfillCommissions() {
     if (app.status==='Deployed'&&!_hasT(3)){
       // Use actual deployment date if stored, otherwise today
       var _depDate = app.deploymentDate || today;
-      var _gEnd3 = new Date(_depDate); _gEnd3.setMonth(_gEnd3.getMonth()+_gp);
+      var _gEnd3 = new Date(_depDate); _gEnd3.setMonth(_gEnd3.getMonth()+gp);
       var t3 = _makeT(3,'Deployment (60%)',0.60,'Deployed');
       t3.triggerDate      = _depDate;
       t3.deploymentDate   = _depDate;
