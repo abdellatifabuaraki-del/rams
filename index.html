@@ -12165,8 +12165,10 @@ function renderCommissions() {
             if (c.tranche > 1) {
               var _prevT = c.tranche - 1;
               var _prevRel = DB.commissions.find(function(x){
-                return x.tranche===_prevT && x.status==='Released' &&
-                  (x.applicantId===c.applicantId || (x.applicantName&&c.applicantName&&x.applicantName.toLowerCase()===c.applicantName.toLowerCase()));
+                var idMatch   = x.applicantId && c.applicantId && x.applicantId === c.applicantId;
+                var nameMatch = x.applicantName && c.applicantName &&
+                  x.applicantName.toLowerCase().trim() === c.applicantName.toLowerCase().trim();
+                return x.tranche===_prevT && x.status==='Released' && (idMatch||nameMatch);
               });
               if (!_prevRel) { _canRelease = false; _lockMsg = '🔒 T'+_prevT+' not yet released'; }
             }
@@ -12260,8 +12262,10 @@ function renderCommissions() {
                 return '<span style="font-size:10px;background:var(--rbg);color:var(--red);border:1px solid #fca5a5;padding:2px 7px;border-radius:5px;font-weight:700" title="T'+c.tranche+' already released for this applicant — reverse the duplicate first">⚠️ Duplicate</span>';
               }
               var _prevBlocked2 = c.tranche > 1 && !DB.commissions.find(function(x){
-                return x.tranche===(c.tranche-1) && x.status==='Released' &&
-                  (x.applicantId===c.applicantId||(x.applicantName&&c.applicantName&&x.applicantName.toLowerCase()===c.applicantName.toLowerCase()));
+                var idMatch  = x.applicantId && c.applicantId && x.applicantId === c.applicantId;
+                var nameMatch = x.applicantName && c.applicantName &&
+                  x.applicantName.toLowerCase().trim() === c.applicantName.toLowerCase().trim();
+                return x.tranche===(c.tranche-1) && x.status==='Released' && (idMatch||nameMatch);
               });
               var _roleOk2 = typeof getCurrentRole==='function' && (getCurrentRole()==='Admin'||getCurrentRole()==='Finance');
               if (!_roleOk2) return '<span style="font-size:10px;color:var(--muted)">Finance/Admin</span>';
