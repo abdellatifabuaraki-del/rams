@@ -14530,7 +14530,10 @@ function _doStatusChangeDeployed(applicantId, oldStatus, deployDate) {
   var agent = DB.agents.find(function(a) {
     var aid = app._agentDbId || app._agentId || app.agentId || '';
     return aid && (a.id===aid || a._dbId===aid);
-  }) || DB.agents.find(function(a){ return a.name && a.name===app.agent; });
+  }) || DB.agents.find(function(a){
+    return a.name && app.agent &&
+      a.name.toLowerCase().trim() === app.agent.toLowerCase().trim();
+  });
 
   // ── T3 commission using ACTUAL deployment date for guaranteeEnd ───
   function _trancheFired3() {
