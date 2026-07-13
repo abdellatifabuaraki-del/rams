@@ -7792,6 +7792,89 @@ function saveApplicant() {
     }
     DB.applicants[idx] = data;
 
+    // ── Agent change: transfer expenses and ledger entries to new agent ──
+    if (existing && existing.agent && data.agent && existing.agent !== data.agent) {
+      var oldAgentName = existing.agent;
+      var newAgent     = DB.agents.find(function(ag){ return ag.name === data.agent || ag.name.toLowerCase().trim() === data.agent.toLowerCase().trim(); });
+      var oldAgent     = DB.agents.find(function(ag){ return ag.name === oldAgentName; });
+
+      if (newAgent && oldAgent) {
+        var appId       = data.id;
+        var appDbId     = data._dbId || data.id;
+        var appName     = data.name;
+        var transferredExp  = 0;
+        var transferredLedg = 0;
+
+        // 1. Transfer DB.expenses to new agent
+        DB.expenses.forEach(function(e) {
+          var match = e.applicant === appName || e.applicantId === appId || e.applicantId === appDbId;
+          if (!match) return;
+          var oldAmt = e.amount || 0;
+
+          // Reverse from old agent's balance (only if was Charged to old agent)
+          if (e.status === 'Charged' && oldAgent) {
+            oldAgent.balance = (oldAgent.balance || 0) + oldAmt;
+            oldAgent.totalExpenses = Math.max(0, (oldAgent.totalExpenses || 0) - oldAmt);
+          }
+
+          // Assign to new agent
+          e.agentName = newAgent.name;
+          e.agentId   = newAgent._dbId || newAgent.id;
+
+          // Apply to new agent's balance if Charged
+          if (e.status === 'Charged') {
+            newAgent.balance       = (newAgent.balance || 0) - oldAmt;
+            newAgent.totalExpenses = (newAgent.totalExpenses || 0) + oldAmt;
+          }
+          transferredExp++;
+        });
+
+        // 2. Transfer agent ledger entries to new agent
+        DB.agentLedger.forEach(function(e) {
+          var match = e.applicantId === appId || e.applicantId === appDbId ||
+                      (e.applicantName && e.applicantName.toLowerCase().trim() === appName.toLowerCase().trim());
+          if (!match || e.agentId !== (oldAgent._dbId || oldAgent.id)) return;
+
+          // Reverse from old agent
+          oldAgent.balance = (oldAgent.balance || 0) - (e.amount || 0);
+
+          // Move to new agent
+          e.agentId   = newAgent._dbId || newAgent.id;
+          e.agentName = newAgent.name;
+          newAgent.balance = (newAgent.balance || 0) + (e.amount || 0);
+          transferredLedg++;
+        });
+
+        // 3. Transfer commissions to new agent
+        DB.commissions.forEach(function(c) {
+          var match = c.applicantId === appId || c.applicantId === appDbId ||
+                      (c.applicantName && c.applicantName.toLowerCase().trim() === appName.toLowerCase().trim());
+          if (!match || c.agentId !== (oldAgent._dbId || oldAgent.id)) return;
+          c.agentId = newAgent._dbId || newAgent.id;
+          // Sync to backend
+          var cDbId = c._dbId || c.id;
+          if (cDbId && isUUID(cDbId)) {
+            apiFetch('/commissions/' + cDbId, { method: 'PATCH', body: JSON.stringify({ agent_id: c.agentId }) }).catch(function(){});
+          }
+        });
+
+        autosave('expenses');
+        autosave('agentLedger');
+        autosave('commissions');
+        autosave('agents');
+        apiUpdateAgent(oldAgent).catch(function(){});
+        apiUpdateAgent(newAgent).catch(function(){});
+
+        // Add a ledger note on new agent showing the transfer
+        if (transferredExp > 0 || transferredLedg > 0) {
+          addAudit('UPDATE', 'Agent', 'Agent reassigned for ' + appName + ': ' + oldAgentName + ' → ' + data.agent +
+            ' (' + transferredExp + ' expenses, ' + transferredLedg + ' ledger entries transferred)');
+          toast('✅ Agent changed: ' + transferredExp + ' expense(s) and ' + transferredLedg +
+            ' ledger entries transferred from ' + oldAgentName + ' to ' + data.agent, 'success');
+        }
+      }
+    }
+
     // Notify on status change — skip key statuses handled by _pushStatusChangeNotif
     var _keyStatuses = ['Deployed','Visa','OWWA','Backout','Repatriated','Rejected'];
     if (existing && existing.status !== data.status && _keyStatuses.indexOf(data.status) === -1) {
