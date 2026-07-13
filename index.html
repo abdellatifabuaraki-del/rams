@@ -7839,10 +7839,20 @@ function saveApplicant() {
           oldAgent.balance = (oldAgent.balance || 0) - (e.amount || 0);
 
           // Move to new agent
-          e.agentId   = newAgent._dbId || newAgent.id;
+          var newAgentId = newAgent._dbId || newAgent.id;
+          e.agentId   = newAgentId;
           e.agentName = newAgent.name;
           newAgent.balance = (newAgent.balance || 0) + (e.amount || 0);
           transferredLedg++;
+
+          // Persist to backend via the PATCH route
+          var entryDbId = e._dbId || e.id;
+          if (entryDbId && isUUID(entryDbId)) {
+            apiFetch('/agent-ledger/' + entryDbId, {
+              method: 'PATCH',
+              body: JSON.stringify({ agent_id: newAgentId })
+            }).catch(function(){});
+          }
         });
 
         // 3. Transfer commissions to new agent
