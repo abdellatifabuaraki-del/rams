@@ -18260,7 +18260,10 @@ function openViewerScope(userEmail, userName) {
         window._vsJobFoldState[key] = checkedCount === 0;
       }
       var collapsed  = window._vsJobFoldState[key];
-      var safeKey    = key.replace(/'/g, "\\'");
+      // Escape for the nested onclick(...) JS string AND for the surrounding "..." HTML attribute —
+      // an unescaped quote in an employer/country name would otherwise break the attribute and
+      // swallow the rest of that row's markup as invisible attribute text.
+      var safeKey    = key.replace(/'/g, "\\'").replace(/"/g, '&quot;');
       var safeId     = _jobKeyId(key);
       var chevRot    = collapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
       var bodyDisplay = collapsed ? 'none' : 'block';
@@ -18272,13 +18275,13 @@ function openViewerScope(userEmail, userName) {
         return [
           '<label style="display:flex;align-items:center;gap:12px;padding:9px 12px 9px 20px;',
           'border-top:1px solid var(--border);cursor:pointer">',
-          '<input type="checkbox" data-job-id="', j.id, '" ', (checked ? 'checked' : ''),
+          '<input type="checkbox" data-job-id="', escapeHtml(j.id), '" ', (checked ? 'checked' : ''),
           ' onchange="_vsUpdateGroupBadge(\'', safeKey, '\')"',
           ' style="width:15px;height:15px;accent-color:var(--brand);flex-shrink:0">',
           '<div style="flex:1;min-width:0">',
-            '<div style="font-size:12.5px;font-weight:600">', j.title, '</div>',
-            '<div style="font-size:11px;color:var(--muted)">', j.filled, '/', j.slots, ' slots',
-            ' · <span style="color:', statusColor, '">', j.status, '</span></div>',
+            '<div style="font-size:12.5px;font-weight:600">', escapeHtml(j.title), '</div>',
+            '<div style="font-size:11px;color:var(--muted)">', escapeHtml(j.filled), '/', escapeHtml(j.slots), ' slots',
+            ' · <span style="color:', statusColor, '">', escapeHtml(j.status), '</span></div>',
           '</div>',
           '<div style="font-size:11px;font-weight:700;color:var(--brand)">', pct, '%</div>',
           '</label>'
@@ -18290,8 +18293,8 @@ function openViewerScope(userEmail, userName) {
           '<div onclick="toggleViewerScopeJobGroup(\'', safeKey, '\')" style="display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;user-select:none">',
             '<svg id="vsjg-chev-', safeId, '" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;transition:transform .2s;transform:', chevRot, '"><polyline points="6 9 12 15 18 9"/></svg>',
             '<div style="flex:1;min-width:0">',
-              '<div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">', grp.employer,
-              ' <span style="font-size:11px;color:var(--muted);font-weight:400">· ', grp.country, '</span></div>',
+              '<div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">', escapeHtml(grp.employer),
+              ' <span style="font-size:11px;color:var(--muted);font-weight:400">· ', escapeHtml(grp.country), '</span></div>',
             '</div>',
             '<span id="vsg-badge-', safeId, '" style="font-size:11px;color:var(--muted);flex-shrink:0">', checkedCount, '/', grp.positions.length, ' selected</span>',
           '</div>',
