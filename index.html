@@ -2322,7 +2322,10 @@ button[disabled][data-rbac-locked] {
       <div class="f-row">
         <div class="f-grp">
           <label class="f-lbl">Applicant <span class="req">*</span></label>
-          <select class="f-inp" id="comp-applicant"></select>
+          <input class="f-inp" id="comp-applicant-search" placeholder="🔍 Type to search by name…"
+                 oninput="filterComplaintApplicants()" autocomplete="off" style="margin-bottom:6px">
+          <select class="f-inp" id="comp-applicant" size="1"></select>
+          <div id="comp-applicant-count" style="font-size:11px;color:var(--muted);margin-top:4px"></div>
         </div>
         <div class="f-grp">
           <label class="f-lbl">Type <span class="req">*</span></label>
@@ -2349,7 +2352,7 @@ button[disabled][data-rbac-locked] {
         </div>
         <div class="f-grp">
           <label class="f-lbl">Assigned To</label>
-          <input class="f-inp" id="comp-assigned" placeholder="Staff member name">
+          <select class="f-inp" id="comp-assigned"></select>
         </div>
       </div>
       <div class="f-grp">
@@ -15190,11 +15193,17 @@ function openComplaintDrawer(compId) {
       ((c.documents||[]).length > 0 ?
         '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px">'+
           (c.documents||[]).map(function(d,di){
+            var status = d._pendingUpload ? '<span style="font-size:10px;color:var(--amber)"> · uploading…</span>'
+                       : d._uploadFailed  ? '<span style="font-size:10px;color:var(--red)"> · upload failed</span>'
+                       : '';
+            var canOpen = !d._pendingUpload && !d._uploadFailed && (d._dbId || d.id);
             return '<div style="display:flex;align-items:center;gap:8px;background:var(--s2);border-radius:8px;padding:8px 12px;min-width:0">'+
               '<span style="font-size:18px;flex-shrink:0">'+_docIcon(d.name)+'</span>'+
-              '<div style="flex:1;min-width:0">'+
-                '<div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+d.name+'</div>'+
-                '<div style="font-size:10px;color:var(--muted)">'+d.uploadedAt+'</div>'+
+              '<div style="flex:1;min-width:0'+(canOpen?';cursor:pointer':'')+'"'+
+                (canOpen?' onclick="openComplaintDoc(\''+compId+'\','+di+')" title="Open document"':'')+'>'+
+                '<div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'+
+                  (canOpen?';color:var(--brand)':'')+'">'+escapeHtml(d.name)+'</div>'+
+                '<div style="font-size:10px;color:var(--muted)">'+escapeHtml(d.uploadedAt)+status+'</div>'+
               '</div>'+
               '<button onclick="removeComplaintDoc(\''+compId+'\','+di+')" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:15px;flex-shrink:0;padding:0 4px" title="Remove">✕</button>'+
             '</div>';
@@ -15331,17 +15340,55 @@ function attachComplaintDocs(compId) {
   if (!c) return;
   var input = document.getElementById('cd-file-input');
   if (!input||!input.files||!input.files.length){ toast('Select files first','error'); return; }
-  c.documents=c.documents||[];
-  var count = input.files.length;
-  Array.from(input.files).forEach(function(f){
-    c.documents.push({ name:f.name, url:'', uploadedAt:_today(), size:f.size });
-  });
+  var files = input.files;
   input.value='';
-  apiUpdateComplaint(c,{}).catch(function(){});
-  autosave('complaints');
-  toast(count+' document(s) attached','success');
-  openComplaintDrawer(compId);
-  renderComplaints();
+  toast('Uploading ' + files.length + ' document(s)…','info');
+  _uploadComplaintFiles(c, files, function(n){
+    openComplaintDrawer(compId);
+    renderComplaints();
+    if (n > 0) toast(n+' document(s) attached','success');
+    else toast('Upload failed — check your connection and try again','error');
+  });
+}
+
+// Open a complaint attachment. Uses the full document preview when the file has
+// already synced into DB.documents; otherwise fetches it straight from the
+// backend (freshly uploaded files aren't in the local documents cache yet).
+function openComplaintDoc(compId, docIdx) {
+  var c = DB.complaints.find(function(x){ return x.id===compId; });
+  if (!c || !c.documents || !c.documents[docIdx]) return;
+  var d  = c.documents[docIdx];
+  var id = d._dbId || d.id;
+  if (!id) { toast('This file was not stored on the server','error'); return; }
+
+  var inLib = (DB.documents||[]).find(function(x){ return x.id===id || x._dbId===id; });
+  if (inLib && typeof previewDoc === 'function') { previewDoc(id); return; }
+
+  var BACKEND = typeof RAILWAY_URL !== 'undefined' ? RAILWAY_URL : '';
+  var token   = window._ramsSessionToken || '';
+  toast('Opening ' + d.name + '…','info');
+  fetch(BACKEND + '/api/documents/' + id + '/download', {
+    headers: { 'Authorization': 'Bearer ' + token }, redirect: 'follow',
+  })
+  .then(function(res){
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    var ct = res.headers.get('Content-Type') || '';
+    if (ct.includes('application/json')) {
+      return res.json().then(function(j){
+        if (!j || !j.url) throw new Error('No URL returned');
+        window.open(j.url, '_blank');
+      });
+    }
+    return res.blob().then(function(b){
+      var u = URL.createObjectURL(b);
+      window.open(u, '_blank');
+      setTimeout(function(){ URL.revokeObjectURL(u); }, 60000);
+    });
+  })
+  .catch(function(err){
+    console.error('[openComplaintDoc]', err);
+    toast('Could not open document: ' + err.message,'error');
+  });
 }
 
 function removeComplaintDoc(compId, docIdx) {
@@ -15368,18 +15415,119 @@ function deleteComplaintRow(compId) {
 }
 
 // ── CREATE ────────────────────────────────────────────────────────────
-function openComplaintModal(prefillAppId) {
+// Applicants available in the New Complaint modal, sorted A→Z. Cached so the
+// search box can re-filter without re-sorting the whole list on every keystroke.
+var _compApplicantPool = [];
+
+function _renderComplaintApplicantOptions(list, selectedId) {
   var sel = document.getElementById('comp-applicant');
-  if (sel) {
-    sel.innerHTML = '<option value="">— Select applicant —</option>'+
-      DB.applicants.map(function(a){
-        return '<option value="'+a.id+'"'+(a.id===prefillAppId?' selected':'')+'>'+
-          a.name+' ('+a.status+')</option>';
+  if (!sel) return;
+  sel.innerHTML = '<option value="">— Select applicant —</option>' +
+    list.map(function(a){
+      return '<option value="' + escapeHtml(a.id) + '"' + (a.id === selectedId ? ' selected' : '') + '>' +
+        escapeHtml(a.name) + ' (' + escapeHtml(a.status) + ')</option>';
+    }).join('');
+  var cnt = document.getElementById('comp-applicant-count');
+  if (cnt) {
+    cnt.textContent = list.length === _compApplicantPool.length
+      ? list.length + ' applicant' + (list.length !== 1 ? 's' : '')
+      : list.length + ' of ' + _compApplicantPool.length + ' match';
+  }
+}
+
+// Live A→Z search over the applicant list
+function filterComplaintApplicants() {
+  var box = document.getElementById('comp-applicant-search');
+  var sel = document.getElementById('comp-applicant');
+  var q   = box ? box.value.trim().toLowerCase() : '';
+  var prev = sel ? sel.value : '';
+  var matches = !q ? _compApplicantPool : _compApplicantPool.filter(function(a){
+    return (a.name || '').toLowerCase().indexOf(q) !== -1;
+  });
+  _renderComplaintApplicantOptions(matches, prev);
+  // If exactly one match, select it automatically so the user can just type and tab out
+  if (matches.length === 1 && sel) sel.value = matches[0].id;
+}
+
+function openComplaintModal(prefillAppId) {
+  // Sort applicants alphabetically by name (case-insensitive)
+  _compApplicantPool = (DB.applicants || []).slice().sort(function(a, b){
+    return String(a.name || '').toLowerCase().localeCompare(String(b.name || '').toLowerCase());
+  });
+  var box = document.getElementById('comp-applicant-search');
+  if (box) box.value = '';
+  _renderComplaintApplicantOptions(_compApplicantPool, prefillAppId);
+
+  // Assigned To — real users from the system, sorted A→Z
+  var asg = document.getElementById('comp-assigned');
+  if (asg) {
+    var users = (DB.users || []).slice()
+      .filter(function(u){ return u && u.name; })
+      .sort(function(a, b){
+        return String(a.name).toLowerCase().localeCompare(String(b.name).toLowerCase());
+      });
+    var me = (typeof getCurrentUser === 'function') ? getCurrentUser() : null;
+    asg.innerHTML = '<option value="">— Unassigned —</option>' +
+      users.map(function(u){
+        var sel = (me && me.name === u.name) ? ' selected' : '';
+        return '<option value="' + escapeHtml(u.name) + '"' + sel + '>' +
+          escapeHtml(u.name) + (u.role ? ' · ' + escapeHtml(u.role) : '') + '</option>';
       }).join('');
   }
+
   ['comp-description','comp-note'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
   var fi=document.getElementById('comp-files'); if(fi) fi.value='';
   openOverlay('overlay-complaint');
+}
+
+// Upload complaint attachments to the real document store, then record them on
+// the complaint. Previously the file input was read but never uploaded — the
+// files silently vanished. Each file is stored as a normal document linked to
+// the complaint's applicant, so it also shows up on the Documents page.
+function _uploadComplaintFiles(comp, files, onDone) {
+  if (!files || !files.length) { if (onDone) onDone(0); return; }
+  comp.documents = comp.documents || [];
+  var pending = files.length, uploaded = 0;
+
+  Array.from(files).forEach(function(f) {
+    var entry = {
+      name: f.name, url: '', uploadedAt: _today(), size: f.size,
+      _pendingUpload: true,
+    };
+    comp.documents.push(entry);
+
+    var doc = {
+      name:        f.name,
+      fileName:    f.name,
+      type:        'Complaint Evidence',
+      applicant:   comp.applicantName || '',
+      applicantId: comp.applicantId   || '',
+      notes:       'Attached to complaint ' + comp.id,
+    };
+
+    apiUploadDocument(doc, f)
+      .then(function(r) {
+        entry._pendingUpload = false;
+        if (r && r.ok && r.data && r.data.id) {
+          entry.id    = r.data.id;
+          entry._dbId = r.data.id;
+          uploaded++;
+        } else if (r && r.ok) {
+          // Demo mode — no server, metadata only
+          uploaded++;
+        } else {
+          entry._uploadFailed = true;
+        }
+      })
+      .catch(function(){ entry._pendingUpload = false; entry._uploadFailed = true; })
+      .then(function() {
+        if (--pending === 0) {
+          apiUpdateComplaint(comp, {}).catch(function(){});
+          autosave('complaints');
+          if (onDone) onDone(uploaded);
+        }
+      });
+  });
 }
 
 function submitComplaint() {
@@ -15389,6 +15537,8 @@ function submitComplaint() {
   var assigned= ((document.getElementById('comp-assigned')   ||{}).value||'').trim();
   var desc    = ((document.getElementById('comp-description') ||{}).value||'').trim();
   var note    = ((document.getElementById('comp-note')        ||{}).value||'').trim();
+  var fileEl  = document.getElementById('comp-files');
+  var files   = (fileEl && fileEl.files) ? fileEl.files : null;
 
   if (!appId) { toast('Please select an applicant','error'); return; }
   if (!desc)  { toast('Please provide a description of the complaint','error'); return; }
@@ -15408,6 +15558,18 @@ function submitComplaint() {
   if (!DB.complaints) DB.complaints=[];
   DB.complaints.unshift(newComp);
   apiCreateComplaint(newComp).catch(function(){});
+
+  // Upload any attached files, then refresh so they appear on the complaint
+  if (files && files.length) {
+    toast('Uploading ' + files.length + ' document(s)…', 'info');
+    _uploadComplaintFiles(newComp, files, function(n) {
+      renderComplaints();
+      if (n > 0) toast(n + ' document(s) attached', 'success');
+      else toast('Documents failed to upload — try re-attaching from the complaint', 'error');
+    });
+  }
+  if (fileEl) fileEl.value = '';
+
   autosave('complaints');
   addAudit('CREATE','Complaint',type+' filed for '+newComp.applicantName);
   toast('Complaint filed for '+newComp.applicantName,'success');
