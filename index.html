@@ -18235,27 +18235,68 @@ function openViewerScope(userEmail, userName) {
   document.getElementById('vs-subtitle').textContent = 'Controlling access for: ' + userName;
   var assigned = viewerScopes[_scopingUserEmail] || [];
   var list = document.getElementById('vs-job-list');
+  window._vsJobFoldState = {}; // reset fold state each time the modal opens (per-user)
+
   if (DB.jobs.length === 0) {
     list.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">No job orders yet.</div>';
   } else {
-    list.innerHTML = DB.jobs.map(function(j) {
-      var checked = assigned.indexOf(j.id) !== -1;
-      var pct = j.slots > 0 ? Math.round((j.filled / j.slots) * 100) : 0;
-      var statusColor = j.status === 'Open' ? 'var(--green)' : 'var(--muted)';
+    // Group positions by employer + country — same grouping used on the Job Orders page
+    var groups = {};
+    var groupOrder = [];
+    DB.jobs.forEach(function(j) {
+      var key = (j.employer || 'Unknown') + '||' + (j.country || '');
+      if (!groups[key]) {
+        groups[key] = { employer: j.employer || 'Unknown', country: j.country || '', positions: [] };
+        groupOrder.push(key);
+      }
+      groups[key].positions.push(j);
+    });
+
+    list.innerHTML = groupOrder.map(function(key) {
+      var grp = groups[key];
+      var checkedCount = grp.positions.filter(function(j) { return assigned.indexOf(j.id) !== -1; }).length;
+      // Default: expand groups that already have a selection, collapse the rest
+      if (window._vsJobFoldState[key] === undefined) {
+        window._vsJobFoldState[key] = checkedCount === 0;
+      }
+      var collapsed  = window._vsJobFoldState[key];
+      var safeKey    = key.replace(/'/g, "\\'");
+      var safeId     = _jobKeyId(key);
+      var chevRot    = collapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+      var bodyDisplay = collapsed ? 'none' : 'block';
+
+      var posRows = grp.positions.map(function(j) {
+        var checked = assigned.indexOf(j.id) !== -1;
+        var pct = j.slots > 0 ? Math.round((j.filled / j.slots) * 100) : 0;
+        var statusColor = j.status === 'Open' ? 'var(--green)' : 'var(--muted)';
+        return [
+          '<label style="display:flex;align-items:center;gap:12px;padding:9px 12px 9px 20px;',
+          'border-top:1px solid var(--border);cursor:pointer">',
+          '<input type="checkbox" data-job-id="', j.id, '" ', (checked ? 'checked' : ''),
+          ' onchange="_vsUpdateGroupBadge(\'', safeKey, '\')"',
+          ' style="width:15px;height:15px;accent-color:var(--brand);flex-shrink:0">',
+          '<div style="flex:1;min-width:0">',
+            '<div style="font-size:12.5px;font-weight:600">', j.title, '</div>',
+            '<div style="font-size:11px;color:var(--muted)">', j.filled, '/', j.slots, ' slots',
+            ' · <span style="color:', statusColor, '">', j.status, '</span></div>',
+          '</div>',
+          '<div style="font-size:11px;font-weight:700;color:var(--brand)">', pct, '%</div>',
+          '</label>'
+        ].join('');
+      }).join('');
+
       return [
-        '<label style="display:flex;align-items:center;gap:12px;padding:10px 12px;',
-        'border-radius:8px;background:var(--s2);border:1px solid var(--border);cursor:pointer">',
-        '<input type="checkbox" data-job-id="', j.id, '" ', (checked ? 'checked' : ''),
-        ' style="width:16px;height:16px;accent-color:var(--brand);flex-shrink:0">',
-        '<div style="flex:1;min-width:0">',
-          '<div style="font-size:13px;font-weight:700">', j.title,
-          ' <span style="font-size:11px;color:var(--muted)">· ', j.country, '</span></div>',
-          '<div style="font-size:11.5px;color:var(--muted)">', j.employer,
-          ' · ', j.filled, '/', j.slots, ' slots',
-          ' · <span style="color:', statusColor, '">', j.status, '</span></div>',
-        '</div>',
-        '<div style="font-size:11px;font-weight:700;color:var(--brand)">', pct, '%</div>',
-        '</label>'
+        '<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--s2)">',
+          '<div onclick="toggleViewerScopeJobGroup(\'', safeKey, '\')" style="display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;user-select:none">',
+            '<svg id="vsjg-chev-', safeId, '" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;transition:transform .2s;transform:', chevRot, '"><polyline points="6 9 12 15 18 9"/></svg>',
+            '<div style="flex:1;min-width:0">',
+              '<div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">', grp.employer,
+              ' <span style="font-size:11px;color:var(--muted);font-weight:400">· ', grp.country, '</span></div>',
+            '</div>',
+            '<span id="vsg-badge-', safeId, '" style="font-size:11px;color:var(--muted);flex-shrink:0">', checkedCount, '/', grp.positions.length, ' selected</span>',
+          '</div>',
+          '<div id="vsjg-body-', safeId, '" style="display:', bodyDisplay, '">', posRows, '</div>',
+        '</div>'
       ].join('');
     }).join('');
   }
@@ -18278,6 +18319,32 @@ function openViewerScope(userEmail, userName) {
       }).join('');
     }
   }
+}
+
+
+// Fold/unfold one employer group in the Viewer Access Scope modal
+function toggleViewerScopeJobGroup(key) {
+  var currentlyCollapsed = window._vsJobFoldState[key] !== false;
+  window._vsJobFoldState[key] = !currentlyCollapsed;
+  var safeId  = _jobKeyId(key);
+  var body    = document.getElementById('vsjg-body-' + safeId);
+  var chevron = document.getElementById('vsjg-chev-' + safeId);
+  if (!body) return;
+  var collapsed = window._vsJobFoldState[key];
+  body.style.display = collapsed ? 'none' : 'block';
+  if (chevron) chevron.style.transform = collapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+}
+
+// Refresh the "X/Y selected" badge on a group header after a position checkbox changes
+function _vsUpdateGroupBadge(key) {
+  var safeId = _jobKeyId(key);
+  var body  = document.getElementById('vsjg-body-' + safeId);
+  var badge = document.getElementById('vsg-badge-' + safeId);
+  if (!body || !badge) return;
+  var boxes = body.querySelectorAll('input[type="checkbox"]');
+  var checked = 0;
+  for (var i = 0; i < boxes.length; i++) { if (boxes[i].checked) checked++; }
+  badge.textContent = checked + '/' + boxes.length + ' selected';
 }
 
 
@@ -19853,7 +19920,7 @@ async function loadSharedPermissions() {
         👁 Viewer will <strong>only</strong> see selected job orders and applicants assigned to those jobs. Uncheck all to block all access.
       </div>
       <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.06em">Job Orders</div>
-      <div id="vs-job-list" style="display:flex;flex-direction:column;gap:6px;max-height:200px;overflow-y:auto"></div>
+      <div id="vs-job-list" style="display:flex;flex-direction:column;gap:8px;max-height:280px;overflow-y:auto"></div>
       <div style="font-size:12px;font-weight:700;color:var(--muted);margin:16px 0 10px;text-transform:uppercase;letter-spacing:.06em">Allowed Chat Rooms</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Viewer always has access to #general. Add extra rooms below.</div>
       <div id="vs-room-list" style="display:flex;flex-direction:column;gap:6px;max-height:160px;overflow-y:auto"></div>
