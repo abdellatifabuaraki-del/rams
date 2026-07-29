@@ -1700,6 +1700,7 @@ button[disabled][data-rbac-locked] {
         <button class="btn btn-s btn-sm ef-write-btn" id="ef-btn-export" onclick="exportEmployerFees()">⬇ Export</button>
         <button class="btn btn-s btn-sm ef-write-btn" id="ef-btn-backfill" style="background:var(--abg);color:var(--amber);border:1px solid #fcd34d" onclick="backfillEmployerFees()" title="Scan all Visa-status applicants and show why fees are missing">⚡ Generate Missing Fees</button>
         <button class="btn btn-s btn-sm ef-write-btn" id="ef-btn-autowaive" style="background:var(--rbg);color:var(--red);border:1px solid #fca5a5" onclick="autoWaiveBackoutFees()" title="Waive pending fees for all Backout/Repatriated applicants">↩ Auto-Waive Backouts</button>
+        <button class="btn btn-s btn-sm ef-write-btn" id="ef-btn-purge" style="background:var(--rbg);color:var(--red);border:1px solid #fca5a5" onclick="purgeWaivedBackoutFees()" title="Permanently delete fee records for Backout applicants whose fee was waived">🗑 Purge Waived Backouts</button>
         <button class="btn btn-p btn-sm ef-write-btn" id="ef-btn-addfee" onclick="openManualFee(null)">+ Add Fee</button>
       </div>
     </div>
@@ -14418,6 +14419,12 @@ function renderEmployerFees() {
   document.querySelectorAll('.ef-write-btn').forEach(function(b){
     b.style.display = _viewerRO ? 'none' : '';
   });
+  // Purging permanently deletes records — Admin only
+  var _purgeBtn = document.getElementById('ef-btn-purge');
+  if (_purgeBtn) {
+    var _isAdminRole = (typeof getCurrentRole === 'function') && getCurrentRole() === 'Admin';
+    _purgeBtn.style.display = (_viewerRO || !_isAdminRole) ? 'none' : '';
+  }
 
   // Silently sync any stale fees to current job assignments before rendering.
   // Skipped for viewers — it rewrites fees via the API, which they cannot do.
@@ -14767,6 +14774,74 @@ function submitManualFee() {
 
 // ── Backfill with detailed diagnostic modal ───────────────────────────
 // Auto-waive pending employer fees for all Backout / Repatriated applicants
+// ── Purge waived Backout fees ─────────────────────────────────────────
+// Permanently deletes fee records for applicants who backed out and whose fee
+// was waived — they will never be collected, so the row is pure clutter.
+// Destructive and irreversible, so it is Admin-only, lists every record up
+// front, and requires an explicit typed confirmation.
+function purgeWaivedBackoutFees() {
+  if (isViewerRole()) { toast('Your role has read-only access to Employers','error'); return; }
+  var role = (typeof getCurrentRole === 'function') ? getCurrentRole() : '';
+  if (role !== 'Admin') { toast('Only Admin can permanently delete fee records','error'); return; }
+
+  var targets = (DB.employerFees || []).filter(function(f){
+    if (f.status !== 'Waived') return false;
+    var app = (DB.applicants || []).find(function(a){
+      return (f.applicantId && a.id === f.applicantId) ||
+             (f.applicantName && a.name === f.applicantName);
+    });
+    return !!(app && app.status === 'Backout');
+  });
+
+  if (!targets.length) {
+    toast('No waived Backout fee records to remove', 'info');
+    return;
+  }
+
+  var listTxt = targets.map(function(f){
+    return '• ' + (f.applicantName || f.applicantId) + ' — $' + (f.feeUSD || 0) +
+           (f.employer ? ' (' + f.employer + ')' : '');
+  }).join('\n');
+
+  if (!confirm('Permanently DELETE ' + targets.length + ' waived Backout fee record(s)?\n\n' +
+      listTxt + '\n\nThis cannot be undone.')) return;
+
+  var typed = prompt('This permanently deletes ' + targets.length +
+    ' fee record(s). Type DELETE to confirm:');
+  if (typed === null) return;
+  if (String(typed).trim().toUpperCase() !== 'DELETE') {
+    toast('Cancelled — confirmation text did not match', 'info');
+    return;
+  }
+
+  var ids = new Set(targets.map(function(f){ return f.id; }));
+  var failed = 0, done = 0;
+
+  targets.forEach(function(f){
+    var dbId = f._dbId || f.id;
+    apiDeleteEmployerFee(dbId)
+      .then(function(r){ if (!r || r.ok === false) failed++; })
+      .catch(function(){ failed++; })
+      .then(function(){
+        if (++done === targets.length && failed > 0) {
+          toast(failed + ' record(s) could not be deleted on the server — they may reappear on next sync', 'error');
+        }
+      });
+  });
+
+  // Drop locally so the list updates immediately
+  DB.employerFees = (DB.employerFees || []).filter(function(f){ return !ids.has(f.id); });
+
+  autosave('employerFees');
+  try { _triggerImmediateSync(); } catch(e) {}
+  addAudit('DELETE', 'Employer Fees',
+    'Purged ' + targets.length + ' waived Backout fee record(s): ' +
+    targets.map(function(f){ return f.applicantName || f.applicantId; }).join(', '));
+  toast('🗑 Removed ' + targets.length + ' waived Backout fee record(s)', 'success');
+  renderEmployerFees();
+  if (typeof renderAccounting === 'function') renderAccounting();
+}
+
 function autoWaiveBackoutFees() {
   if (isViewerRole()) { toast('Your role has read-only access to Employers','error'); return; }
   var backoutIds = new Set(
