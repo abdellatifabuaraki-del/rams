@@ -1293,23 +1293,29 @@ button[disabled][data-rbac-locked] {
           <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input type="text" id="app-search" placeholder="Search by name, ID, contact…" oninput="filterApplicants()" aria-label="Search applicants">
         </div>
-        <select class="filter-select" id="app-status-filter" onchange="filterApplicants()" aria-label="Filter by status">
-          <option value="">All Status</option>
-          <option>For Selection</option>
-          <option>Applied</option>
-          <option>Screening</option>
-          <option>Interview</option>
-          <option>Selected</option>
-          <option>Medical</option>
-          <option>Processing</option>
-          <option>Visa</option>
-          <option>OWWA</option>
-          <option>Deployed</option>
-          <option>Repatriated</option>
-          <option>Backout</option>
-          <option>Rejected</option>
-          <option>With Complaint</option>
-        </select>
+        <!-- Multi-select status filter. The hidden input holds a comma-separated
+             list of selected statuses and keeps the id `app-status-filter`, so
+             every existing read/write of `.value` still works unchanged. -->
+        <div id="app-status-ms" style="position:relative;display:inline-block">
+          <input type="hidden" id="app-status-filter" value="">
+          <button type="button" class="filter-sel" id="app-status-ms-btn"
+                  onclick="toggleStatusFilterMenu(event)"
+                  aria-haspopup="listbox" aria-expanded="false" aria-label="Filter by status"
+                  style="display:inline-flex;align-items:center;gap:8px;min-width:140px;justify-content:space-between">
+            <span id="app-status-ms-label">All Status</span>
+            <span style="font-size:10px;color:var(--muted)">▾</span>
+          </button>
+          <div id="app-status-ms-menu" role="listbox" aria-multiselectable="true"
+               style="display:none;position:absolute;z-index:60;top:calc(100% + 4px);left:0;min-width:210px;
+                      max-height:320px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);
+                      border-radius:9px;box-shadow:0 8px 28px rgba(0,0,0,.14);padding:6px">
+            <div style="display:flex;gap:6px;padding:4px 6px 8px;border-bottom:1px solid var(--border);margin-bottom:4px">
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setAllStatusFilters(true)" style="font-size:11px">Select all</button>
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setAllStatusFilters(false)" style="font-size:11px">Clear</button>
+            </div>
+            <div id="app-status-ms-options"></div>
+          </div>
+        </div>
         <select class="filter-select" id="app-agent-filter" onchange="filterApplicants()" aria-label="Filter by agent">
           <option value="">All Agents</option>
         </select>
@@ -7108,7 +7114,8 @@ function _reapplyFiltersIfActive() {
 
 function filterApplicants() {
   var q  = document.getElementById('app-search').value.toLowerCase();
-  var s  = document.getElementById('app-status-filter').value;
+  var s  = document.getElementById('app-status-filter').value; // comma-separated
+  var sList = s ? s.split(',').map(function(v){ return v.trim(); }).filter(Boolean) : [];
   var a  = document.getElementById('app-agent-filter').value;
   var m  = document.getElementById('app-medical-filter').value;
   var joEl = document.getElementById('app-joborder-filter');
@@ -7134,7 +7141,7 @@ function filterApplicants() {
   }
 
   filteredApps = getScopedApplicants().filter(function(x) {
-    if (s && x.status !== s) return false;
+    if (sList.length && sList.indexOf(x.status) === -1) return false;
     if (a && x.agent  !== a) return false;
     if (m && x.medical !== m) return false;
     if (q && !(
@@ -7159,7 +7166,7 @@ function _restoreApplicantFilters() {
     var f = JSON.parse(saved);
     var el;
     el = document.getElementById('app-search');        if (el && f.q)  el.value = f.q;
-    el = document.getElementById('app-status-filter'); if (el && f.s)  el.value = f.s;
+    el = document.getElementById('app-status-filter'); if (el && f.s) { el.value = f.s; syncStatusFilterUI(); }
     el = document.getElementById('app-agent-filter');  if (el && f.a)  el.value = f.a;
     el = document.getElementById('app-medical-filter');if (el && f.m)  el.value = f.m;
     el = document.getElementById('app-joborder-filter');if(el && f.jo) el.value = f.jo;
@@ -7172,6 +7179,7 @@ function _restoreApplicantFilters() {
 function clearFilters() {
   document.getElementById('app-search').value = '';
   document.getElementById('app-status-filter').value = '';
+  syncStatusFilterUI();
   document.getElementById('app-agent-filter').value = '';
   document.getElementById('app-medical-filter').value = '';
   var jof = document.getElementById('app-joborder-filter');
@@ -7196,6 +7204,94 @@ function sortTable(col) {
 var _ALL_APP_STATUSES = ['For Selection','Applied','Screening','Interview','Selected',
   'Processing','Visa','OWWA','Deployed','Repatriated','Backout','Rejected','With Complaint'];
 var _ALL_MEDICAL = ['Pending','Passed','Failed','Exempted'];
+
+// ════════════════════════════════════════════════════════
+// ☑  APPLICANT STATUS FILTER — multi-select
+// The hidden #app-status-filter input stores the selection as a comma-separated
+// string. Empty = no status filter (show all). A single value behaves exactly
+// like the old single-select, so saved filters from before still load fine.
+// ════════════════════════════════════════════════════════
+var _STATUS_FILTER_OPTS = ['For Selection','Applied','Screening','Interview','Selected',
+  'Medical','Processing','Visa','OWWA','Deployed','Repatriated','Backout','Rejected','With Complaint'];
+
+function getStatusFilterValues() {
+  var el = document.getElementById('app-status-filter');
+  if (!el || !el.value) return [];
+  return el.value.split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+}
+
+function _buildStatusFilterMenu() {
+  var box = document.getElementById('app-status-ms-options');
+  if (!box || box.dataset.built === '1') return;
+  box.innerHTML = _STATUS_FILTER_OPTS.map(function(s){
+    return '<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;font-size:12.5px"'+
+             ' onmouseover="this.style.background=\'var(--s2)\'" onmouseout="this.style.background=\'\'">'+
+             '<input type="checkbox" class="app-status-ms-cb" value="'+escapeHtml(s)+'"'+
+             ' onchange="onStatusFilterChange()" style="width:14px;height:14px;accent-color:var(--brand);flex-shrink:0">'+
+             '<span>'+escapeHtml(s)+'</span>'+
+           '</label>';
+  }).join('');
+  box.dataset.built = '1';
+}
+
+// Push the hidden input's value out to the checkboxes + button label.
+// Called after any programmatic change (restore, clear).
+function syncStatusFilterUI() {
+  _buildStatusFilterMenu();
+  var sel = getStatusFilterValues();
+  document.querySelectorAll('.app-status-ms-cb').forEach(function(cb){
+    cb.checked = sel.indexOf(cb.value) !== -1;
+  });
+  var label = document.getElementById('app-status-ms-label');
+  if (label) {
+    label.textContent = sel.length === 0 ? 'All Status'
+      : sel.length === 1 ? sel[0]
+      : sel.length + ' statuses';
+  }
+  var btn = document.getElementById('app-status-ms-btn');
+  if (btn) btn.style.borderColor = sel.length ? 'var(--brand)' : '';
+}
+
+// Read the checkboxes back into the hidden input, then re-filter.
+function onStatusFilterChange() {
+  var picked = [];
+  document.querySelectorAll('.app-status-ms-cb').forEach(function(cb){
+    if (cb.checked) picked.push(cb.value);
+  });
+  var el = document.getElementById('app-status-filter');
+  if (el) el.value = picked.join(',');
+  syncStatusFilterUI();
+  filterApplicants();
+}
+
+function setAllStatusFilters(on) {
+  document.querySelectorAll('.app-status-ms-cb').forEach(function(cb){ cb.checked = !!on; });
+  onStatusFilterChange();
+}
+
+function toggleStatusFilterMenu(ev) {
+  if (ev) ev.stopPropagation();
+  _buildStatusFilterMenu();
+  var menu = document.getElementById('app-status-ms-menu');
+  var btn  = document.getElementById('app-status-ms-btn');
+  if (!menu) return;
+  var open = menu.style.display !== 'none';
+  menu.style.display = open ? 'none' : 'block';
+  if (btn) btn.setAttribute('aria-expanded', open ? 'false' : 'true');
+  if (!open) syncStatusFilterUI();
+}
+
+// Close the menu when clicking anywhere outside it
+document.addEventListener('click', function(e){
+  var wrap = document.getElementById('app-status-ms');
+  var menu = document.getElementById('app-status-ms-menu');
+  if (!wrap || !menu || menu.style.display === 'none') return;
+  if (!wrap.contains(e.target)) {
+    menu.style.display = 'none';
+    var btn = document.getElementById('app-status-ms-btn');
+    if (btn) btn.setAttribute('aria-expanded','false');
+  }
+});
 
 function _inlineStatusCell(app) {
   var pill = pillHtml(app.status);
@@ -7394,7 +7490,7 @@ function renderApplicants() {
     if (_sf) {
       var _ff = JSON.parse(_sf);
       var _se = document.getElementById('app-search');          if (_se && _ff.q && !_se.value) _se.value = _ff.q;
-      var _ste= document.getElementById('app-status-filter');   if (_ste && _ff.s && !_ste.value) _ste.value = _ff.s;
+      var _ste= document.getElementById('app-status-filter');   if (_ste && _ff.s && !_ste.value) { _ste.value = _ff.s; syncStatusFilterUI(); }
       var _me = document.getElementById('app-medical-filter');  if (_me && _ff.m && !_me.value) _me.value = _ff.m;
       // Agent + job order dropdowns are repopulated below — set after repopulation
     }
