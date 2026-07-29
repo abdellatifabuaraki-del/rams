@@ -4924,6 +4924,30 @@ function getScopedEmployerFees() {
   });
 }
 
+// ── Backout exclusion ──────────────────────────────────────────────────
+// An applicant who backs out never deploys, so the employer owes nothing.
+// Their fee is kept on record (for audit) but excluded from every total.
+function isBackoutFee(fee) {
+  if (!fee) return false;
+  var app = (DB.applicants || []).find(function(a){
+    return (fee.applicantId && a.id === fee.applicantId) ||
+           (fee.applicantName && a.name === fee.applicantName);
+  });
+  return !!(app && app.status === 'Backout');
+}
+
+// A *pending* fee for a Backout applicant is never collectable, so it drops out
+// of every total. An already-Settled fee is left alone — that money really was
+// received, and removing it would misstate cash actually collected.
+function isExcludedBackoutFee(fee) {
+  return !!fee && fee.status === 'Pending' && isBackoutFee(fee);
+}
+
+// Fees that actually count toward employer totals
+function getComputableFees(fees) {
+  return (fees || []).filter(function(f){ return !isExcludedBackoutFee(f); });
+}
+
 // Viewers are limited to the Employers tab within Accounting
 function isViewerRole() {
   return (typeof getCurrentRole === 'function') && getCurrentRole() === 'Viewer';
@@ -9155,7 +9179,7 @@ function renderAnalytics() {
   var rejected    = apps.filter(function(a){ return a.status === 'Rejected'; }).length;
   var conversion  = total ? Math.round(deployed / total * 100) : 0;
   var totalExpPHP = DB.expenses.reduce(function(s,e){ return s + (e.amount||0); }, 0);
-  var totalExpUSD = DB.employerFees ? DB.employerFees.reduce(function(s,f){ return s + (f.feeUSD||0); }, 0) : 0;
+  var totalExpUSD = getComputableFees(DB.employerFees).reduce(function(s,f){ return s + (f.feeUSD||0); }, 0);
   var settledFees = DB.employerFees ? DB.employerFees.filter(function(f){ return f.status==='Settled'; }).reduce(function(s,f){ return s + (f.feeUSD||0); }, 0) : 0;
   var openJobs    = DB.jobs.filter(function(j){ return j.status === 'Open' || j.status === 'In Progress'; });
   var totalSlots  = openJobs.reduce(function(s,j){ return s + (parseInt(j.slots)||0); }, 0);
@@ -11815,7 +11839,7 @@ function renderAccounting() {
   var pendingBal= DB.agents.reduce(function(s,a){ return s + (a.balance<0?Math.abs(a.balance):0); }, 0);
   var receivable= DB.agents.reduce(function(s,a){ return s + (a.balance>0?a.balance:0); }, 0);
   var totalComm = DB.agents.reduce(function(s,a){ return s+a.totalCommission; }, 0);
-  var pendingFees = (DB.employerFees||[]).filter(function(f){ return f.status==='Pending'; }).reduce(function(s,f){ return s+(f.feeUSD||0); }, 0);
+  var pendingFees = getComputableFees(DB.employerFees).filter(function(f){ return f.status==='Pending'; }).reduce(function(s,f){ return s+(f.feeUSD||0); }, 0);
   var releasedComm = DB.commissions.filter(function(c){ return c.status==='Released'; }).reduce(function(s,c){ return s+c.amount; }, 0);
   var pendingRelease = DB.commissions.filter(function(c){ return c.status==='Pending Release'; }).reduce(function(s,c){ return s+c.amount; }, 0);
 
@@ -11916,7 +11940,7 @@ function renderAccOverview() {
   var actionsEl = document.getElementById('acc-pending-actions');
   if (actionsEl) {
     var pendingExpCount  = DB.expenses.filter(function(e){ return e.status==='Pending'; }).length;
-    var pendingFeeCount  = (DB.employerFees||[]).filter(function(f){ return f.status==='Pending'; }).length;
+    var pendingFeeCount  = getComputableFees(DB.employerFees).filter(function(f){ return f.status==='Pending'; }).length;
     var pendingRelCount  = DB.commissions.filter(function(c){ return c.status==='Pending Release'; }).length;
     var pendingInvCount  = (DB.invoices||[]).filter(function(i){ return (i.balance||0) > 0; }).length;
 
@@ -13976,6 +14000,8 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
       visaLinkedJob = DB.jobs.find(function(j){ return j.title.toLowerCase() === _jobTitleKey; });
     }
     var visaFeeUSD = visaLinkedJob ? (parseFloat(visaLinkedJob.employerFeeUSD) || 0) : 0;
+    // Never raise a fee for someone who has backed out
+    if (app.status === 'Backout') visaFeeUSD = 0;
     if (visaFeeUSD > 0) {
       // Only create if no fee record already exists for this applicant
       var existingFee = DB.employerFees.find(function(f){ return f.applicantId === applicantId; });
@@ -14423,7 +14449,8 @@ function renderEmployerFees() {
   // KPIs — filtered by employer selection
   var kpiEl = document.getElementById('ef-kpis');
   if (kpiEl) {
-    var kpiFees = _feePool.filter(function(f){
+    // Backout applicants never deploy — their fees are excluded from all totals
+    var kpiFees = getComputableFees(_feePool).filter(function(f){
       if (employerFilter && f.employer !== employerFilter) return false;
       return true;
     });
@@ -14467,8 +14494,10 @@ function renderEmployerFees() {
   var fxRate = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
 
   tbody.innerHTML = fees.map(function(f) {
+    var _excluded = isExcludedBackoutFee(f);
     var statusCss = f.status === 'Settled' ? 'color:var(--green);background:var(--gbg);border:1px solid #86efac'
                   : f.status === 'Waived'  ? 'color:var(--muted);background:var(--s2);border:1px solid var(--border)'
+                  : _excluded              ? 'color:var(--muted);background:var(--s2);border:1px solid var(--border)'
                   : 'color:var(--amber);background:var(--abg);border:1px solid #fcd34d';
     var phpEquiv = Math.round((f.feeUSD||0) * fxRate);
     var actionsHtml = '';
@@ -14490,10 +14519,12 @@ function renderEmployerFees() {
       '<td style="padding:11px 16px;font-weight:600">' + (f.employer||'—') + '</td>' +
       '<td style="padding:11px 16px;color:var(--muted);font-size:12px">' + (f.jobTitle||'—') + '</td>' +
       '<td style="padding:11px 16px;color:var(--muted);font-size:12px">' + (f.country||'—') + '</td>' +
-      '<td style="padding:11px 16px;text-align:right;font-family:\'IBM Plex Mono\',monospace;font-weight:700">' +
+      '<td style="padding:11px 16px;text-align:right;font-family:\'IBM Plex Mono\',monospace;font-weight:700' +
+        (_excluded ? ';color:var(--muted);text-decoration:line-through' : '') + '">' +
         '$' + (f.feeUSD||0).toLocaleString() +
-        '<div style="font-size:10px;color:var(--muted);font-weight:400">≈ ₱' + phpEquiv.toLocaleString() + '</div></td>' +
-      '<td style="padding:11px 16px;text-align:center"><span style="display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700;' + statusCss + '">' + (f.status||'Pending') + '</span></td>' +
+        '<div style="font-size:10px;color:var(--muted);font-weight:400;text-decoration:none">≈ ₱' + phpEquiv.toLocaleString() + '</div></td>' +
+      '<td style="padding:11px 16px;text-align:center"><span style="display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700;' + statusCss + '">' + (_excluded ? 'Not Due' : (f.status||'Pending')) + '</span>' +
+        (_excluded ? '<div style="font-size:10px;color:var(--muted);margin-top:3px">Backout — excluded</div>' : '') + '</td>' +
       '<td style="padding:11px 16px;font-size:12px;color:var(--muted)">' +
         (f.status === 'Settled' ? '<div style="font-weight:600;color:var(--text)">' + (f.settledBy||'Admin') + '</div><div>' + (f.settledAt||'') + '</div>' : '—') + '</td>' +
       '<td style="padding:11px 16px;text-align:right">' + actionsHtml + '</td>' +
@@ -15071,6 +15102,7 @@ function recalcAllFees() {
   DB.employerFees.filter(function(f){ return f.status === 'Pending'; }).forEach(function(fee) {
     var app = DB.applicants.find(function(a){ return a.id === fee.applicantId; });
     if (!app) return;
+    if (app.status === 'Backout') return; // backouts are not computed
 
     var currentJob = null;
     if (app._jobOrderId) {
