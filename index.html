@@ -18321,7 +18321,14 @@ function _showReadOnlyBanner() {
   if (!u) return; // session not loaded yet — don't show banner prematurely
   var role = getCurrentRole();
   var banner = document.getElementById('rbac-readonly-banner');
-  if (role === 'Viewer') {
+  // A Viewer is only truly read-only if an admin hasn't granted them any
+  // write permission. Otherwise the banner contradicts what they can actually
+  // do and makes a working grant look broken.
+  var _writePerms = ['Manage Complaints','Create Applicants','Edit Applicants','Delete Applicants',
+    'Manage Job Orders','Upload Documents','Approve Documents','Manage Accounting','Manage Expenses',
+    'Manage Invoices','Release/Reverse Commissions','Manage Users','Manage Roles'];
+  var _hasAnyWrite = _writePerms.some(function(p){ return hasPermission(p); });
+  if (role === 'Viewer' && !_hasAnyWrite) {
     if (!banner) {
       banner = document.createElement('div');
       banner.id = 'rbac-readonly-banner';
