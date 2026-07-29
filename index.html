@@ -4900,6 +4900,35 @@ function getScopedComplaints() {
   });
 }
 
+// Filter employer fees by viewer scope — a viewer only sees the accounts of
+// applicants on job orders inside their assigned scope. Non-viewers see all.
+function getScopedEmployerFees() {
+  var all = DB.employerFees || [];
+  var scope = getViewerScopedJobs();
+  if (scope === null) return all;   // not a viewer — no restriction
+  if (scope.length === 0) return []; // viewer with no assigned jobs
+
+  var scopedApps = getScopedApplicants();
+  var okIds   = new Set();
+  var okNames = new Set();
+  scopedApps.forEach(function(a){
+    if (a.id)    okIds.add(String(a.id));
+    if (a._dbId) okIds.add(String(a._dbId));
+    if (a.name)  okNames.add(String(a.name).toLowerCase());
+  });
+
+  return all.filter(function(f){
+    if (f.applicantId && okIds.has(String(f.applicantId))) return true;
+    if (f.applicantName && okNames.has(String(f.applicantName).toLowerCase())) return true;
+    return false;
+  });
+}
+
+// Viewers are limited to the Employers tab within Accounting
+function isViewerRole() {
+  return (typeof getCurrentRole === 'function') && getCurrentRole() === 'Viewer';
+}
+
 // Can the current user open/modify this specific complaint?
 function canAccessComplaint(compId) {
   if (getViewerScopedJobs() === null) return true; // not a viewer
@@ -11694,9 +11723,17 @@ var editingRuleIdx        = -1;
 
 // ── ACCOUNTING TAB SWITCH ────────────────────────────────────────────
 function switchAccTab(tab, el) {
-  // Employers tab — Admin and Finance only
-  if (tab === 'employers') {
-    var _r = getCurrentRole();
+  var _r = getCurrentRole();
+
+  // Viewers get the Employers tab only — every other accounting tab exposes
+  // agency-wide financials that are out of their scope.
+  if (_r === 'Viewer') {
+    if (tab !== 'employers') {
+      toast('Your role can only view the Employers tab', 'error');
+      return;
+    }
+  } else if (tab === 'employers') {
+    // Employers tab — Admin and Finance only (plus scoped Viewers, above)
     if (_r !== 'Admin' && _r !== 'Finance') {
       toast('Only Admin and Finance can view Employers', 'error');
       return;
@@ -11715,7 +11752,7 @@ function switchAccTab(tab, el) {
     if (tab === 'agents')      hdra.innerHTML = '<button class="btn btn-p btn-sm" onclick="openAddAgent()">+ Add Agent</button>';
     else if (tab === 'ledger') hdra.innerHTML = '<button class="btn btn-s btn-sm" onclick="exportLedger()">⬇ Export Ledger</button><button class="btn btn-p btn-sm" onclick="openManualAdjustment()">+ Adjustment</button>';
     else if (tab === 'rules')  hdra.innerHTML = '<button class="btn btn-p btn-sm" onclick="openAddCountryRule()">+ Add Country</button>';
-    else if (tab === 'employers') hdra.innerHTML = '<button class="btn btn-s btn-sm" onclick="exportEmployerFees()">⬇ Export</button>';
+    else if (tab === 'employers') hdra.innerHTML = (_r === 'Viewer') ? '' : '<button class="btn btn-s btn-sm" onclick="exportEmployerFees()">⬇ Export</button>';
     else if (tab === 'office') hdra.innerHTML = ((getCurrentRole && getCurrentRole() === 'Admin') ? '<button class="btn btn-ghost btn-sm" style="color:var(--red);border:1px solid var(--red)" onclick="resetOfficeLedger()">↺ Reset</button>' : '') + '<button class="btn btn-s btn-sm" onclick="exportOfficeLedger()">⬇ Export</button><button class="btn btn-s btn-sm" onclick="openAddFunds(\"PHP\")">+ Add Funds</button><button class="btn btn-p btn-sm" onclick="openOfficeExpense(\"PHP\")">− Expense</button>';
     else if (tab === 'invoices') hdra.innerHTML = '<button class="btn btn-p btn-sm" onclick="openNewInvoice()">+ New Invoice</button>';
     else hdra.innerHTML = '<button class="btn btn-s btn-sm" onclick="exportAccountingReport()">⬇ Export</button>' + ((getCurrentRole && getCurrentRole() === 'Admin') ? '<button class="btn btn-ghost btn-sm" style="color:var(--red);border:1px solid var(--red)" onclick="resetAllExpenses()">↺ Reset</button>' : '') + '<button class="btn btn-p btn-sm" onclick="openAddExpense()">+ Record Expense</button>';
@@ -11735,10 +11772,40 @@ function switchAccTab(tab, el) {
 
 // ── RENDER ACCOUNTING (main entry) ───────────────────────────────────
 function renderAccounting() {
-  // Hide Employers tab for non-Admin/Finance roles
+  var _r = getCurrentRole();
   var _empTab = document.getElementById('acc-tab-employers');
+
+  // ── Viewer: Employers tab only ──────────────────────────────────────
+  // Hide every other tab and the agency-wide KPI cards, then force the
+  // Employers tab so a viewer never lands on Overview's global financials.
+  if (_r === 'Viewer') {
+    if (_empTab) _empTab.style.display = '';
+    document.querySelectorAll('.acc-tab').forEach(function(t){
+      if (t.id !== 'acc-tab-employers') t.style.display = 'none';
+    });
+    var _stats = document.getElementById('accounting-stats');
+    if (_stats) { _stats.innerHTML = ''; _stats.style.display = 'none'; }
+    if (currentAccTab !== 'employers') {
+      currentAccTab = 'employers';
+      document.querySelectorAll('.acc-section').forEach(function(s){ s.classList.remove('active'); });
+      var _sec = document.getElementById('acc-employers');
+      if (_sec) _sec.classList.add('active');
+      document.querySelectorAll('.acc-tab').forEach(function(t){ t.classList.remove('active'); });
+      if (_empTab) _empTab.classList.add('active');
+      var _hdra = document.getElementById('acc-hdr-actions');
+      if (_hdra) _hdra.innerHTML = '';
+    }
+    renderEmployerFees();
+    return;
+  }
+
+  // Non-viewers: restore any tabs a previous viewer session hid
+  document.querySelectorAll('.acc-tab').forEach(function(t){ t.style.display = ''; });
+  var _statsEl0 = document.getElementById('accounting-stats');
+  if (_statsEl0) _statsEl0.style.display = '';
+
+  // Hide Employers tab for non-Admin/Finance roles
   if (_empTab) {
-    var _r = getCurrentRole();
     _empTab.style.display = (_r === 'Admin' || _r === 'Finance') ? '' : 'none';
   }
   // Update main KPIs
@@ -11765,7 +11832,7 @@ function renderAccounting() {
   renderAccOverview();
   if (typeof recalcOfficeLedgerBalances === 'function') recalcOfficeLedgerBalances();
   // Update Employers tab badge
-  var _pendingFeeCount = (DB.employerFees || []).filter(function(f){ return f.status === 'Pending'; }).length;
+  var _pendingFeeCount = getScopedEmployerFees().filter(function(f){ return f.status === 'Pending'; }).length;
   document.querySelectorAll('.acc-tab').forEach(function(t) {
     if (t.textContent.includes('Employers')) {
       t.textContent = _pendingFeeCount > 0 ? '🏢 Employers (' + _pendingFeeCount + ')' : '🏢 Employers';
@@ -14319,8 +14386,12 @@ function _syncEmployerFees() {
 
 function renderEmployerFees() {
   if (!DB.employerFees) DB.employerFees = [];
-  // Silently sync any stale fees to current job assignments before rendering
-  recalcAllFees();
+  // Silently sync any stale fees to current job assignments before rendering.
+  // Skipped for viewers — it rewrites fees via the API, which they cannot do.
+  if (!isViewerRole()) recalcAllFees();
+
+  // Viewers only see fees for applicants inside their assigned job-order scope
+  var _feePool = getScopedEmployerFees();
 
   var statusFilter   = (document.getElementById('ef-status-filter')   || {}).value || 'all';
   var employerFilter = (document.getElementById('ef-employer-filter')  || {}).value || '';
@@ -14328,7 +14399,7 @@ function renderEmployerFees() {
   // Populate employer dropdown
   var efEmpSel = document.getElementById('ef-employer-filter');
   if (efEmpSel) {
-    var employers = [...new Set(DB.employerFees.map(function(f){ return f.employer; }).filter(Boolean))].sort();
+    var employers = [...new Set(_feePool.map(function(f){ return f.employer; }).filter(Boolean))].sort();
     var prev = efEmpSel.value;
     efEmpSel.innerHTML = '<option value="">All Employers</option>' +
       employers.map(function(e){ return '<option value="'+e+'"'+(e===prev?' selected':'')+'>'+e+'</option>'; }).join('');
@@ -14336,7 +14407,7 @@ function renderEmployerFees() {
   }
 
   // Filter
-  var fees = DB.employerFees.filter(function(f) {
+  var fees = _feePool.filter(function(f) {
     if (statusFilter !== 'all' && f.status !== statusFilter) return false;
     if (employerFilter && f.employer !== employerFilter) return false;
     return true;
@@ -14345,7 +14416,7 @@ function renderEmployerFees() {
   // KPIs — filtered by employer selection
   var kpiEl = document.getElementById('ef-kpis');
   if (kpiEl) {
-    var kpiFees = DB.employerFees.filter(function(f){
+    var kpiFees = _feePool.filter(function(f){
       if (employerFilter && f.employer !== employerFilter) return false;
       return true;
     });
@@ -14361,9 +14432,9 @@ function renderEmployerFees() {
       _efKpi('💵', 'Total Fees',  '$' + totalUSD.toLocaleString()   + ' USD · ' + waivedCt + ' waived ($' + waivedUSD.toLocaleString() + ')', 'var(--brand)') +
       _efKpi('⏳', 'Pending',     pendingCt + ' · $' + pendingUSD.toLocaleString() + ' USD', 'var(--amber)') +
       _efKpi('✅', 'Settled',     settledCt + ' · $' + settledUSD.toLocaleString() + ' USD', 'var(--green)') +
-      _efKpi('🚀', 'Deployment Ready', DB.applicants.filter(function(a){
+      _efKpi('🚀', 'Deployment Ready', getScopedApplicants().filter(function(a){
         if (a.status !== 'OWWA' && a.status !== 'Visa') return false;
-        var pf = DB.employerFees.find(function(f){ return f.applicantId===a.id && f.status==='Pending'; });
+        var pf = _feePool.find(function(f){ return f.applicantId===a.id && f.status==='Pending'; });
         return !pf;
       }).length + ' applicants', 'var(--teal)');
   }
@@ -14493,7 +14564,7 @@ function markFeePending(feeId) {
 function exportEmployerFees() {
   var rows = ['ID,Applicant,Employer,Position,Country,Fee USD,PHP Equiv,Status,Settled By,Settled Date,Created'];
   var fx = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
-  (DB.employerFees || []).forEach(function(f) {
+  getScopedEmployerFees().forEach(function(f) {
     rows.push([f.id, f.applicantName, f.employer, f.jobTitle, f.country,
       f.feeUSD, Math.round((f.feeUSD||0)*fx), f.status, f.settledBy||'', f.settledAt||'', f.createdAt||''].join(','));
   });
