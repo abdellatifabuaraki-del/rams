@@ -1697,10 +1697,10 @@ button[disabled][data-rbac-locked] {
         <select class="f-inp" id="ef-employer-filter" onchange="renderEmployerFees()" style="width:200px">
           <option value="">All Employers</option>
         </select>
-        <button class="btn btn-s btn-sm" onclick="exportEmployerFees()">⬇ Export</button>
-        <button class="btn btn-s btn-sm" style="background:var(--abg);color:var(--amber);border:1px solid #fcd34d" onclick="backfillEmployerFees()" title="Scan all Visa-status applicants and show why fees are missing">⚡ Generate Missing Fees</button>
-        <button class="btn btn-s btn-sm" style="background:var(--rbg);color:var(--red);border:1px solid #fca5a5" onclick="autoWaiveBackoutFees()" title="Waive pending fees for all Backout/Repatriated applicants">↩ Auto-Waive Backouts</button>
-        <button class="btn btn-p btn-sm" onclick="openManualFee(null)">+ Add Fee</button>
+        <button class="btn btn-s btn-sm ef-write-btn" id="ef-btn-export" onclick="exportEmployerFees()">⬇ Export</button>
+        <button class="btn btn-s btn-sm ef-write-btn" id="ef-btn-backfill" style="background:var(--abg);color:var(--amber);border:1px solid #fcd34d" onclick="backfillEmployerFees()" title="Scan all Visa-status applicants and show why fees are missing">⚡ Generate Missing Fees</button>
+        <button class="btn btn-s btn-sm ef-write-btn" id="ef-btn-autowaive" style="background:var(--rbg);color:var(--red);border:1px solid #fca5a5" onclick="autoWaiveBackoutFees()" title="Waive pending fees for all Backout/Repatriated applicants">↩ Auto-Waive Backouts</button>
+        <button class="btn btn-p btn-sm ef-write-btn" id="ef-btn-addfee" onclick="openManualFee(null)">+ Add Fee</button>
       </div>
     </div>
 
@@ -14386,9 +14386,16 @@ function _syncEmployerFees() {
 
 function renderEmployerFees() {
   if (!DB.employerFees) DB.employerFees = [];
+
+  // Viewers get a read-only Employers tab — hide every write/export action
+  var _viewerRO = isViewerRole();
+  document.querySelectorAll('.ef-write-btn').forEach(function(b){
+    b.style.display = _viewerRO ? 'none' : '';
+  });
+
   // Silently sync any stale fees to current job assignments before rendering.
   // Skipped for viewers — it rewrites fees via the API, which they cannot do.
-  if (!isViewerRole()) recalcAllFees();
+  if (!_viewerRO) recalcAllFees();
 
   // Viewers only see fees for applicants inside their assigned job-order scope
   var _feePool = getScopedEmployerFees();
@@ -14562,6 +14569,7 @@ function markFeePending(feeId) {
 }
 
 function exportEmployerFees() {
+  if (isViewerRole()) { toast('Your role has read-only access to Employers','error'); return; }
   var rows = ['ID,Applicant,Employer,Position,Country,Fee USD,PHP Equiv,Status,Settled By,Settled Date,Created'];
   var fx = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
   getScopedEmployerFees().forEach(function(f) {
@@ -14577,6 +14585,7 @@ function exportEmployerFees() {
 
 // ── Manual Add Fee ────────────────────────────────────────────────────
 function openManualFee(applicantId) {
+  if (isViewerRole()) { toast('Your role has read-only access to Employers','error'); return; }
   var app = applicantId ? DB.applicants.find(function(a){ return a.id === applicantId; }) : null;
   var FEE_STATUSES = ['Visa','OWWA','Deployed'];
   var eligible = DB.applicants.filter(function(a){ return FEE_STATUSES.indexOf(a.status) !== -1; });
@@ -14678,6 +14687,7 @@ function prefillManualFee() {
 }
 
 function submitManualFee() {
+  if (isViewerRole()) { toast('Your role has read-only access to Employers','error'); return; }
   var appId    = (document.getElementById('mf-applicant') || {}).value;
   var jobId    = (document.getElementById('mf-job')       || {}).value;
   var employer = ((document.getElementById('mf-employer') || {}).value || '').trim();
@@ -14727,6 +14737,7 @@ function submitManualFee() {
 // ── Backfill with detailed diagnostic modal ───────────────────────────
 // Auto-waive pending employer fees for all Backout / Repatriated applicants
 function autoWaiveBackoutFees() {
+  if (isViewerRole()) { toast('Your role has read-only access to Employers','error'); return; }
   var backoutIds = new Set(
     DB.applicants
       .filter(function(a){ return a.status==='Backout' || a.status==='Repatriated'; })
@@ -14944,6 +14955,7 @@ function _doStatusChangeDeployed(applicantId, oldStatus, deployDate) {
 
 
 function backfillEmployerFees() {
+  if (isViewerRole()) { toast('Your role has read-only access to Employers','error'); return; }
   if (!DB.employerFees) DB.employerFees = [];
   // Fees are only ever due on the Visa status transition (see the automatic
   // trigger in updateApplicantStatus) — this manual "catch missed ones" scan
