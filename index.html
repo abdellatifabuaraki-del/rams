@@ -11973,17 +11973,20 @@ function renderAccOverview() {
   var cfEl = document.getElementById('acc-cashflow');
   if (cfEl) {
     var fx2     = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
-    var commIn  = DB.commissions.filter(function(c){ return c.status==='Released'; }).reduce(function(s,c){ return s+(c.currency==='USD'?Math.round(c.amount*fx2):c.amount); },0);
+    // Released commissions are paid OUT to agents \u2014 an outflow, not income.
+    // They were previously added to the net position, which overstated it by
+    // twice the commission total (counted as + instead of \u2212).
+    var commOut = DB.commissions.filter(function(c){ return c.status==='Released'; }).reduce(function(s,c){ return s+(c.currency==='USD'?Math.round(c.amount*fx2):c.amount); },0);
     var expOut  = DB.expenses.reduce(function(s,e){ return s+e.amount; },0);
     var feesIn  = (DB.employerFees||[]).filter(function(f){ return f.status==='Settled'; }).reduce(function(s,f){ return s+Math.round((f.feeUSD||0)*fx2); },0);
-    var net     = commIn + feesIn - expOut;
+    var net     = feesIn - expOut - commOut;
 
     cfEl.innerHTML =
       '<div style="display:flex;flex-direction:column;gap:10px">' +
       [
-        { label:'Commissions Released',  val: commIn, color:'var(--green)', sign:'+' },
-        { label:'Employer Fees Settled', val: feesIn, color:'var(--green)', sign:'+' },
-        { label:'Total Expenses',        val: expOut, color:'var(--red)',   sign:'\u2212' },
+        { label:'Employer Fees Settled', val: feesIn,  color:'var(--green)', sign:'+' },
+        { label:'Commissions Released',  val: commOut, color:'var(--red)',   sign:'\u2212' },
+        { label:'Total Expenses',        val: expOut,  color:'var(--red)',   sign:'\u2212' },
       ].map(function(r) {
         return '<div style="display:flex;justify-content:space-between;align-items:center;padding-bottom:8px;border-bottom:1px solid var(--border)">' +
           '<span style="font-size:12.5px;color:var(--text2)">'+r.label+'</span>' +
@@ -12005,7 +12008,7 @@ function renderAccOverview() {
       events.push({ ts: e.date||'', icon:'\ud83d\udcb8', text: (e.applicant||'Expense')+' \u2014 '+(e.desc||e.category||''), amt:'-\u20b1'+e.amount.toLocaleString(), color:'var(--red)' });
     });
     DB.commissions.filter(function(c){ return c.status==='Released'; }).slice(-15).forEach(function(c) {
-      events.push({ ts: c.releaseDate||c.date||'', icon:'\ud83c\udfc6', text: 'Commission released \u2014 '+(c.applicantName||''), amt:'+'+(c.currency==='USD'?'$':'\u20b1')+c.amount.toLocaleString(), color:'var(--green)' });
+      events.push({ ts: c.releaseDate||c.date||'', icon:'\ud83c\udfc6', text: 'Commission released \u2014 '+(c.applicantName||''), amt:'-'+(c.currency==='USD'?'$':'\u20b1')+c.amount.toLocaleString(), color:'var(--red)' });
     });
     events.sort(function(a,b){ return (b.ts||'').localeCompare(a.ts||''); });
     events = events.slice(0, 8);
