@@ -4660,13 +4660,49 @@ async function _notifSync() {
     // (the POST in pushNotif is fire-and-forget, so there's a brief window
     // where a brand-new notification only exists locally).
     var serverIds = new Set(fromServer.map(function(n){ return n.id; }));
+    // Content signature — the server assigns its own UUID, so id alone cannot
+    // tell us the server copy and the optimistic local copy are the same event.
+    var sig = function(n){ return (n.title||'') + ' ' + (n.body||''); };
+    var serverSigs = new Set(fromServer.map(sig));
+
+    // When a local copy is dropped in favour of the server's row, hand its
+    // deep-link over first — rows stored before the backend persisted `link`
+    // would otherwise lose their "Open Profile" action.
+    var adoptLink = function(local) {
+      if (!local || !local.link) return;
+      var target = fromServer.find(function(s) {
+        return sig(s) === sig(local) && !s.link &&
+               Math.abs((s.ts || 0) - (local.ts || 0)) < 5 * 60 * 1000;
+      });
+      if (target) target.link = local.link;
+    };
+
     var localOnly = (DB.notifications || []).filter(function(n) {
-      return n.id && n.id.indexOf('NTF-') === 0 && !serverIds.has(n.id) && !serverIds.has(n._dbId);
+      if (!n.id || n.id.indexOf('NTF-') !== 0) return false;   // already a server row
+      if (serverIds.has(n.id) || serverIds.has(n._dbId)) { adoptLink(n); return false; } // matched by id
+      if (n._unmatched)            { adoptLink(n); return false; } // server stored it, id unknown
+      if (serverSigs.has(sig(n)))  { adoptLink(n); return false; } // same event, different id
+      return true;
     });
 
     DB.notifications = fromServer.concat(localOnly)
       .sort(function(a, b){ return (b.ts || 0) - (a.ts || 0); })
       .slice(0, 100);
+
+    // Final guard: collapse any same-title+body pairs that land within 60s of
+    // each other, keeping the richer entry (the one that still has a link).
+    var seen = [];
+    DB.notifications = DB.notifications.filter(function(n) {
+      var hit = seen.find(function(s) {
+        return s.sig === sig(n) && Math.abs((s.ts || 0) - (n.ts || 0)) < 60000;
+      });
+      if (hit) {
+        if (!hit.n.link && n.link) hit.n.link = n.link; // preserve the deep-link
+        return false;
+      }
+      seen.push({ sig: sig(n), ts: n.ts || 0, n: n });
+      return true;
+    });
 
     autosave('notifications');
     renderNotifications();
@@ -6218,8 +6254,24 @@ function pushNotif(title, body, type, link) {
     body: JSON.stringify({ title: title, body: body || '', type: type || 'info',
                            link: link ? JSON.stringify(link) : null })
   }).then(function(r) {
-    if (r && r.ok && r.data && r.data.id) {
-      n._dbId = r.data.id;
+    // The endpoint replies { created, id, notification, notifications:[...] }.
+    // Only reading r.data.id used to miss it entirely on older builds, leaving
+    // _dbId unset so the local copy was never reconciled with the server row —
+    // which is what produced duplicated notifications. Accept every shape.
+    var d = r && r.ok ? r.data : null;
+    var newId = null;
+    if (d) {
+      newId = d.id ||
+              (d.notification && d.notification.id) ||
+              (Array.isArray(d.notifications) && d.notifications.length && d.notifications[0].id) ||
+              null;
+    }
+    if (newId) {
+      n._dbId = newId;
+    } else {
+      // Server gave us no id to match on — drop the local copy on the next sync
+      // rather than letting it sit alongside the server's version forever.
+      n._unmatched = true;
     }
   }).catch(function(){});
 
@@ -7462,11 +7514,8 @@ function _inlineSaveStatus(appId, newStatus) {
     onApplicantStatusChange(appId, newStatus, oldStatus);
   }
 
-  pushNotif(
-    app.name + ' → ' + newStatus,
-    'Status updated by ' + _compUser(),
-    'applicant', { page: 'applicants', id: appId }
-  );
+  // Status-change notification is emitted by _pushStatusChangeNotif (reached via
+  // onApplicantStatusChange above) — firing one here too produced duplicates.
 
   var dbId = app._dbId || app.id;
   if (dbId && isUUID(dbId)) {
@@ -8091,13 +8140,9 @@ function saveApplicant() {
       }
     }
 
-    // Notify on status change — skip key statuses handled by _pushStatusChangeNotif
-    var _keyStatuses = ['Deployed','Visa','OWWA','Backout','Repatriated','Rejected'];
-    if (existing && existing.status !== data.status && _keyStatuses.indexOf(data.status) === -1) {
-      pushNotif('Applicant Status Changed',
-        data.name + ' moved from ' + existing.status + ' → ' + data.status,
-        'applicant', { page: 'applicants', id: data.id || data._dbId || '' });
-    }
+    // Status-change notifications are emitted solely by _pushStatusChangeNotif,
+    // which now covers routine stages too. Notifying here as well meant one
+    // status change produced two separate entries in the bell.
 
     // Track intentionally-cleared job orders so polls don't restore old value
     if (!data._jobOrderId && existing && existing._jobOrderId) {
@@ -16279,12 +16324,19 @@ function _pushStatusChangeNotif(app, newStatus, oldStatus) {
     'Repatriated': { title:'Worker Repatriated',    type:'applicant', emoji:'↩️' },
     'Rejected':    { title:'Application Rejected',  type:'applicant', emoji:'❌' },
   };
+  // Single source of truth for status-change notifications. Previously three
+  // separate call sites fired for one change (a generic one in the inline
+  // editor, this key-status one, and another in saveApplicant), so a single
+  // status update produced two or three entries in the bell. Everything now
+  // routes through here and emits exactly one.
   var meta = key_statuses[newStatus];
-  if (!meta) return; // don't notify for routine stage changes
+  var by   = (typeof _compUser === 'function') ? _compUser() : '';
+  var trail = (oldStatus ? oldStatus + ' → ' : '') + newStatus + (by ? ' · by ' + by : '');
+
   pushNotif(
-    meta.emoji + ' ' + meta.title,
-    app.name + ' — ' + (oldStatus||'') + ' → ' + newStatus,
-    meta.type,
+    meta ? (meta.emoji + ' ' + meta.title) : (app.name + ' → ' + newStatus),
+    meta ? (app.name + ' — ' + trail) : trail,
+    meta ? meta.type : 'applicant',
     { page: 'applicants', id: app.id }
   );
 }
