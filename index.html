@@ -7464,7 +7464,7 @@ function _inlineSaveStatus(appId, newStatus) {
 
   pushNotif(
     app.name + ' → ' + newStatus,
-    'Status updated by ' + ((typeof _currentUser !== 'undefined' && _currentUser) ? (_currentUser.name||'Admin') : 'Admin'),
+    'Status updated by ' + _compUser(),
     'applicant', { page: 'applicants', id: appId }
   );
 
@@ -14046,8 +14046,7 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
       toast('⚠️ ' + app.name + ' already has an open complaint — view it in the Complaints page', 'info');
     } else {
       // Auto-create a complaint record and then open the drawer so user can fill details
-      var _compUser2  = (typeof _currentUser !== 'undefined' && _currentUser)
-                      ? (_currentUser.name || _currentUser.email) : 'System';
+      var _compUser2  = _compUser();
       var _today2 = new Date().toISOString().split('T')[0];
       var _newComp = {
         id:            'COMP-' + String(DB.complaints.length + 1).padStart(4,'0'),
@@ -14551,7 +14550,7 @@ function markFeeSettled(feeId) {
   }
   var fee = DB.employerFees.find(function(f){ return f.id === feeId; });
   if (!fee) return;
-  var currentUser = (typeof _currentUser !== 'undefined' && _currentUser) ? _currentUser.name || _currentUser.email : 'Admin';
+  var currentUser = _compUser();
   fee.status    = 'Settled';
   fee.settledBy = currentUser;
   fee.settledAt = new Date().toISOString().split('T')[0];
@@ -14573,7 +14572,7 @@ function markFeeWaived(feeId) {
   var fee = DB.employerFees.find(function(f){ return f.id === feeId; });
   if (!fee) return;
   if (!confirm('Waive the $' + fee.feeUSD + ' USD employer fee for ' + fee.applicantName + '?\n\nApplicant will be allowed to deploy without fee payment.')) return;
-  var currentUser = (typeof _currentUser !== 'undefined' && _currentUser) ? _currentUser.name || _currentUser.email : 'Admin';
+  var currentUser = _compUser();
   fee.status    = 'Waived';
   fee.settledBy = currentUser + ' (waived)';
   fee.settledAt = new Date().toISOString().split('T')[0];
@@ -15295,9 +15294,16 @@ async function apiDeleteComplaint(id) {
 function _getApplicantComplaints(applicantId) {
   return getScopedComplaints().filter(function(c){ return c.applicantId === applicantId; });
 }
+// Who is writing this complaint note. Previously this read a `_currentUser`
+// global that is never defined anywhere, so the check always failed and every
+// entry was attributed to the literal string 'Admin'. The real session user
+// comes from getCurrentUser().
 function _compUser() {
-  return (typeof _currentUser !== 'undefined' && _currentUser)
-    ? (_currentUser.name || _currentUser.email) : 'Admin';
+  try {
+    var u = (typeof getCurrentUser === 'function') ? getCurrentUser() : null;
+    if (u && (u.name || u.email)) return u.name || u.email;
+  } catch (e) {}
+  return 'Unknown user';
 }
 function _today() { return new Date().toISOString().split('T')[0]; }
 function _docIcon(name) {
@@ -15543,7 +15549,7 @@ function openComplaintDrawer(compId) {
         ((c.notes||[]).length > 0 ?
           (c.notes||[]).slice().reverse().map(function(n){
             return '<div style="background:var(--s2);border-radius:8px;padding:10px 12px;border-left:3px solid var(--brand)">'+
-              '<div style="font-size:10px;color:var(--muted);margin-bottom:4px;font-weight:600">'+n.author+' · '+n.date+'</div>'+
+              '<div style="font-size:10px;color:var(--muted);margin-bottom:4px;font-weight:600">'+escapeHtml(n.author)+' · '+escapeHtml(n.date)+'</div>'+
               '<div style="font-size:12.5px;line-height:1.55">'+n.text+'</div>'+
             '</div>';
           }).join('') :
