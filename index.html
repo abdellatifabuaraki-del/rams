@@ -8258,8 +8258,13 @@ function saveApplicant() {
       { page: 'applicants', id: data.id || '' });
     toast('Applicant registered', 'success');
   }
-  // Assign display ID to new applicant
-  if (!data.displayId) { data.displayId = getDisplayId(data); }
+  // Display ID comes from the server (assigned on INSERT). getDisplayId returns
+  // '' on a live session when it hasn't arrived yet, so we leave it unset and
+  // let the next sync fill it in rather than inventing a conflicting number.
+  if (!data.displayId) {
+    var _did = getDisplayId(data);
+    if (_did) data.displayId = _did;
+  }
   filteredApps = [...getScopedApplicants()];
   autosave('applicants');
   closeOverlay('overlay-applicant');
@@ -19673,10 +19678,29 @@ async function saveDisplayIds() {
   await Store.set('rams:displayIds', JSON.stringify(_displayIdMap));
 }
 
+// APP-XXXX ids are issued by the server (applicants.display_id) and are
+// permanent and identical for everyone. The local map below is only a
+// demo/offline fallback — it must never override what the server sent, or two
+// browsers would show different numbers for the same person.
 function getDisplayId(applicant) {
   var uuid = applicant._dbId || applicant.id;
+  // Server-assigned value always wins
+  if (applicant.displayId) {
+    if (uuid && _displayIdMap[uuid] !== applicant.displayId) {
+      _displayIdMap[uuid] = applicant.displayId;
+      saveDisplayIds();
+    }
+    return applicant.displayId;
+  }
   if (_displayIdMap[uuid]) return _displayIdMap[uuid];
-  // Assign a new display ID if not yet assigned
+
+  // Live session: the server owns numbering. A brand-new record may not have
+  // synced its display_id back yet — don't invent one, or it would clash with
+  // the real value moments later. Fall through to the UUID until sync lands.
+  var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
+  if (isLive) return '';
+
+  // Demo/offline only — assign locally
   var newDisplayId = nextAppId();
   _displayIdMap[uuid] = newDisplayId;
   saveDisplayIds();
@@ -19687,9 +19711,17 @@ function getDisplayId(applicant) {
 function applyDisplayIds() {
   DB.applicants.forEach(function(a) {
     var uuid = a._dbId || a.id;
-    if (!a.displayId && uuid) {
-      a.displayId = _displayIdMap[uuid] || getDisplayId(a);
+    if (!uuid) return;
+    if (a.displayId) {
+      // Keep the cache in step with the authoritative server value
+      if (_displayIdMap[uuid] !== a.displayId) {
+        _displayIdMap[uuid] = a.displayId;
+        saveDisplayIds();
+      }
+      return;
     }
+    var resolved = _displayIdMap[uuid] || getDisplayId(a);
+    if (resolved) a.displayId = resolved;
   });
 }
 
