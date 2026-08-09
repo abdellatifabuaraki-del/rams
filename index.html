@@ -1242,6 +1242,14 @@ button[disabled][data-rbac-locked] {
           <button class="btn btn-p btn-sm" onclick="openAddApplicant()">+ Add Applicant</button>
         </div>
       </div>
+      <div class="filter-bar" style="margin-bottom:12px">
+        <select class="filter-sel" id="pipeline-joborder-filter" onchange="filterPipeline()"
+                aria-label="Filter pipeline by job order" style="max-width:260px">
+          <option value="">All Job Orders</option>
+        </select>
+        <span id="pipeline-filter-count" style="font-size:12px;color:var(--muted)"></span>
+        <button class="btn btn-ghost btn-sm" onclick="clearPipelineFilter()" style="font-size:11.5px;margin-left:auto">Clear</button>
+      </div>
       <div class="kanban-board" id="kanban-board" role="region" aria-label="Applicant pipeline"></div>
       <div style="margin-top:16px;display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
         <div style="background:var(--rbg);border:1px solid #fca5a5;border-radius:10px;padding:14px;display:flex;align-items:center;gap:10px">
@@ -7120,11 +7128,101 @@ function _saveStageOrder(order) {
 // Build STAGES array (used in drawer pipeline preview)
 const STAGES = Object.keys(_STAGE_META).map(function(k){ return Object.assign({key:k},_STAGE_META[k]); });
 
+// ── Pipeline job-order filter ─────────────────────────────────────────
+// Mirrors the Applicants page: the dropdown lists one entry per employer
+// (not per position), and selecting one matches every position belonging to
+// that employer, so a worker shows up under the job order they were hired for.
+var _pipelineJobFilter = '';
+try { _pipelineJobFilter = localStorage.getItem('rams:filters:pipelineJob') || ''; } catch(e) {}
+
+function _pipelineMatchIds() {
+  if (!_pipelineJobFilter) return null; // null = no restriction
+  var ids = new Set();
+  var repJob = DB.jobs.find(function(j){
+    return j.id === _pipelineJobFilter || j._dbId === _pipelineJobFilter;
+  });
+  var employer = repJob ? repJob.employer : null;
+  if (employer) {
+    DB.jobs.forEach(function(j){
+      if (j.employer === employer) {
+        if (j.id)    ids.add(j.id);
+        if (j._dbId) ids.add(j._dbId);
+      }
+    });
+  } else {
+    ids.add(_pipelineJobFilter);
+  }
+  return ids;
+}
+
+function filterPipeline() {
+  var el = document.getElementById('pipeline-joborder-filter');
+  _pipelineJobFilter = el ? el.value : '';
+  try { localStorage.setItem('rams:filters:pipelineJob', _pipelineJobFilter); } catch(e) {}
+  renderKanban();
+}
+
+function clearPipelineFilter() {
+  _pipelineJobFilter = '';
+  try { localStorage.removeItem('rams:filters:pipelineJob'); } catch(e) {}
+  var el = document.getElementById('pipeline-joborder-filter');
+  if (el) el.value = '';
+  renderKanban();
+}
+
+function _populatePipelineJobFilter() {
+  var sel = document.getElementById('pipeline-joborder-filter');
+  if (!sel) return;
+  var usedJobIds = new Set(getScopedApplicants().map(function(a){ return a._jobOrderId; }).filter(Boolean));
+  var usedJobs   = DB.jobs.filter(function(j){ return usedJobIds.has(j.id) || usedJobIds.has(j._dbId); });
+
+  var seen = {}, grouped = [];
+  usedJobs.forEach(function(j){
+    var key = (j.employer||'') + '|' + (j.country||'');
+    if (seen[key]) return;
+    seen[key] = true;
+    grouped.push({
+      value: j._dbId || j.id,
+      label: (j.employer||'Unknown') + (j.country ? ' (' + j.country + ')' : ''),
+    });
+  });
+  grouped.sort(function(a,b){ return a.label.toLowerCase().localeCompare(b.label.toLowerCase()); });
+
+  sel.innerHTML = '<option value="">All Job Orders</option>' +
+    grouped.map(function(g){
+      return '<option value="' + escapeHtml(g.value) + '">' + escapeHtml(g.label) + '</option>';
+    }).join('');
+
+  // Restore the saved selection; drop it if that job order no longer appears
+  if (_pipelineJobFilter) {
+    sel.value = _pipelineJobFilter;
+    if (sel.value !== _pipelineJobFilter) {
+      _pipelineJobFilter = '';
+      try { localStorage.removeItem('rams:filters:pipelineJob'); } catch(e) {}
+      sel.value = '';
+    }
+  }
+}
+
 function renderKanban() {
   var order = _loadStageOrder();
   var board = document.getElementById('kanban-board');
-  var _scopedApps = getScopedApplicants();
   var isAdmin = (typeof getCurrentRole === 'function') && getCurrentRole() === 'Admin';
+
+  _populatePipelineJobFilter();
+
+  var _allScoped  = getScopedApplicants();
+  var _matchIds   = _pipelineMatchIds();
+  var _scopedApps = (_matchIds === null) ? _allScoped : _allScoped.filter(function(a){
+    return a._jobOrderId && _matchIds.has(a._jobOrderId);
+  });
+
+  var _cntEl = document.getElementById('pipeline-filter-count');
+  if (_cntEl) {
+    _cntEl.textContent = (_matchIds === null)
+      ? _allScoped.length + ' applicant' + (_allScoped.length !== 1 ? 's' : '')
+      : _scopedApps.length + ' of ' + _allScoped.length + ' applicant' + (_allScoped.length !== 1 ? 's' : '');
+  }
 
   // Always update the stat cards at the top of the Pipeline page
   var rc = document.getElementById('repat-count');
