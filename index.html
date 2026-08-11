@@ -1898,6 +1898,9 @@ button[disabled][data-rbac-locked] {
                 <option value="refund">Refund</option>
                 <option value="adjustment">Adjustment</option>
               </select>
+              <select class="f-inp" id="office-ledger-category" onchange="_ledgerFilterChanged('office-fund')" style="width:150px" aria-label="Filter by category">
+                <option value="all">All Categories</option>
+              </select>
               <select class="f-inp" id="office-ledger-currency" onchange="_ledgerFilterChanged('office-fund')" style="width:90px">
                 <option value="all">All</option>
                 <option value="PHP">PHP</option>
@@ -16935,8 +16938,24 @@ function renderOfficeLedger() {
     if (toEl)   toEl.style.display   = showCustom ? '' : 'none';
   });
 
+  // Populate the category dropdown from categories actually present in the
+  // ledger, so historic entries (e.g. the retired Equipment / Bank Charges)
+  // stay filterable even though they're no longer offered when recording.
+  var _catSel = document.getElementById('office-ledger-category');
+  if (_catSel) {
+    var _prevCat = _catSel.value || 'all';
+    var _cats = [...new Set((DB.officeLedger || [])
+      .map(function(e){ return e.category; })
+      .filter(Boolean))].sort(function(a,b){ return a.toLowerCase().localeCompare(b.toLowerCase()); });
+    _catSel.innerHTML = '<option value="all">All Categories</option>' +
+      _cats.map(function(c){ return '<option value="' + escapeHtml(c) + '">' + escapeHtml(c) + '</option>'; }).join('');
+    _catSel.value = _prevCat;
+    if (_catSel.value !== _prevCat) _catSel.value = 'all'; // category no longer present
+  }
+
   var currFilter      = (document.getElementById('office-ledger-currency')      || {}).value || 'all';
   var typeFilter      = (document.getElementById('office-ledger-type')          || {}).value || 'all';
+  var catFilter       = (document.getElementById('office-ledger-category')      || {}).value || 'all';
   var expCurrFilter   = (document.getElementById('office-exp-ledger-currency')  || {}).value || 'all';
   var expStatusFilter = (document.getElementById('office-exp-status-filter')    || {}).value || 'all';
 
@@ -16959,6 +16978,7 @@ function renderOfficeLedger() {
     .sort(function(a,b){ return (b.ts||'').localeCompare(a.ts||''); });
   if (currFilter !== 'all') fundEntries = fundEntries.filter(function(e){ return e.currency === currFilter; });
   if (typeFilter !== 'all') fundEntries = fundEntries.filter(function(e){ return e.type === typeFilter; });
+  if (catFilter  !== 'all') fundEntries = fundEntries.filter(function(e){ return e.category === catFilter; });
   var fundRange = _resolvePeriodRange('office-fund');
   if (fundRange) fundEntries = fundEntries.filter(function(e){ return _inRange(e.date, fundRange); });
 
@@ -17003,7 +17023,9 @@ function renderOfficeLedger() {
           '<td style="font-size:11px;font-family:monospace;color:var(--muted);white-space:nowrap">'+e.date+'</td>'+
           '<td><span class="ledger-type-pill '+(typeCss[e.type]||'lt-allocation')+'">'+(typeIcon[e.type]||'•')+' '+e.type.charAt(0).toUpperCase()+e.type.slice(1)+'</span>'+
             '<span class="pill '+(e.currency==='PHP'?'pill-blue':'pill-green')+'" style="font-size:10px;margin-left:4px">'+e.currency+'</span></td>'+
-          '<td style="font-size:12.5px;max-width:180px">'+e.desc+(e.ref?'<div style="font-size:10px;color:var(--dim);font-family:monospace">'+e.ref+'</div>':'')+'</td>'+
+          '<td style="font-size:12.5px;max-width:180px">'+e.desc+
+            (e.category?'<div><span style="display:inline-block;margin-top:3px;padding:1px 7px;border-radius:20px;font-size:10px;font-weight:700;background:var(--s2);border:1px solid var(--border);color:var(--muted)">'+escapeHtml(e.category)+'</span></div>':'')+
+            (e.ref?'<div style="font-size:10px;color:var(--dim);font-family:monospace">'+e.ref+'</div>':'')+'</td>'+
           '<td style="text-align:right;font-weight:800;font-family:monospace;color:'+(isNeg?'var(--red)':'var(--green)')+'">'+dispAmt+'</td>'+
           '<td style="text-align:right;font-weight:700;font-family:monospace;font-size:12px;color:'+(e.balance>=0?'var(--text)':'var(--red)')+'">'+dispBal+'</td>'+
           '<td>'+delBtn+'</td></tr>';
@@ -17653,6 +17675,7 @@ function submitOfficeAdjustment() {
 function exportOfficeLedger() {
   var currFilter = (document.getElementById('office-ledger-currency') || {}).value || 'all';
   var typeFilter = (document.getElementById('office-ledger-type')     || {}).value || 'all';
+  var catFilter  = (document.getElementById('office-ledger-category') || {}).value || 'all';
   var range      = _resolvePeriodRange('office-fund');
 
   var entries = DB.officeLedger.slice()
@@ -17660,6 +17683,7 @@ function exportOfficeLedger() {
     .sort(function(a,b){ return (b.ts||'').localeCompare(a.ts||''); });
   if (currFilter !== 'all') entries = entries.filter(function(e){ return e.currency === currFilter; });
   if (typeFilter !== 'all') entries = entries.filter(function(e){ return e.type === typeFilter; });
+  if (catFilter  !== 'all') entries = entries.filter(function(e){ return e.category === catFilter; });
   if (range) entries = entries.filter(function(e){ return _inRange(e.date, range); });
 
   var rows = ['Date,Type,Currency,Amount,Balance,Category,Description,Reference,Posted By'];
