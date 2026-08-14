@@ -13115,20 +13115,12 @@ function reverseCommission(commId) {
   var prev = c.status;
   c.status = 'Reversed';
 
-  // Remove ONLY the specific ledger entry that matches this commission's tranche + amount
-  var before = (DB.agentLedger || []).length;
-  var trancheKey = 'T' + c.tranche;
-  DB.agentLedger = (DB.agentLedger || []).filter(function(e) {
-    if (e.agentId !== c.agentId) return true;
-    if (e.type !== 'commission')  return true;
-    if (e.amount <= 0)            return true;
-    var descLower = (e.desc || '').toLowerCase();
-    var nameMatch = descLower.includes((c.applicantName || '').toLowerCase());
-    var tMatch    = descLower.includes('t'+c.tranche) || descLower.includes(trancheKey.toLowerCase());
-    var amtMatch  = Math.abs(e.amount - phpAmount) < 100; // within ₱100 tolerance for rounding
-    return !(nameMatch && (tMatch || amtMatch));
-  });
-  var removed = before - DB.agentLedger.length;
+  // The original "Commission released" credit is deliberately KEPT. This used
+  // to delete it *and* post the reversal debit below, which removed +X and
+  // added -X — debiting the agent twice and leaving a reversal row with no
+  // matching credit, so Total Credits and Net Balance were both wrong.
+  // Proper double-entry: the credit and the reversal sit side by side and
+  // cancel out, leaving a complete audit trail of what happened.
 
   // addLedgerEntry manages agent.balance internally — do NOT update agent.balance separately
   var agent = DB.agents.find(function(a){ return a.id===c.agentId; });
@@ -13148,13 +13140,8 @@ function reverseCommission(commId) {
     if (r&&r.ok) { try{_triggerImmediateSync();}catch(e){} }
   }).catch(function(){});
 
-  if (removed) {
-    apiFetch('/agent-ledger/batch-delete', {
-      method: 'POST',
-      body: JSON.stringify({ agentId: c.agentId, applicantName: c.applicantName,
-        tranche: c.tranche, amount: phpAmount, type: 'commission' }),
-    }).catch(function(){});
-  }
+  // No batch-delete here — deleting the original credit server-side would undo
+  // the release record on the next sync and re-break the balance.
 
   addAudit('UPDATE','Commission',
     'Reversed T'+c.tranche+' '+sym+c.amount+' '+c.currency+
