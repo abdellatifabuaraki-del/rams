@@ -7669,9 +7669,11 @@ function _inlineSaveMedical(appId, newMedical) {
       } else {
         var _medCountry = app.job ? app.job.split('·').pop().trim() : '';
         var _medRule    = DB.countryRules.find(function(r){ return r.country===_medCountry && r.active; });
-        var _agentHasRate = _agent.commissionAmt != null && _agent.commissionAmt > 0;
-        var _medTotal  = _agentHasRate ? _agent.commissionAmt : (_medRule ? _medRule.commissionAmt : 15000);
-        var _medCurr   = _agentHasRate ? (_agent.commissionCurrency||'PHP') : (_medRule ? (_medRule.commissionCurrency||'PHP') : 'PHP');
+        // Same precedence as _resolveCommission: per-country override → agent
+        // primary rate → country rule → default
+        var _agentRate = getAgentRateForCountry(_agent, _medCountry);
+        var _medTotal  = _agentRate ? _agentRate.amount   : (_medRule ? _medRule.commissionAmt : 15000);
+        var _medCurr   = _agentRate ? _agentRate.currency : (_medRule ? (_medRule.commissionCurrency||'PHP') : 'PHP');
         var _medGP     = _medRule ? (_medRule.guaranteePeriod||6) : 6;
         var _t1amt     = Math.round(_medTotal * 0.20);
         var _t1gEnd    = (function(){ var d=new Date(); d.setMonth(d.getMonth()+_medGP); return d.toISOString().split('T')[0]; })();
@@ -12204,7 +12206,14 @@ function renderAgentGrid(query) {
         '<div class="agent-avatar">'+a.name.split(' ').map(function(n){return n[0];}).join('')+'</div>'+
         '<div>'+
           '<div class="agent-name">'+a.name+'</div>'+
-          '<div class="agent-sub">'+a.code+' · '+a.country+'</div>'+
+          '<div class="agent-sub">'+a.code+' · '+a.country+
+            ((a.extraRates && a.extraRates.length)
+              ? ' <span style="color:var(--brand);font-weight:700" title="'+
+                  escapeHtml(a.extraRates.map(function(r){
+                    return r.country+': '+(r.currency==='USD'?'$':'₱')+Number(r.amount).toLocaleString();
+                  }).join(' · '))+
+                '">+'+a.extraRates.length+' more</span>'
+              : '')+'</div>'+
           '<div class="agent-sub">'+a.phone+'</div>'+
         '</div>'+
       '</div>'+
@@ -13939,16 +13948,12 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
     var country  = app.job ? app.job.split('·').pop().trim() : '';
     var rule     = DB.countryRules.find(function(r){ return r.country === country && r.active; })
                 || DB.countryRules.find(function(r){ return r.active; });
-    // Priority: 1) Agent's own commission rate  2) Country rule  3) Default ₱15,000
-    // If the agent has a commission amount set, it always wins over the country rate.
-    // Agent commission wins if explicitly set (non-null). Country rule is fallback only.
-    var agentHasRate = agent && agent.commissionAmt != null && agent.commissionAmt > 0;
-    var total    = agentHasRate
-      ? agent.commissionAmt
-      : (rule ? rule.commissionAmt : 15000);
-    var currency = agentHasRate
-      ? (agent.commissionCurrency || 'PHP')
-      : (rule ? (rule.commissionCurrency || 'PHP') : 'PHP');
+    // Priority: 1) Agent's per-country override for this destination
+    //           2) Agent's primary commission rate
+    //           3) Country rule  4) Default ₱15,000
+    var agentRate = getAgentRateForCountry(agent, country);
+    var total    = agentRate ? agentRate.amount   : (rule ? rule.commissionAmt : 15000);
+    var currency = agentRate ? agentRate.currency : (rule ? (rule.commissionCurrency || 'PHP') : 'PHP');
     return { country: country || 'Philippines', rule: rule, total: total, currency: currency };
   }
 
@@ -14229,6 +14234,69 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
 
 }
 // ── AGENT CRUD ────────────────────────────────────────────────────────
+// ── Agent per-country commission rows ─────────────────────────────────
+var _AGENT_COUNTRIES = ['Saudi Arabia','UAE','Qatar','Kuwait','Bahrain','Oman',
+  'Hong Kong','Singapore','Taiwan','Japan','South Korea','Canada','Germany','Slovenia'];
+
+function _agentRateRowHtml(rate) {
+  var cur = (rate && rate.currency === 'USD') ? 'USD' : 'PHP';
+  var opts = _AGENT_COUNTRIES.map(function(c){
+    var sel = (rate && rate.country === c) ? ' selected' : '';
+    return '<option value="' + escapeHtml(c) + '"' + sel + '>' + escapeHtml(c) + '</option>';
+  }).join('');
+  // Keep a country that's no longer in the standard list (e.g. renamed later)
+  if (rate && rate.country && _AGENT_COUNTRIES.indexOf(rate.country) === -1) {
+    opts = '<option value="' + escapeHtml(rate.country) + '" selected>' + escapeHtml(rate.country) + '</option>' + opts;
+  }
+  return '<div class="ag-rate-row" style="display:flex;gap:6px;align-items:center">' +
+      '<select class="f-inp ag-rate-country" style="flex:1;min-width:0">' + opts + '</select>' +
+      '<select class="f-inp ag-rate-currency" style="width:90px">' +
+        '<option value="PHP"' + (cur==='PHP'?' selected':'') + '>₱ PHP</option>' +
+        '<option value="USD"' + (cur==='USD'?' selected':'') + '>$ USD</option>' +
+      '</select>' +
+      '<input class="f-inp ag-rate-amount" type="number" min="0" step="100" placeholder="Amount" ' +
+        'style="width:110px" value="' + (rate && rate.amount != null ? rate.amount : '') + '">' +
+      '<button type="button" onclick="this.closest(\'.ag-rate-row\').remove();_syncAgentRateEmpty()" ' +
+        'style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px;padding:0 4px" title="Remove">✕</button>' +
+    '</div>';
+}
+
+function _syncAgentRateEmpty() {
+  var wrap  = document.getElementById('ag-extra-rates');
+  var empty = document.getElementById('ag-extra-empty');
+  if (empty) empty.style.display = (wrap && wrap.children.length) ? 'none' : '';
+}
+
+function addAgentRateRow(rate) {
+  var wrap = document.getElementById('ag-extra-rates');
+  if (!wrap) return;
+  wrap.insertAdjacentHTML('beforeend', _agentRateRowHtml(rate));
+  _syncAgentRateEmpty();
+}
+
+function _renderAgentRateRows(rates) {
+  var wrap = document.getElementById('ag-extra-rates');
+  if (!wrap) return;
+  wrap.innerHTML = (rates || []).map(_agentRateRowHtml).join('');
+  _syncAgentRateEmpty();
+}
+
+// Read the rows back out, dropping blanks and duplicate countries
+function _collectAgentRateRows() {
+  var out = [], seen = {};
+  document.querySelectorAll('#ag-extra-rates .ag-rate-row').forEach(function(row){
+    var country = (row.querySelector('.ag-rate-country')||{}).value || '';
+    var amount  = parseFloat((row.querySelector('.ag-rate-amount')||{}).value);
+    var currency= (row.querySelector('.ag-rate-currency')||{}).value || 'PHP';
+    if (!country || !isFinite(amount) || amount <= 0) return;
+    var key = country.toLowerCase();
+    if (seen[key]) return;
+    seen[key] = true;
+    out.push({ country: country, amount: amount, currency: currency === 'USD' ? 'USD' : 'PHP' });
+  });
+  return out;
+}
+
 function openAddAgent() {
   editingAgentIdx = -1;
   document.getElementById('agent-modal-title').textContent = 'Add Agent';
@@ -14236,6 +14304,7 @@ function openAddAgent() {
     var el = document.getElementById(id); if(el) el.value='';
   });
   var ci = document.getElementById('ag-commission'); if(ci) ci.value='5';
+  _renderAgentRateRows([]);
   openOverlay('overlay-agent');
   setTimeout(function(){ var el=document.getElementById('ag-name'); if(el) el.focus(); },100);
 }
@@ -14254,6 +14323,7 @@ function openEditAgent(idx) {
   Object.keys(flds).forEach(function(id){ var el=document.getElementById(id); if(el) el.value=flds[id]; });
   var ci = document.getElementById('ag-country');
   if (ci) ci.value = a.country;
+  _renderAgentRateRows(a.extraRates || []);
   openOverlay('overlay-agent');
 }
 
@@ -14287,6 +14357,7 @@ function submitAgent() {
     country: document.getElementById('ag-country').value,
     commissionAmt:       parseFloat(document.getElementById('ag-commission').value)||15000,
     commissionCurrency:  (document.getElementById('ag-commission-currency') || {}).value || 'PHP',
+    extraRates:          _collectAgentRateRows(),
     address: (document.getElementById('ag-address').value||'').trim(),
     notes: (document.getElementById('ag-notes').value||'').trim(),
     status: 'Active',
@@ -19573,6 +19644,47 @@ function getPasswordStrength(password) {
 // Agent  AGENT API — PostgreSQL backed
 // ════════════════════════════════════════════════════════
 
+// Per-country commission overrides: [{ country, amount, currency }].
+// Stored as JSONB server-side, so it may arrive as an array or a JSON string.
+function _parseExtraRates(raw) {
+  var list = raw;
+  if (typeof list === 'string') { try { list = JSON.parse(list); } catch(e) { list = []; } }
+  if (!Array.isArray(list)) return [];
+  var seen = {};
+  return list.filter(function(r){
+    if (!r || !r.country) return false;
+    var amt = parseFloat(r.amount);
+    if (!isFinite(amt) || amt <= 0) return false;
+    var key = String(r.country).toLowerCase().trim();
+    if (seen[key]) return false;
+    seen[key] = true;
+    return true;
+  }).map(function(r){
+    return {
+      country:  String(r.country).trim(),
+      amount:   parseFloat(r.amount),
+      currency: (r.currency === 'USD' ? 'USD' : 'PHP'),
+    };
+  });
+}
+
+// Resolve an agent's commission for a given destination country.
+// A country listed in extraRates wins; otherwise the agent's primary rate
+// applies, exactly as before — so agents without overrides are unaffected.
+function getAgentRateForCountry(agent, country) {
+  if (!agent) return null;
+  var rates = agent.extraRates || [];
+  var key = String(country || '').toLowerCase().trim();
+  if (key) {
+    var hit = rates.find(function(r){ return String(r.country).toLowerCase().trim() === key; });
+    if (hit) return { amount: hit.amount, currency: hit.currency || 'PHP', source: 'override' };
+  }
+  if (agent.commissionAmt != null && agent.commissionAmt > 0) {
+    return { amount: agent.commissionAmt, currency: agent.commissionCurrency || 'PHP', source: 'primary' };
+  }
+  return null;
+}
+
 function mapAgent(row) {
   return {
     id:              row.id,
@@ -19583,6 +19695,7 @@ function mapAgent(row) {
     country:         row.country || '',
     commissionAmt:      row.commission_amt != null ? parseFloat(row.commission_amt) : null,
     commissionCurrency: row.commission_currency || 'PHP',
+    extraRates:      _parseExtraRates(row.extra_rates),
     address:         row.address || '',
     notes:           row.notes || '',
     status:          row.status || 'Active',
@@ -19637,6 +19750,7 @@ async function apiCreateAgent(data) {
       country:        data.country || null,
       commission_amt:      data.commissionAmt != null ? data.commissionAmt : 15000,
       commission_currency: data.commissionCurrency || 'PHP',
+      extra_rates:         data.extraRates || [],
       address:        data.address || null,
       notes:          data.notes || null,
     })
@@ -19688,6 +19802,7 @@ async function apiUpdateAgent(data) {
       country:          data.country || null,
       commission_amt:      data.commissionAmt || 15000,
       commission_currency: data.commissionCurrency || 'PHP',
+      extra_rates:         data.extraRates || [],
       address:          data.address || null,
       notes:            data.notes || null,
       status:           data.status,
@@ -20126,6 +20241,18 @@ async function loadSharedPermissions() {
             <input class="f-inp" id="ag-commission" type="number" min="0" step="100" placeholder="15000" style="flex:1">
           </div>
         </div>
+      </div>
+      <!-- Secondary countries — per-country commission overrides -->
+      <div class="f-grp">
+        <label class="f-lbl" style="display:flex;align-items:center;gap:8px">
+          Other Countries &amp; Rates
+          <span style="font-weight:400;font-size:11px;color:var(--muted)">— overrides the amount above for these destinations</span>
+        </label>
+        <div id="ag-extra-rates" style="display:flex;flex-direction:column;gap:8px"></div>
+        <div id="ag-extra-empty" style="font-size:12px;color:var(--muted);padding:8px 0">
+          No additional countries — the commission above applies everywhere.
+        </div>
+        <button type="button" class="btn btn-s btn-sm" onclick="addAgentRateRow()" style="margin-top:8px;align-self:flex-start">+ Add Country</button>
       </div>
       <div class="f-grp">
         <label class="f-lbl">Address / Area</label>
