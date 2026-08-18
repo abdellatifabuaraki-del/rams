@@ -1645,6 +1645,16 @@ button[disabled][data-rbac-locked] {
         <div id="pending-commissions"></div>
       </div>
     </div>
+    <!-- Per-agent payout summary — reflects the Commission History filters below -->
+    <div class="card" style="margin-top:16px;overflow:hidden">
+      <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border)">
+        <div style="font-size:14px;font-weight:800">Agent Payout Summary</div>
+        <span style="font-size:11.5px;color:var(--muted)">— totals per agent, matching the filters below</span>
+        <button class="btn btn-ghost btn-sm" onclick="exportAgentPayouts()" style="font-size:11.5px;margin-left:auto">⬇ Export</button>
+      </div>
+      <div id="comm-agent-summary"></div>
+    </div>
+
     <div class="card" style="margin-top:16px">
       <div style="border-bottom:1px solid var(--border);padding:12px 16px">
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -1671,7 +1681,18 @@ button[disabled][data-rbac-locked] {
           <select class="f-inp" id="comm-filter-agent" onchange="renderCommissions()" style="width:150px;font-size:12.5px;padding:6px 8px">
             <option value="">All Agents</option>
           </select>
+          <!-- Country filter -->
+          <select class="f-inp" id="comm-filter-country" onchange="renderCommissions()" style="width:150px;font-size:12.5px;padding:6px 8px">
+            <option value="">All Countries</option>
+          </select>
+          <!-- Date range -->
+          <input type="date" class="f-inp" id="comm-filter-from" onchange="renderCommissions()"
+                 title="From date" style="width:140px;font-size:12.5px;padding:6px 8px">
+          <span style="font-size:11.5px;color:var(--muted)">to</span>
+          <input type="date" class="f-inp" id="comm-filter-to" onchange="renderCommissions()"
+                 title="To date" style="width:140px;font-size:12.5px;padding:6px 8px">
           <button class="btn btn-ghost btn-sm" onclick="clearCommissionFilters()" style="font-size:11.5px">Clear</button>
+          <button class="btn btn-s btn-sm" onclick="exportCommissions()" style="font-size:11.5px" title="Export the filtered commissions to CSV">⬇ Export</button>
           <button class="btn btn-ghost btn-sm" onclick="backfillCommissions()" style="font-size:11.5px;color:var(--brand);border-color:var(--brand)" title="Create missing T1/T2/T3 commissions for deployed/OWWA/medical-passed applicants">⚡ Backfill</button>
           <button class="btn btn-ghost btn-sm" onclick="resetCommissions()" style="font-size:11.5px;color:var(--red);border-color:var(--red)" title="Remove pending commissions that don't match the applicant's current status">🔄 Fix Mismatches</button>
           <button class="btn btn-ghost btn-sm" onclick="cleanDuplicateCommissions()" style="font-size:11.5px;color:var(--amber);border-color:var(--amber)" title="Permanently delete duplicate Reversed commission entries">🧹 Clean Duplicates</button>
@@ -12501,8 +12522,179 @@ function _renderExpensesTabInner(search) {
 }
 
 // ── COMMISSIONS ───────────────────────────────────────────────────────
+// ── Commission history: shared filter logic ───────────────────────────
+// Used by the table, the agent payout summary, and both CSV exports so all
+// four always agree on what "the current view" means.
+function _getFilteredCommissions() {
+  var srch    = ((document.getElementById('comm-search')||{}).value||'').toLowerCase().trim();
+  var fTranche= (document.getElementById('comm-filter-tranche')||{}).value||'';
+  var fStatus = (document.getElementById('comm-filter-status')||{}).value||'';
+  var fAgent  = (document.getElementById('comm-filter-agent')||{}).value||'';
+  var fCountry= (document.getElementById('comm-filter-country')||{}).value||'';
+  var fFrom   = (document.getElementById('comm-filter-from')||{}).value||'';
+  var fTo     = (document.getElementById('comm-filter-to')||{}).value||'';
+
+  return (DB.commissions||[]).filter(function(cm) {
+    if (cm._hideDuplicate) return false; // hide ghost reversed duplicates
+    if (fTranche && String(cm.tranche) !== fTranche) return false;
+    if (fStatus  && cm.status !== fStatus) return false;
+    if (fCountry && cm.country !== fCountry) return false;
+    if (fFrom || fTo) {
+      // Released rows are dated by release; everything else by trigger date
+      var d = (cm.status === 'Released' && cm.releaseDate)
+        ? cm.releaseDate
+        : (cm.triggerDate || cm.deployDate || cm.date || '');
+      if (!d) return false;
+      if (fFrom && d < fFrom) return false;
+      if (fTo   && d > fTo)   return false;
+    }
+    if (fAgent) {
+      var ag = DB.agents.find(function(a){ return a.id===cm.agentId; });
+      if (!ag || ag.name !== fAgent) return false;
+    }
+    if (srch) {
+      var ag2 = DB.agents.find(function(a){ return a.id===cm.agentId; });
+      var agName  = ag2 ? ag2.name.toLowerCase() : '';
+      var appName = (cm.applicantName||'').toLowerCase();
+      var trLabel = (cm.trancheLabel||'').toLowerCase();
+      var status  = (cm.status||'').toLowerCase();
+      var country = (cm.country||'').toLowerCase();
+      if (!agName.includes(srch) && !appName.includes(srch) &&
+          !trLabel.includes(srch) && !status.includes(srch) && !country.includes(srch)) return false;
+    }
+    return true;
+  }).sort(function(a,b){ return (b.triggerDate||'').localeCompare(a.triggerDate||''); });
+}
+
+function _commToPHP(c) {
+  var fx = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
+  return c.currency === 'USD' ? Math.round(c.amount * fx) : c.amount;
+}
+
+// ── Per-agent payout summary ──────────────────────────────────────────
+function _buildAgentPayouts(list) {
+  var byAgent = {};
+  (list||[]).forEach(function(c){
+    var ag  = DB.agents.find(function(a){ return a.id===c.agentId; });
+    var key = ag ? ag.name : '— Unassigned —';
+    if (!byAgent[key]) byAgent[key] = { name:key, pending:0, guarantee:0, released:0, reversed:0, count:0 };
+    var row = byAgent[key];
+    var php = _commToPHP(c);
+    row.count++;
+    if (c.status === 'Released')            row.released  += php;
+    else if (c.status === 'Reversed')       row.reversed  += php;
+    else if (c.status === 'In Guarantee')   row.guarantee += php;
+    else                                    row.pending   += php;
+  });
+  return Object.keys(byAgent).map(function(k){
+    var r = byAgent[k];
+    r.owed = r.pending + r.guarantee;   // still to be paid out
+    return r;
+  }).sort(function(a,b){ return b.owed - a.owed || b.released - a.released; });
+}
+
+function renderAgentPayoutSummary(list) {
+  var el = document.getElementById('comm-agent-summary');
+  if (!el) return;
+  var rows = _buildAgentPayouts(list);
+  if (!rows.length) {
+    el.innerHTML = '<div style="padding:18px 16px;text-align:center;color:var(--muted);font-size:12.5px">No commissions match the current filters</div>';
+    return;
+  }
+  var tot = rows.reduce(function(t,r){
+    t.pending+=r.pending; t.guarantee+=r.guarantee; t.released+=r.released;
+    t.reversed+=r.reversed; t.owed+=r.owed; t.count+=r.count; return t;
+  }, {pending:0,guarantee:0,released:0,reversed:0,owed:0,count:0});
+
+  var money = function(n, color){
+    return '<td style="text-align:right;font-family:monospace;font-weight:700;padding:8px 12px'+
+      (color?';color:'+color:'')+'">₱'+Math.round(n).toLocaleString()+'</td>';
+  };
+  el.innerHTML =
+    '<table style="width:100%;border-collapse:collapse">'+
+      '<thead><tr>'+
+        '<th style="text-align:left;padding:8px 12px">Agent</th>'+
+        '<th style="text-align:right;padding:8px 12px">Records</th>'+
+        '<th style="text-align:right;padding:8px 12px">Pending</th>'+
+        '<th style="text-align:right;padding:8px 12px">In Guarantee</th>'+
+        '<th style="text-align:right;padding:8px 12px">Released</th>'+
+        '<th style="text-align:right;padding:8px 12px">Reversed</th>'+
+        '<th style="text-align:right;padding:8px 12px">Still Owed</th>'+
+      '</tr></thead><tbody>'+
+      rows.map(function(r){
+        return '<tr style="border-top:1px solid var(--border)">'+
+          '<td style="font-weight:700;padding:8px 12px">'+escapeHtml(r.name)+'</td>'+
+          '<td style="text-align:right;color:var(--muted);padding:8px 12px">'+r.count+'</td>'+
+          money(r.pending,'var(--amber)')+
+          money(r.guarantee,'var(--muted)')+
+          money(r.released,'var(--green)')+
+          money(r.reversed,'var(--red)')+
+          '<td style="text-align:right;font-family:monospace;font-weight:800;padding:8px 12px;color:'+(r.owed>0?'var(--brand)':'var(--muted)')+'">₱'+Math.round(r.owed).toLocaleString()+'</td>'+
+        '</tr>';
+      }).join('')+
+      '<tr style="border-top:2px solid var(--border);background:var(--s2)">'+
+        '<td style="font-weight:800;padding:8px 12px">Total</td>'+
+        '<td style="text-align:right;color:var(--muted);padding:8px 12px">'+tot.count+'</td>'+
+        money(tot.pending,'var(--amber)')+
+        money(tot.guarantee,'var(--muted)')+
+        money(tot.released,'var(--green)')+
+        money(tot.reversed,'var(--red)')+
+        '<td style="text-align:right;font-family:monospace;font-weight:800;padding:8px 12px;color:var(--brand)">₱'+Math.round(tot.owed).toLocaleString()+'</td>'+
+      '</tr>'+
+      '</tbody></table>';
+}
+
+function _csvCell(v){ return '"' + String(v == null ? '' : v).replace(/"/g,'""') + '"'; }
+function _downloadCsv(rows, filename){
+  var blob = new Blob([rows.join('\n')], { type:'text/csv;charset=utf-8;' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
+}
+
+function exportCommissions() {
+  var list = _getFilteredCommissions();
+  if (!list.length) { toast('No commissions match the current filters', 'error'); return; }
+  var fx = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
+  var rows = [['ID','Agent','Applicant','Country','Tranche','Tranche Label','Amount','Currency',
+               'Amount (PHP)','Total Commission','Status','Trigger Status','Trigger Date',
+               'Release Date','Guarantee End'].map(_csvCell).join(',')];
+  list.forEach(function(c){
+    var ag = DB.agents.find(function(a){ return a.id===c.agentId; });
+    rows.push([
+      c.id, ag?ag.name:'', c.applicantName, c.country, c.tranche, c.trancheLabel,
+      c.amount, c.currency||'PHP', _commToPHP(c), c.totalCommission||'',
+      c.status, c.triggerStatus||'', c.triggerDate||c.deployDate||'',
+      c.releaseDate||'', c.guaranteeEnd||'',
+    ].map(_csvCell).join(','));
+  });
+  rows.push('');
+  rows.push([_csvCell('FX rate used'), _csvCell(fx)].join(','));
+  _downloadCsv(rows, 'commissions_'+new Date().toISOString().split('T')[0]+'.csv');
+  toast('Exported '+list.length+' commission record(s)','success');
+}
+
+function exportAgentPayouts() {
+  var rows0 = _buildAgentPayouts(_getFilteredCommissions());
+  if (!rows0.length) { toast('No commissions match the current filters', 'error'); return; }
+  var rows = [['Agent','Records','Pending (PHP)','In Guarantee (PHP)','Released (PHP)',
+               'Reversed (PHP)','Still Owed (PHP)'].map(_csvCell).join(',')];
+  rows0.forEach(function(r){
+    rows.push([r.name, r.count, Math.round(r.pending), Math.round(r.guarantee),
+               Math.round(r.released), Math.round(r.reversed), Math.round(r.owed)]
+              .map(_csvCell).join(','));
+  });
+  _downloadCsv(rows, 'agent_payouts_'+new Date().toISOString().split('T')[0]+'.csv');
+  toast('Exported payout summary for '+rows0.length+' agent(s)','success');
+}
+
 function renderCommissions() {
   var today = new Date();
+
+  // Create any commission records that were missed (see _autoBackfillCommissions)
+  _autoBackfillCommissions();
 
   // Deduplicate commissions — hide extras where same applicant+tranche+agent has multiple entries of any status
   // Keep the most relevant one per group; hide the rest
@@ -12700,29 +12892,20 @@ function renderCommissions() {
       agentNames.forEach(function(n){ var o=document.createElement('option'); o.value=n; o.text=n; agSel.appendChild(o); });
     }
 
-    var srch    = ((document.getElementById('comm-search')||{}).value||'').toLowerCase().trim();
-    var fTranche= (document.getElementById('comm-filter-tranche')||{}).value||'';
-    var fStatus = (document.getElementById('comm-filter-status')||{}).value||'';
-    var fAgent  = (document.getElementById('comm-filter-agent')||{}).value||'';
+    // Country dropdown — built from the countries present in commission records
+    var coSel = document.getElementById('comm-filter-country');
+    if (coSel) {
+      var _prevCo = coSel.value || '';
+      var countries = [...new Set(DB.commissions.map(function(cm){ return cm.country; }).filter(Boolean))]
+        .sort(function(a,b){ return a.toLowerCase().localeCompare(b.toLowerCase()); });
+      coSel.innerHTML = '<option value="">All Countries</option>' +
+        countries.map(function(c){ return '<option value="'+escapeHtml(c)+'">'+escapeHtml(c)+'</option>'; }).join('');
+      coSel.value = _prevCo;
+      if (coSel.value !== _prevCo) coSel.value = '';
+    }
 
-    var filtered = DB.commissions.filter(function(cm) {
-      if (cm._hideDuplicate) return false; // hide ghost reversed duplicates
-      if (fTranche && String(cm.tranche) !== fTranche) return false;
-      if (fStatus  && cm.status !== fStatus) return false;
-      if (fAgent) {
-        var ag = DB.agents.find(function(a){ return a.id===cm.agentId; });
-        if (!ag || ag.name !== fAgent) return false;
-      }
-      if (srch) {
-        var ag = DB.agents.find(function(a){ return a.id===cm.agentId; });
-        var agName = ag ? ag.name.toLowerCase() : '';
-        var appName = (cm.applicantName||'').toLowerCase();
-        var trLabel = (cm.trancheLabel||'').toLowerCase();
-        var status  = (cm.status||'').toLowerCase();
-        if (!agName.includes(srch) && !appName.includes(srch) && !trLabel.includes(srch) && !status.includes(srch)) return false;
-      }
-      return true;
-    }).sort(function(a,b){ return (b.triggerDate||'').localeCompare(a.triggerDate||''); });
+    var filtered = _getFilteredCommissions();
+    renderAgentPayoutSummary(filtered);
 
     var countEl = document.getElementById('comm-filter-count');
     if (countEl) countEl.textContent = filtered.length + ' of ' + DB.commissions.length + ' records';
@@ -16506,7 +16689,8 @@ function _pushStatusChangeNotif(app, newStatus, oldStatus) {
 }
 
 function clearCommissionFilters() {
-  var fields = ['comm-search','comm-filter-tranche','comm-filter-status','comm-filter-agent'];
+  var fields = ['comm-search','comm-filter-tranche','comm-filter-status','comm-filter-agent',
+                'comm-filter-country','comm-filter-from','comm-filter-to'];
   fields.forEach(function(id) {
     var el = document.getElementById(id);
     if (el) el.value = '';
@@ -16553,16 +16737,74 @@ function backfillJobStatuses() {
   });
 }
 
+// ── Automatic commission backfill ─────────────────────────────────────
+// Commissions normally fire on a live status change. Anything that bypasses
+// that path — records imported/synced from elsewhere, a status set before an
+// agent was assigned, or a change made while commissions hadn't loaded yet —
+// left no record, which is why Backfill had to be run by hand. This scans for
+// the same gaps automatically whenever the Commissions tab renders.
+var _autoBackfillBusy = false;
+var _autoBackfillLastRun = 0;
+
+function _autoBackfillCommissions() {
+  if (_autoBackfillBusy) return;
+  if (Date.now() - _autoBackfillLastRun < 10000) return; // at most every 10s
+  // Only run against fully-loaded data — a half-loaded page would look like
+  // "everything is missing" and create bogus records.
+  if (!DB.applicants || !DB.applicants.length) return;
+  if (!DB.agents || !DB.agents.length) return;
+  var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
+  if (isLive && !_lastFetch['commissions']) return; // commissions not fetched yet
+  if (typeof hasPermission === 'function' && !hasPermission('Manage Accounting')) return;
+
+  _autoBackfillBusy = true;
+  _autoBackfillLastRun = Date.now();
+  try {
+    var made = _createMissingCommissions();
+    if (made.total) {
+      autosave('commissions');
+      try { _triggerImmediateSync(); } catch(e) {}
+      addAudit('CREATE','Commissions','Auto-created '+made.total+' missing commission record(s)');
+      toast('⚡ '+made.total+' missing commission record(s) created automatically','info');
+      // Re-render so the new rows appear without another click
+      setTimeout(function(){ try { renderCommissions(); } catch(e){} }, 50);
+    }
+  } catch (e) {
+    console.warn('[auto-backfill]', e);
+  } finally {
+    _autoBackfillBusy = false;
+  }
+}
+
 function backfillCommissions() {
   if (!hasPermission('Manage Accounting')) { toast('Your role cannot manage accounting','error'); return; }
   if (!confirm('Scan all applicants with agents and create missing T1/T2/T3 commission records?\n\nExisting records will NOT be duplicated. Proceed?')) return;
+  var made = _createMissingCommissions();
+  autosave('commissions'); try{_triggerImmediateSync();}catch(e){}
+  if (!made.total) { toast('✅ All commission records are up to date','success'); }
+  else {
+    var lines=[];
+    if(made.created.T1.length) lines.push('T1 ×'+made.created.T1.length+': '+made.created.T1.slice(0,3).join(', ')+(made.created.T1.length>3?'...':''));
+    if(made.created.T2.length) lines.push('T2 ×'+made.created.T2.length+': '+made.created.T2.slice(0,3).join(', ')+(made.created.T2.length>3?'...':''));
+    if(made.created.T3.length) lines.push('T3 ×'+made.created.T3.length);
+    addAudit('CREATE','Commissions','Backfill: '+made.total+' records');
+    toast('✅ Created '+made.total+' commission records:\n'+lines.join('\n'),'success');
+  }
+  renderCommissions();
+}
+
+// Shared scan used by both the manual button and the automatic pass.
+function _createMissingCommissions() {
   var created={T1:[],T2:[],T3:[]}, skipped=0, today=new Date().toISOString().split('T')[0];
   DB.applicants.forEach(function(app) {
     var agent=DB.agents.find(function(a){ return a.id===app._agentDbId||a.id===app._agentId||a.id===app.agentId||a.name===app.agent; });
     if (!agent) { skipped++; return; }
     var appId=app.id||app._dbId, country=app.job?app.job.split('·').pop().trim():'';
     var rule=DB.countryRules.find(function(r){return r.country===country&&r.active;})||DB.countryRules.find(function(r){return r.active;});
-    var total=(agent.commissionAmt!=null&&agent.commissionAmt>0)?agent.commissionAmt:15000, currency=agent.commissionCurrency||'PHP';
+    // Honour the agent's per-country rate, matching the live commission path
+    var _rate = (typeof getAgentRateForCountry === 'function') ? getAgentRateForCountry(agent, country) : null;
+    var total    = _rate ? _rate.amount   : (rule ? rule.commissionAmt : 15000);
+    var currency = _rate ? _rate.currency : (rule ? (rule.commissionCurrency||'PHP') : 'PHP');
     var gp=rule?(rule.guaranteePeriod||6):6;
     var gEnd=(function(){ var d=new Date(); d.setMonth(d.getMonth()+gp); return d.toISOString().split('T')[0]; })();
     function _hasT(n){ return DB.commissions.some(function(c){ var idMatch=c.applicantId===appId||c.applicantId===(app._dbId||'')||c.applicantId===(app.id||''); var nameMatch=c.applicantName&&app.name&&c.applicantName.toLowerCase().trim()===app.name.toLowerCase().trim(); return (idMatch||nameMatch)&&c.tranche===n&&c.status!=='Reversed'; }); }
@@ -16581,13 +16823,8 @@ function backfillCommissions() {
       apiCreateCommission(t3).then(function(r){if(r&&r.ok&&r.data&&r.data.id){t3._dbId=r.data.id;t3.id=r.data.id;autosave('commissions');}}).catch(function(){});
     }
   });
-  autosave('commissions'); try{_triggerImmediateSync();}catch(e){}
-  var total_created=created.T1.length+created.T2.length+created.T3.length;
-  if (!total_created) { toast('✅ All commission records are up to date','success'); } else {
-    var lines=[]; if(created.T1.length) lines.push('T1 ×'+created.T1.length+': '+created.T1.slice(0,3).join(', ')+(created.T1.length>3?'...':'')); if(created.T2.length) lines.push('T2 ×'+created.T2.length+': '+created.T2.slice(0,3).join(', ')+(created.T2.length>3?'...':'')); if(created.T3.length) lines.push('T3 ×'+created.T3.length);
-    addAudit('CREATE','Commissions','Backfill: '+total_created+' records'); toast('✅ Created '+total_created+' commission records:\n'+lines.join('\n'),'success');
-  }
-  renderCommissions();
+  return { created: created, skipped: skipped,
+           total: created.T1.length + created.T2.length + created.T3.length };
 }
 
 
