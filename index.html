@@ -1334,6 +1334,9 @@ button[disabled][data-rbac-locked] {
         <select class="filter-select" id="app-joborder-filter" onchange="filterApplicants()" aria-label="Filter by job order" style="max-width:200px">
           <option value="">All Job Orders</option>
         </select>
+        <select class="filter-select" id="app-country-filter" onchange="filterApplicants()" aria-label="Filter by country" style="max-width:170px">
+          <option value="">All Countries</option>
+        </select>
         <div style="display:flex;gap:6px;margin-left:auto">
           <button class="btn btn-ghost btn-sm" onclick="clearFilters()" style="font-size:11.5px">Clear</button>
         </div>
@@ -7355,7 +7358,7 @@ function _reapplyFiltersIfActive() {
 }
 
 // ── Active filter state — source of truth, not the DOM ───────────────
-var _activeFilters = { q:'', s:'', a:'', m:'', jo:'' };
+var _activeFilters = { q:'', s:'', a:'', m:'', jo:'', c:'' };
 
 // ── Re-apply active filters after poll refresh ────────────────────────
 function _reapplyFiltersIfActive() {
@@ -7379,7 +7382,9 @@ function filterApplicants() {
   var m  = document.getElementById('app-medical-filter').value;
   var joEl = document.getElementById('app-joborder-filter');
   var jo = joEl ? joEl.value : '';
-  try { localStorage.setItem('rams:filters:applicants', JSON.stringify({q:q,s:s,a:a,m:m,jo:jo})); } catch(e){}
+  var cEl = document.getElementById('app-country-filter');
+  var c  = cEl ? cEl.value : '';
+  try { localStorage.setItem('rams:filters:applicants', JSON.stringify({q:q,s:s,a:a,m:m,jo:jo,c:c})); } catch(e){}
 
   // Build job matchIds set for employer-level filtering
   var matchIds = null;
@@ -7413,6 +7418,7 @@ function filterApplicants() {
       if (!x._jobOrderId) return false;
       if (!matchIds.has(x._jobOrderId)) return false;
     }
+    if (c && (x.destination || '') !== c) return false;
     return true;
   });
   appPage = 1;
@@ -7429,7 +7435,8 @@ function _restoreApplicantFilters() {
     el = document.getElementById('app-agent-filter');  if (el && f.a)  el.value = f.a;
     el = document.getElementById('app-medical-filter');if (el && f.m)  el.value = f.m;
     el = document.getElementById('app-joborder-filter');if(el && f.jo) el.value = f.jo;
-    var hasFilter = !!(f.q || f.s || f.a || f.m || f.jo);
+    el = document.getElementById('app-country-filter'); if (el && f.c)  el.value = f.c;
+    var hasFilter = !!(f.q || f.s || f.a || f.m || f.jo || f.c);
     // Re-apply the filter so the list updates — not just the dropdowns
     if (hasFilter) filterApplicants();
     return hasFilter;
@@ -7443,6 +7450,9 @@ function clearFilters() {
   document.getElementById('app-medical-filter').value = '';
   var jof = document.getElementById('app-joborder-filter');
   if (jof) jof.value = '';
+  var cof = document.getElementById('app-country-filter');
+  if (cof) cof.value = '';
+  _activeFilters.jo = ''; _activeFilters.c = '';
   try { localStorage.removeItem('rams:filters:applicants'); } catch(e){}
   filterApplicants();
 }
@@ -7750,7 +7760,7 @@ function renderApplicants() {
       var _se = document.getElementById('app-search');          if (_se && _ff.q && !_se.value) _se.value = _ff.q;
       var _ste= document.getElementById('app-status-filter');   if (_ste && _ff.s && !_ste.value) { _ste.value = _ff.s; syncStatusFilterUI(); }
       var _me = document.getElementById('app-medical-filter');  if (_me && _ff.m && !_me.value) _me.value = _ff.m;
-      // Agent + job order dropdowns are repopulated below — set after repopulation
+      // Agent + job order + country dropdowns are repopulated below — set after repopulation
     }
   } catch(e) {}
 
@@ -7808,6 +7818,34 @@ function renderApplicants() {
           var _fj2 = JSON.parse(localStorage.getItem('rams:filters:applicants')||'{}');
           _fj2.jo = '';
           localStorage.setItem('rams:filters:applicants', JSON.stringify(_fj2));
+        } catch(e) {}
+      }
+    }
+  }
+  // Populate country filter from the destinations present among scoped applicants
+  const countryFilter = document.getElementById('app-country-filter');
+  if (countryFilter) {
+    var countries = [...new Set(getScopedApplicants().map(function(a){ return a.destination; }).filter(Boolean))]
+      .sort(function(x,y){ return x.localeCompare(y); });
+    var _countryPrevVal = _activeFilters.c || countryFilter.value;
+    if (!_countryPrevVal) {
+      try { var _fc = JSON.parse(localStorage.getItem('rams:filters:applicants')||'{}'); _countryPrevVal = _fc.c||''; } catch(e){}
+    }
+    countryFilter.innerHTML = '<option value="">All Countries</option>';
+    countries.forEach(function(c) {
+      var o = document.createElement('option');
+      o.value = c; o.text = c;
+      countryFilter.appendChild(o);
+    });
+    if (_countryPrevVal) {
+      countryFilter.value = _countryPrevVal;
+      if (countryFilter.value !== _countryPrevVal) {
+        // Saved country no longer present in the data — clear it
+        _activeFilters.c = '';
+        try {
+          var _fc2 = JSON.parse(localStorage.getItem('rams:filters:applicants')||'{}');
+          _fc2.c = '';
+          localStorage.setItem('rams:filters:applicants', JSON.stringify(_fc2));
         } catch(e) {}
       }
     }
