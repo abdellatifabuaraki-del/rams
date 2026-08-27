@@ -6344,14 +6344,14 @@ function pushNotif(title, body, type, link) {
   }
 }
 
-// ── _checkStaleApplicants — alert when status unchanged for 14+ days ──────
+// ── _checkStaleApplicants — alert when status unchanged for 7+ days ───────
 function _checkStaleApplicants() {
   if (!_notifEnabled('Applicant Updates')) return;
   // Guard: don't run more than once per 60 seconds (prevents dual-login-handler double-fire)
   var _now = Date.now();
   if (window._lastStaleCheck && (_now - window._lastStaleCheck) < 60000) return;
   window._lastStaleCheck = _now;
-  var STALE_DAYS = 14;
+  var STALE_DAYS = 7; // "more than a week" in the same status
   var STALE_MS   = STALE_DAYS * 24 * 60 * 60 * 1000;
   var now        = Date.now();
   var today_str  = new Date().toISOString().slice(0, 10);
@@ -6359,19 +6359,24 @@ function _checkStaleApplicants() {
   // Skip terminal statuses — no action needed
   var TERMINAL = ['Deployed', 'Cancelled', 'Rejected', 'Blacklisted', 'Backout', 'Repatriated'];
 
+  // Respect the same viewer job-order scope used everywhere else — a Viewer
+  // should never be notified about an applicant outside their assigned scope.
+  // Returns DB.applicants unchanged for non-viewers, so this is a no-op for them.
+  var _scopedApplicants = getScopedApplicants();
+
   // Load last-notified map from Store (persist across sessions)
   if (!window._staleNotifiedMap) window._staleNotifiedMap = {};
 
   // Purge stale map entries for applicants now in a terminal status
   // so we don't carry dead entries forever
-  DB.applicants.forEach(function(a) {
+  _scopedApplicants.forEach(function(a) {
     if (TERMINAL.indexOf(a.status) !== -1 && window._staleNotifiedMap[a.id]) {
       delete window._staleNotifiedMap[a.id];
     }
   });
 
   var stale = [];
-  DB.applicants.forEach(function(a) {
+  _scopedApplicants.forEach(function(a) {
     if (TERMINAL.indexOf(a.status) !== -1) return; // skip terminal
 
     // Determine when status was last updated
