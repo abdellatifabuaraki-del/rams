@@ -1437,12 +1437,12 @@ button[disabled][data-rbac-locked] {
     ══════════════════════════════════════ -->
     <div class="page content-pad" id="page-analytics">
       <div class="pg-hdr">
-        <div class="pg-hdr-l"><h1>Analytics</h1><p>Performance metrics and recruitment insights.</p></div>
+        <div class="pg-hdr-l"><h1>Analytics</h1><p id="analytics-subtitle">Performance metrics and recruitment insights.</p></div>
         <div class="pg-hdr-r">
-          <select class="filter-select" aria-label="Date range">
-            <option>Last 30 days</option><option>Last 90 days</option><option>This Year</option>
+          <select class="filter-select" id="analytics-range" aria-label="Date range" onchange="renderAnalytics()">
+            <option value="30">Last 30 days</option><option value="90" selected>Last 90 days</option><option value="year">This Year</option><option value="all">All Time</option>
           </select>
-          <button class="btn btn-p btn-sm" onclick="exportData('analytics')">Export PDF</button>
+          <button class="btn btn-p btn-sm" onclick="exportAnalyticsPDF()">⬇ Export PDF</button>
         </div>
       </div>
       <div class="stat-grid" id="analytics-stats"></div>
@@ -1476,6 +1476,25 @@ button[disabled][data-rbac-locked] {
         <div class="card cp">
           <div style="font-size:14px;font-weight:800;margin-bottom:14px">Medical Pass Rate</div>
           <div id="analytics-medical"></div>
+        </div>
+      </div>
+
+      <div class="card cp" style="margin-top:18px">
+        <div style="font-size:14px;font-weight:800;margin-bottom:4px">⏱ Time to Deploy</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Days from application to deployment, for applicants deployed in the selected range</div>
+        <div id="analytics-ttd"></div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1.3fr 1fr;gap:18px;margin-top:18px">
+        <div class="card cp">
+          <div style="font-size:14px;font-weight:800;margin-bottom:4px">🔻 Pipeline Funnel &amp; Drop-off</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:14px">How far applicants who joined in this range have gotten, how long today's pipeline has been sitting per stage, and where backouts/rejections tend to originate</div>
+          <div id="analytics-funnel"></div>
+        </div>
+        <div class="card cp">
+          <div style="font-size:14px;font-weight:800;margin-bottom:4px">💰 Profitability</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Employer fees settled minus commissions released minus expenses, in the selected range</div>
+          <div id="analytics-profit"></div>
         </div>
       </div>
     </div>
@@ -9437,8 +9456,37 @@ function saveJob() {
 // ════════════════════════════════════════════════════════
 // ANALYTICS
 // ════════════════════════════════════════════════════════
+// Shared by every ranged widget on Analytics — reads #analytics-range and
+// returns { key, label, start } where start is a Date lower-bound or null
+// for "All Time". Exposed globally so exportAnalyticsPDF can reuse the exact
+// same window the screen is currently showing.
+function _analyticsRange() {
+  var el  = document.getElementById('analytics-range');
+  var key = el ? el.value : '90';
+  var now = new Date();
+  var start = null, label = 'All time';
+  if (key === '30') { start = new Date(now); start.setDate(start.getDate() - 30); label = 'Last 30 days'; }
+  else if (key === '90') { start = new Date(now); start.setDate(start.getDate() - 90); label = 'Last 90 days'; }
+  else if (key === 'year') { start = new Date(now.getFullYear(), 0, 1); label = 'This year (' + now.getFullYear() + ')'; }
+  return { key: key, label: label, start: start };
+}
+function _inRange(dateStr, start) {
+  if (!start) return true; // "All Time"
+  if (!dateStr) return false;
+  var d = new Date(dateStr);
+  return !isNaN(d) && d >= start;
+}
+
 function renderAnalytics() {
-  var apps      = DB.applicants;
+  var _range     = _analyticsRange();
+  // Respect the same viewer job-order scope used everywhere else in the app —
+  // a Viewer should only ever see analytics for applicants in their scope.
+  var _allScoped = getScopedApplicants();
+  // Cohort widgets (status mix, destinations, agent totals, medical, funnel)
+  // are filtered by APPLICATION date — "applicants who joined the pipeline
+  // in this window". Time-to-Deploy and Profitability use their own more
+  // relevant dates (deployment date / settlement date) further below.
+  var apps      = _range.start ? _allScoped.filter(function(a){ return _inRange(a.date, _range.start); }) : _allScoped;
   var total     = apps.length;
   var deployed  = apps.filter(function(a){ return a.status === 'Deployed'; }).length;
   var pipeline  = apps.filter(function(a){
@@ -9448,12 +9496,26 @@ function renderAnalytics() {
   var repatriated = apps.filter(function(a){ return a.status === 'Repatriated'; }).length;
   var rejected    = apps.filter(function(a){ return a.status === 'Rejected'; }).length;
   var conversion  = total ? Math.round(deployed / total * 100) : 0;
-  var totalExpPHP = DB.expenses.reduce(function(s,e){ return s + (e.amount||0); }, 0);
-  var totalExpUSD = getComputableFees(DB.employerFees).reduce(function(s,f){ return s + (f.feeUSD||0); }, 0);
-  var settledFees = DB.employerFees ? DB.employerFees.filter(function(f){ return f.status==='Settled'; }).reduce(function(s,f){ return s + (f.feeUSD||0); }, 0) : 0;
-  var openJobs    = DB.jobs.filter(function(j){ return j.status === 'Open' || j.status === 'In Progress'; });
+  var _isScopedViewer = getViewerScopedJobs() !== null;
+  var _scopedExpenses = (DB.expenses||[]).filter(function(e){
+    if (!e.applicantId) return !_isScopedViewer; // org-level expense — hide from viewers entirely (fail closed)
+    return _allScoped.some(function(a){ return a.id===e.applicantId || a._dbId===e.applicantId; });
+  });
+  var _scopedFees = (DB.employerFees||[]).filter(function(f){
+    return _allScoped.some(function(a){ return a.id===f.applicantId || a._dbId===f.applicantId; });
+  });
+  // KPI strip shows current all-time balances (like the Accounting Overview
+  // tab does) — the dedicated Profitability card below is where the selected
+  // date range actually applies to money.
+  var totalExpPHP = _scopedExpenses.reduce(function(s,e){ return s + (e.amount||0); }, 0);
+  var totalExpUSD = getComputableFees(_scopedFees).reduce(function(s,f){ return s + (f.feeUSD||0); }, 0);
+  var settledFees = _scopedFees.filter(function(f){ return f.status==='Settled'; }).reduce(function(s,f){ return s + (f.feeUSD||0); }, 0);
+  var openJobs    = getScopedJobs().filter(function(j){ return j.status === 'Open' || j.status === 'In Progress'; });
   var totalSlots  = openJobs.reduce(function(s,j){ return s + (parseInt(j.slots)||0); }, 0);
   var totalFilled = openJobs.reduce(function(s,j){ return s + (parseInt(j.filled)||0); }, 0);
+
+  var _subEl = document.getElementById('analytics-subtitle');
+  if (_subEl) _subEl.textContent = 'Performance metrics and recruitment insights — ' + _range.label + ' (' + total + ' applicant' + (total!==1?'s':'') + ')';
 
   // ── KPI Cards ────────────────────────────────────────────────────────
   document.getElementById('analytics-stats').innerHTML = [
@@ -9477,7 +9539,11 @@ function renderAnalytics() {
   for (var m = 11; m >= 0; m--) {
     var d = new Date(now.getFullYear(), now.getMonth() - m, 1);
     monthLabels.push(months[d.getMonth()] + (m === 0 || d.getMonth() === 0 ? ' ' + String(d.getFullYear()).slice(2) : ''));
-    var count = apps.filter(function(a) {
+    // This chart is a fixed trailing-12-month trend by design — intentionally
+    // NOT limited by the date-range selector above, so switching to "Last 30
+    // days" doesn't collapse it down to one bar. It always reads from the
+    // full scoped applicant list.
+    var count = _allScoped.filter(function(a) {
       if (a.status !== 'Deployed' || !a.deploymentDate) return false;
       var dd = new Date(a.deploymentDate);
       return dd.getFullYear() === d.getFullYear() && dd.getMonth() === d.getMonth();
@@ -9586,7 +9652,7 @@ function renderAnalytics() {
   var jobsEl = document.getElementById('analytics-jobs');
   if (jobsEl) {
     var employers = {};
-    DB.jobs.forEach(function(j) {
+    getScopedJobs().forEach(function(j) {
       if (!j.employer) return;
       if (!employers[j.employer]) employers[j.employer] = { employer: j.employer, slots: 0, filled: 0, status: j.status };
       employers[j.employer].slots  += parseInt(j.slots)  || 0;
@@ -9628,6 +9694,285 @@ function renderAnalytics() {
       '</div>';
     }).join('') : '<div style="color:var(--muted);font-size:12px">No medical data</div>';
   }
+
+  // ── Time to Deploy ───────────────────────────────────────────────────
+  var ttdEl = document.getElementById('analytics-ttd');
+  if (ttdEl) {
+    var deployedInRange = _allScoped.filter(function(a){
+      return a.status === 'Deployed' && _inRange(a.deploymentDate, _range.start);
+    });
+    var ttdRecords = deployedInRange.filter(function(a){ return a.date && a.deploymentDate; }).map(function(a){
+      var s = new Date(a.date).getTime();
+      var e = new Date(a.deploymentDate).getTime();
+      return { app: a, days: Math.round((e - s) / (1000*60*60*24)) };
+    }).filter(function(r){ return isFinite(r.days) && r.days >= 0; });
+
+    if (ttdRecords.length === 0) {
+      ttdEl.innerHTML = '<div style="color:var(--muted);font-size:12px">' +
+        (deployedInRange.length
+          ? deployedInRange.length + ' applicant' + (deployedInRange.length!==1?'s':'') + ' deployed in this range, but none have a recorded deployment date yet — use "Set Deployment Date" on an applicant to start tracking this.'
+          : 'No applicants deployed in this range.') +
+        '</div>';
+    } else {
+      var _days = ttdRecords.map(function(r){ return r.days; }).sort(function(a,b){ return a-b; });
+      var avgDays = Math.round(_days.reduce(function(s,d){ return s+d; }, 0) / _days.length);
+      var medianDays = _days.length % 2 === 1 ? _days[(_days.length-1)/2]
+        : Math.round((_days[_days.length/2 - 1] + _days[_days.length/2]) / 2);
+
+      var byAgentTTD = {};
+      ttdRecords.forEach(function(r){
+        var name = r.app.agent || '— Unassigned —';
+        if (!byAgentTTD[name]) byAgentTTD[name] = { name:name, sum:0, count:0 };
+        byAgentTTD[name].sum += r.days; byAgentTTD[name].count++;
+      });
+      var agentTTDRows = Object.values(byAgentTTD).map(function(g){ return { name:g.name, avg:Math.round(g.sum/g.count), count:g.count }; })
+        .sort(function(a,b){ return a.avg - b.avg; });
+
+      var byCountryTTD = {};
+      ttdRecords.forEach(function(r){
+        var c = r.app.destination || (r.app.job ? (r.app.job.split('·')[1]||'').trim() : '') || '— Unknown —';
+        if (!byCountryTTD[c]) byCountryTTD[c] = { name:c, sum:0, count:0 };
+        byCountryTTD[c].sum += r.days; byCountryTTD[c].count++;
+      });
+      var countryTTDRows = Object.values(byCountryTTD).map(function(g){ return { name:g.name, avg:Math.round(g.sum/g.count), count:g.count }; })
+        .sort(function(a,b){ return a.avg - b.avg; });
+
+      var _ttdKpi = function(l, v) {
+        return '<div style="background:var(--s2);border-radius:8px;padding:10px;text-align:center">' +
+          '<div style="font-size:18px;font-weight:800;font-family:\'IBM Plex Mono\',monospace;color:var(--brand)">' + v + '</div>' +
+          '<div style="font-size:10.5px;color:var(--muted);margin-top:2px">' + l + '</div></div>';
+      };
+      var _ttdTable = function(title, rows) {
+        var top = rows.slice(0, 6);
+        return '<div style="flex:1;min-width:180px">' +
+          '<div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.05em;margin-bottom:8px">' + title + '</div>' +
+          (top.length ? top.map(function(r){
+            return '<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px">' +
+              '<span style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60%">' + escapeHtml(r.name) + '</span>' +
+              '<span style="font-family:monospace;color:var(--muted)">' + r.avg + 'd <span style="color:var(--dim)">(' + r.count + ')</span></span>' +
+            '</div>';
+          }).join('') : '<div style="color:var(--muted);font-size:12px">No data</div>') +
+        '</div>';
+      };
+
+      ttdEl.innerHTML =
+        '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">' +
+          _ttdKpi('Average', avgDays + 'd') + _ttdKpi('Median', medianDays + 'd') +
+          _ttdKpi('Fastest', _days[0] + 'd') + _ttdKpi('Slowest', _days[_days.length-1] + 'd') +
+        '</div>' +
+        '<div style="display:flex;gap:24px;flex-wrap:wrap">' +
+          _ttdTable('FASTEST BY AGENT', agentTTDRows) + _ttdTable('FASTEST BY COUNTRY', countryTTDRows) +
+        '</div>' +
+        (ttdRecords.length < deployedInRange.length
+          ? '<div style="font-size:10.5px;color:var(--muted);margin-top:10px">Based on ' + ttdRecords.length + ' of ' + deployedInRange.length + ' deployments in range with a recorded deployment date.</div>'
+          : '');
+    }
+  }
+
+  // ── Pipeline Funnel, Dwell Time & Drop-off Origin ────────────────────
+  var funnelEl = document.getElementById('analytics-funnel');
+  if (funnelEl) {
+    var STAGES = ['For Selection','Applied','Screening','Interview','Medical','Processing','Visa','OWWA','Deployed'];
+    var stageIndex = {}; STAGES.forEach(function(s,i){ stageIndex[s] = i; });
+
+    var placed = 0, unplaced = 0;
+    var funnelCounts = STAGES.map(function(){ return 0; });
+    apps.forEach(function(a) {
+      var hist = a._stageHistory || [];
+      var maxIdx = -1;
+      hist.forEach(function(s){ if (stageIndex[s] !== undefined && stageIndex[s] > maxIdx) maxIdx = stageIndex[s]; });
+      if (maxIdx === -1 && stageIndex[a.status] !== undefined) maxIdx = stageIndex[a.status];
+      if (maxIdx === -1) { unplaced++; return; }
+      placed++;
+      for (var i = 0; i <= maxIdx; i++) funnelCounts[i]++;
+    });
+
+    var funnelHtml = STAGES.map(function(s, i) {
+      var v = funnelCounts[i];
+      var pct = placed ? Math.round(v / placed * 100) : 0;
+      return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">' +
+        '<span style="font-size:11px;font-weight:700;width:82px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + s + '</span>' +
+        '<div style="flex:1"><div class="prog-bar" style="height:8px"><div class="prog-fill" style="background:var(--brand);width:' + pct + '%"></div></div></div>' +
+        '<span style="font-size:11px;font-family:monospace;color:var(--muted);width:66px;text-align:right;flex-shrink:0">' + v + ' (' + pct + '%)</span>' +
+      '</div>';
+    }).join('');
+
+    // Dwell time — a live snapshot of TODAY's pipeline, intentionally not
+    // limited by the date-range selector (it's about where things sit now).
+    var TERMINAL_F = ['Deployed','Cancelled','Rejected','Blacklisted','Backout','Repatriated'];
+    var nowTs = Date.now();
+    var dwellGroups = {};
+    _allScoped.forEach(function(a) {
+      if (TERMINAL_F.indexOf(a.status) !== -1) return;
+      var ts = a._statusUpdatedAt || a._updatedAt || a.date || '';
+      if (!ts) return;
+      var changed = new Date(ts).getTime();
+      if (isNaN(changed)) return;
+      var days = Math.floor((nowTs - changed) / (1000*60*60*24));
+      if (!dwellGroups[a.status]) dwellGroups[a.status] = { status:a.status, sum:0, count:0 };
+      dwellGroups[a.status].sum += days; dwellGroups[a.status].count++;
+    });
+    var dwellRows = Object.values(dwellGroups).map(function(g){ return { status:g.status, avg:Math.round(g.sum/g.count), count:g.count }; })
+      .sort(function(a,b){ return b.avg - a.avg; });
+    var dwellHtml = dwellRows.length ? dwellRows.map(function(r) {
+      var warn = r.avg >= 7;
+      return '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:11.5px">' +
+        '<span style="font-weight:600">' + r.status + '</span>' +
+        '<span style="font-family:monospace;color:' + (warn ? 'var(--red)' : 'var(--muted)') + ';font-weight:' + (warn?'700':'400') + '">' + r.avg + 'd avg <span style="color:var(--dim)">(' + r.count + ')</span></span>' +
+      '</div>';
+    }).join('') : '<div style="color:var(--muted);font-size:12px">No active pipeline right now</div>';
+
+    // Where backouts/rejections in this cohort last were before dropping out
+    var originCounts = {};
+    var originUnknown = 0;
+    apps.forEach(function(a) {
+      if (a.status !== 'Backout' && a.status !== 'Rejected') return;
+      var hist = (a._stageHistory || []).filter(function(s){ return stageIndex[s] !== undefined; });
+      if (!hist.length) { originUnknown++; return; }
+      var lastStage = hist[hist.length - 1];
+      originCounts[lastStage] = (originCounts[lastStage] || 0) + 1;
+    });
+    var originEntries = Object.entries(originCounts).sort(function(a,b){ return b[1]-a[1]; });
+    var originTotal = originEntries.reduce(function(s,e){ return s+e[1]; }, 0) + originUnknown;
+    var originHtml = originTotal ? (originEntries.map(function(e) {
+      var pct = Math.round(e[1]/originTotal*100);
+      return '<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11.5px">' +
+        '<span>' + e[0] + '</span><span style="font-family:monospace;color:var(--muted)">' + e[1] + ' (' + pct + '%)</span></div>';
+    }).join('') + (originUnknown ? '<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11.5px;color:var(--dim)"><span>Unknown (older record, no stage history)</span><span style="font-family:monospace">' + originUnknown + '</span></div>' : ''))
+      : '<div style="color:var(--muted);font-size:12px">No backouts/rejections in this range</div>';
+
+    funnelEl.innerHTML =
+      '<div style="margin-bottom:14px">' + funnelHtml +
+      (unplaced ? '<div style="font-size:10.5px;color:var(--muted);margin-top:4px">+' + unplaced + ' applicant' + (unplaced!==1?'s':'') + ' with no stage history to place</div>' : '') +
+      '</div>' +
+      '<div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.05em;margin-bottom:6px;border-top:1px solid var(--border);padding-top:12px">TIME IN CURRENT STAGE (live)</div>' +
+      dwellHtml +
+      '<div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.05em;margin:14px 0 6px;border-top:1px solid var(--border);padding-top:12px">WHERE BACKOUTS / REJECTIONS ORIGINATE</div>' +
+      originHtml;
+  }
+
+  // ── Profitability ─────────────────────────────────────────────────────
+  var profitEl = document.getElementById('analytics-profit');
+  if (profitEl) {
+    var _fx = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
+    var _toUSD = function(phpAmt) { return phpAmt / _fx; };
+    var _employerForApp = function(a) {
+      if (!a) return '';
+      if (a._jobOrderId) {
+        var j = DB.jobs.find(function(x){ return x.id===a._jobOrderId || x._dbId===a._jobOrderId; });
+        if (j && j.employer) return j.employer;
+      }
+      var f = _scopedFees.find(function(x){ return x.applicantId===a.id || x.applicantId===a._dbId; });
+      return f ? f.employer : '';
+    };
+    var _findApp = function(c) {
+      return _allScoped.find(function(x){
+        return x.id===c.applicantId || x._dbId===c.applicantId ||
+          (c.applicantName && x.name && x.name.toLowerCase()===c.applicantName.toLowerCase());
+      });
+    };
+
+    var settledInRange = _scopedFees.filter(function(f){ return f.status==='Settled' && _inRange(f.settledAt, _range.start); });
+    var releasedComms  = (DB.commissions||[]).filter(function(c){
+      return c.status === 'Released' && _inRange(c.releaseDate, _range.start) && !!_findApp(c);
+    });
+    var expensesInRange = _scopedExpenses.filter(function(e){ return _inRange(e.date, _range.start); });
+
+    var totalFeesUSD = settledInRange.reduce(function(s,f){ return s + (f.feeUSD||0); }, 0);
+    var totalCommUSD = releasedComms.reduce(function(s,c){ return s + (c.currency==='USD' ? c.amount : _toUSD(c.amount)); }, 0);
+    var totalExpUSD2 = expensesInRange.reduce(function(s,e){ return s + _toUSD(e.amount||0); }, 0);
+    var netMargin    = totalFeesUSD - totalCommUSD - totalExpUSD2;
+    var marginPct    = totalFeesUSD ? Math.round(netMargin / totalFeesUSD * 100) : null;
+
+    var byEmployer = {};
+    var _touchEmp = function(k){ if (!byEmployer[k]) byEmployer[k] = { name:k, fees:0, comm:0, exp:0 }; return byEmployer[k]; };
+    settledInRange.forEach(function(f){ _touchEmp(f.employer || '— Unknown —').fees += f.feeUSD||0; });
+    releasedComms.forEach(function(c){
+      var k = _employerForApp(_findApp(c)) || '— Unknown —';
+      _touchEmp(k).comm += (c.currency==='USD' ? c.amount : _toUSD(c.amount));
+    });
+    expensesInRange.forEach(function(e){
+      var a = _allScoped.find(function(x){ return x.id===e.applicantId || x._dbId===e.applicantId; });
+      _touchEmp(_employerForApp(a) || '— Unknown —').exp += _toUSD(e.amount||0);
+    });
+    var employerRows = Object.values(byEmployer).map(function(g){
+      return { name:g.name, fees:g.fees, comm:g.comm, exp:g.exp, net: g.fees - g.comm - g.exp };
+    }).sort(function(a,b){ return b.fees - a.fees; }).slice(0, 6);
+
+    var _profKpi = function(l, v, c) {
+      return '<div style="background:var(--s2);border-radius:8px;padding:10px;text-align:center">' +
+        '<div style="font-size:15px;font-weight:800;font-family:\'IBM Plex Mono\',monospace;color:' + c + '">' + v + '</div>' +
+        '<div style="font-size:10.5px;color:var(--muted);margin-top:2px">' + l + '</div></div>';
+    };
+    var tableHtml = employerRows.length ? employerRows.map(function(r) {
+      return '<div style="padding:6px 0;border-bottom:1px solid var(--border)">' +
+        '<div style="display:flex;justify-content:space-between;font-size:12px;font-weight:700;margin-bottom:2px">' +
+          '<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60%">' + escapeHtml(r.name) + '</span>' +
+          '<span style="font-family:monospace;color:' + (r.net>=0?'var(--green)':'var(--red)') + '">$' + Math.round(r.net).toLocaleString() + '</span>' +
+        '</div>' +
+        '<div style="font-size:10.5px;color:var(--muted)">fees $' + Math.round(r.fees).toLocaleString() + ' · commissions $' + Math.round(r.comm).toLocaleString() + ' · expenses $' + Math.round(r.exp).toLocaleString() + '</div>' +
+      '</div>';
+    }).join('') : '<div style="color:var(--muted);font-size:12px">No settled fees in this range</div>';
+
+    profitEl.innerHTML =
+      '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px">' +
+        _profKpi('Fees Collected', '$'+Math.round(totalFeesUSD).toLocaleString(), 'var(--green)') +
+        _profKpi('Commissions Paid', '$'+Math.round(totalCommUSD).toLocaleString(), 'var(--red)') +
+        _profKpi('Expenses', '$'+Math.round(totalExpUSD2).toLocaleString(), 'var(--red)') +
+        _profKpi('Net Margin', '$'+Math.round(netMargin).toLocaleString() + (marginPct!==null ? ' ('+marginPct+'%)' : ''), netMargin>=0?'var(--green)':'var(--red)') +
+      '</div>' +
+      '<div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.05em;margin-bottom:6px">BY EMPLOYER</div>' +
+      tableHtml +
+      '<div style="font-size:10px;color:var(--dim);margin-top:10px">Converted to USD at ₱' + _fx + '/$ · commissions and expenses matched to an employer via each applicant\'s linked job order</div>';
+  }
+}
+
+// ── Export PDF — same technique as printInvoice(): open a print-ready
+// window with the currently-rendered analytics content and hand off to the
+// browser's native Print-to-PDF, rather than faking it with a toast or
+// pulling in an external PDF library. Reads straight from the live DOM so
+// the export always matches exactly what's on screen, including whatever
+// date range is currently selected.
+function exportAnalyticsPDF() {
+  var grab = function(id) { var el = document.getElementById(id); return el ? el.innerHTML : ''; };
+  var subtitle = (document.getElementById('analytics-subtitle') || {}).textContent || '';
+  var section = function(title, html, empty) {
+    return '<div style="margin-bottom:26px;page-break-inside:avoid">' +
+      '<div style="font-size:13px;font-weight:800;margin-bottom:8px;border-bottom:2px solid #111;padding-bottom:4px">' + title + '</div>' +
+      (html && html.trim() ? html : '<div style="color:#888;font-size:11px">' + (empty||'No data') + '</div>') +
+      '</div>';
+  };
+  var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>RAMS Analytics Report</title>' +
+    '<style>' +
+      'body{font-family:Arial,Helvetica,sans-serif;margin:32px;color:#111;font-size:12px}' +
+      'h1{font-size:20px;margin:0 0 2px}' +
+      '.sub{color:#555;font-size:12px;margin-bottom:24px}' +
+      '.prog-bar{background:#e5e7eb;border-radius:4px;overflow:hidden}' +
+      '.prog-fill{height:100%}' +
+      '.stat-grid,[style*="grid-template-columns"]{display:block !important}' + // flatten card grids for print
+      '.stat-card{display:inline-block;width:22%;margin:0 1.5% 12px 0;vertical-align:top;border:1px solid #ddd;border-radius:8px;padding:10px}' +
+      '.stat-icon{display:none}' +
+      'a{color:inherit;text-decoration:none}' +
+      '@media print{ body{margin:14mm} }' +
+    '</style></head><body>' +
+    '<h1>RAMS Analytics Report</h1>' +
+    '<div class="sub">' + escapeHtml(subtitle) + ' · Generated ' + new Date().toLocaleString() + '</div>' +
+    section('Key Metrics', grab('analytics-stats')) +
+    section('Status Breakdown', grab('analytics-breakdown')) +
+    section('Top Destinations', grab('analytics-destinations')) +
+    section('Agent Performance', grab('analytics-agents')) +
+    section('Job Order Fill Rate', grab('analytics-jobs')) +
+    section('Medical Pass Rate', grab('analytics-medical')) +
+    section('Time to Deploy', grab('analytics-ttd')) +
+    section('Pipeline Funnel & Drop-off', grab('analytics-funnel')) +
+    section('Profitability', grab('analytics-profit')) +
+    '</body></html>';
+  var w = window.open('', '_blank');
+  if (!w) { toast('Pop-up blocked — allow pop-ups to export the PDF', 'error'); return; }
+  w.document.write(html);
+  w.document.close();
+  w.focus();
+  setTimeout(function(){ w.print(); }, 400);
 }
 
 function filterExpenses(q) {
@@ -11265,7 +11610,7 @@ function exportCSV(rows, name) {
   toast(`Exported ${rows.length} records to CSV`, 'success');
 }
 function exportData(type) {
-  const map = {applicants:()=>exportCSV(DB.applicants,'applicants'), accounting:()=>exportCSV(DB.expenses,'expenses'), audit:()=>exportCSV(DB.auditLog,'audit_log'), jobs:()=>exportCSV(DB.jobs,'job_orders'), roles:()=>exportCSV(DB.auditLog,'roles'),  analytics:()=>toast('Analytics PDF export initiated','info'), dashboard:()=>exportCSV(DB.applicants,'dashboard_report'), pipeline:()=>exportCSV(DB.applicants,'pipeline'), docs:()=>exportCSV(DB.documents,'documents')};
+  const map = {applicants:()=>exportCSV(DB.applicants,'applicants'), accounting:()=>exportCSV(DB.expenses,'expenses'), audit:()=>exportCSV(DB.auditLog,'audit_log'), jobs:()=>exportCSV(DB.jobs,'job_orders'), roles:()=>exportCSV(DB.auditLog,'roles'),  analytics:()=>exportAnalyticsPDF(), dashboard:()=>exportCSV(DB.applicants,'dashboard_report'), pipeline:()=>exportCSV(DB.applicants,'pipeline'), docs:()=>exportCSV(DB.documents,'documents')};
   if (map[type]) map[type](); else toast('Export initiated','info');
 }
 
