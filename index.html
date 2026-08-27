@@ -2765,6 +2765,16 @@ button[disabled][data-rbac-locked] {
             </select>
           </div>
         </div>
+        <div class="form-row">
+          <div class="form-group" style="display:flex;align-items:center;gap:10px;padding-top:6px">
+            <button type="button" class="toggle on" id="j-post-website-toggle" onclick="_toggleJobPostWebsite()" aria-label="Post to goldenfaith.net" aria-pressed="true"></button>
+            <div>
+              <div style="font-size:13px;font-weight:600;color:var(--text)">Post on goldenfaith.net</div>
+              <div style="font-size:11px;color:var(--muted)">When on, this job order appears on the public careers page while Open/In Progress with open slots. Turn off to keep it internal-only.</div>
+            </div>
+            <input type="hidden" id="j-post-website" value="true">
+          </div>
+        </div>
       </div>
 
       <!-- Positions List -->
@@ -3334,6 +3344,7 @@ function mapJob(row) {
     category:       row.category || '',
     deadline:       row.deadline ? row.deadline.slice(0, 10) : '',
     employerFeeUSD: parseFloat(row.employer_fee_usd || row.employerFeeUSD) || 0,
+    postToWebsite:  row.post_to_website !== false, // default true — matches DB column default
     _dbId:          row.id,
   };
 }
@@ -3482,6 +3493,7 @@ async function apiCreateJob(data) {
     deadline:         (data.deadline && data.deadline !== 'TBD') ? data.deadline : null,
     employer_fee_usd: parseFloat(data.employerFeeUSD) || 0,
     category:         data.category || null,
+    post_to_website:  data.postToWebsite !== false,
   };
   var r = await apiFetch('/jobs', { method: 'POST', body: JSON.stringify(payload) });
   if (r.ok) { data._dbId = r.data.id; data.id = r.data.id; }
@@ -3505,6 +3517,7 @@ async function apiUpdateJob(data) {
       deadline:         (data.deadline && data.deadline !== 'TBD') ? data.deadline : null,
       employer_fee_usd: parseFloat(data.employerFeeUSD) || 0,
       category:         data.category || null,
+      post_to_website:  data.postToWebsite !== false,
     })
   });
 }
@@ -9089,6 +9102,9 @@ function renderJobs() {
             `<div style="height:6px;background:var(--border);border-radius:4px;width:120px;overflow:hidden"><div style="height:100%;border-radius:4px;background:${pColor};width:${pct}%;transition:width .4s ease"></div></div>`+
           `</div>`+
           `${pillHtml(grp.status)}`+
+          (grp.positions[0].postToWebsite === false
+            ? `<span style="font-size:10.5px;font-weight:700;color:var(--muted);background:var(--s2);border:1px solid var(--border);border-radius:20px;padding:3px 9px" title="Not shown on goldenfaith.net">🔒 Internal only</span>`
+            : `<span style="font-size:10.5px;font-weight:700;color:var(--brand);background:var(--brand-l);border-radius:20px;padding:3px 9px" title="Visible on goldenfaith.net when Open/In Progress with open slots">🌐 On website</span>`)+
           `<div onclick="event.stopPropagation()" style="display:flex;gap:6px">`+
             `<button class="btn btn-s btn-xs" onclick="openEditJob('${grp.positions[0].id}')" style="color:var(--brand);border-color:var(--brand);font-size:11.5px;gap:4px">✏ Edit</button>`+
           `</div>`+
@@ -9161,6 +9177,17 @@ function _renderPositionRow(pos) {
   return div;
 }
 
+function _toggleJobPostWebsite() {
+  var btn = document.getElementById('j-post-website-toggle');
+  var hid = document.getElementById('j-post-website');
+  var on  = hid.value !== 'true'; // flip
+  hid.value = on ? 'true' : 'false';
+  if (btn) {
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+}
+
 function addJobPosition(pos) {
   var list  = document.getElementById('j-positions-list');
   var empty = document.getElementById('j-positions-empty');
@@ -9202,6 +9229,10 @@ function _resetJobModal() {
   document.getElementById('j-status').value     = 'Open';
   document.getElementById('j-positions-list').innerHTML = '';
   document.getElementById('j-positions-empty').style.display = 'block';
+  // Default to "on" — new job orders are public unless explicitly turned off
+  document.getElementById('j-post-website').value = 'true';
+  var _pwBtn = document.getElementById('j-post-website-toggle');
+  if (_pwBtn) { _pwBtn.classList.add('on'); _pwBtn.setAttribute('aria-pressed', 'true'); }
   _posRowIdx = 0;
 }
 
@@ -9231,6 +9262,10 @@ function openEditJob(jobId) {
   document.getElementById('j-category').value           = job.category || '';
   document.getElementById('j-deadline').value           = (job.deadline && job.deadline !== 'TBD') ? job.deadline : '';
   document.getElementById('j-status').value             = job.status   || 'Open';
+  var _pwOn = job.postToWebsite !== false;
+  document.getElementById('j-post-website').value = _pwOn ? 'true' : 'false';
+  var _pwBtn2 = document.getElementById('j-post-website-toggle');
+  if (_pwBtn2) { _pwBtn2.classList.toggle('on', _pwOn); _pwBtn2.setAttribute('aria-pressed', _pwOn ? 'true' : 'false'); }
 
   // Load all positions for this employer (same employer + country)
   var siblings = DB.jobs.filter(function(j){
@@ -9251,6 +9286,7 @@ function saveJob() {
   var category = (document.getElementById('j-category') || {}).value || '';
   var deadline = document.getElementById('j-deadline').value || 'TBD';
   var status   = document.getElementById('j-status').value || 'Open';
+  var postToWebsite = (document.getElementById('j-post-website') || {}).value !== 'false';
   var editId   = document.getElementById('j-edit-id').value;
   var editDbId = document.getElementById('j-edit-dbid').value;
 
@@ -9309,6 +9345,7 @@ function saveJob() {
         existingPos.category       = category;
         existingPos.deadline       = deadline;
         existingPos.status         = status;
+        existingPos.postToWebsite  = postToWebsite;
         apiUpdateJob(existingPos).catch(function(e){ console.warn('PATCH job failed', e); });
 
       } else {
@@ -9318,6 +9355,7 @@ function saveJob() {
           deadline: deadline, status: status, title: pos.title,
           slots: pos.slots, filled: pos.filled,
           salary: pos.salary || 'TBD', employerFeeUSD: pos.employerFeeUSD || 0,
+          postToWebsite: postToWebsite,
         };
         DB.jobs.unshift(newJob);
         apiCreateJob(newJob).then(function(r){
@@ -9368,6 +9406,7 @@ function saveJob() {
         filled:         pos.filled,
         salary:         pos.salary || 'TBD',
         employerFeeUSD: pos.employerFeeUSD || 0,
+        postToWebsite:  postToWebsite,
       };
       DB.jobs.unshift(newJob);
       apiCreateJob(newJob).then(function(r){
