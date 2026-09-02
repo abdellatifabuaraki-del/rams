@@ -1337,6 +1337,11 @@ button[disabled][data-rbac-locked] {
         <select class="filter-select" id="app-country-filter" onchange="filterApplicants()" aria-label="Filter by country" style="max-width:170px">
           <option value="">All Countries</option>
         </select>
+        <select class="filter-select" id="app-category-filter" onchange="filterApplicants()" aria-label="Filter by category" style="max-width:150px">
+          <option value="">All Categories</option>
+          <option value="Skilled">Skilled</option>
+          <option value="Household">Household</option>
+        </select>
         <div style="display:flex;gap:6px;margin-left:auto">
           <button class="btn btn-ghost btn-sm" onclick="clearFilters()" style="font-size:11.5px">Clear</button>
         </div>
@@ -7433,7 +7438,9 @@ function filterApplicants() {
   var jo = joEl ? joEl.value : '';
   var cEl = document.getElementById('app-country-filter');
   var c  = cEl ? cEl.value : '';
-  try { localStorage.setItem('rams:filters:applicants', JSON.stringify({q:q,s:s,a:a,m:m,jo:jo,c:c})); } catch(e){}
+  var catEl = document.getElementById('app-category-filter');
+  var cat = catEl ? catEl.value : '';
+  try { localStorage.setItem('rams:filters:applicants', JSON.stringify({q:q,s:s,a:a,m:m,jo:jo,c:c,cat:cat})); } catch(e){}
 
   // Build job matchIds set for employer-level filtering
   var matchIds = null;
@@ -7468,6 +7475,7 @@ function filterApplicants() {
       if (!matchIds.has(x._jobOrderId)) return false;
     }
     if (c && (x.destination || '') !== c) return false;
+    if (cat && (x.category || '') !== cat) return false;
     return true;
   });
   appPage = 1;
@@ -7485,7 +7493,8 @@ function _restoreApplicantFilters() {
     el = document.getElementById('app-medical-filter');if (el && f.m)  el.value = f.m;
     el = document.getElementById('app-joborder-filter');if(el && f.jo) el.value = f.jo;
     el = document.getElementById('app-country-filter'); if (el && f.c)  el.value = f.c;
-    var hasFilter = !!(f.q || f.s || f.a || f.m || f.jo || f.c);
+    el = document.getElementById('app-category-filter');if (el && f.cat) el.value = f.cat;
+    var hasFilter = !!(f.q || f.s || f.a || f.m || f.jo || f.c || f.cat);
     // Re-apply the filter so the list updates — not just the dropdowns
     if (hasFilter) filterApplicants();
     return hasFilter;
@@ -7501,6 +7510,8 @@ function clearFilters() {
   if (jof) jof.value = '';
   var cof = document.getElementById('app-country-filter');
   if (cof) cof.value = '';
+  var catf = document.getElementById('app-category-filter');
+  if (catf) catf.value = '';
   _activeFilters.jo = ''; _activeFilters.c = '';
   try { localStorage.removeItem('rams:filters:applicants'); } catch(e){}
   filterApplicants();
@@ -8114,20 +8125,27 @@ function saveApplicant() {
 
   const editId = document.getElementById('a-name').dataset.editId;
 
-  // ── Required field validation — enforced for NEW applicants only ────────
+  // ── Category — required on both create AND edit. No applicant record,
+  // new or existing, can be saved without one. ───────────────────────────
+  var categoryEl = document.getElementById('a-category');
+  if (categoryEl && !categoryEl.value) {
+    categoryEl.classList.add('error');
+    toast('Please fill in: Category', 'error');
+    return;
+  } else if (categoryEl) {
+    categoryEl.classList.remove('error');
+  }
+
+  // ── Remaining required fields — enforced for NEW applicants only ────────
   // Existing applicants encoded before these fields were required can still
   // be edited and saved without filling them in (to avoid blocking staff).
   if (!editId) {
     var genderEl   = document.getElementById('a-gender');
-    var categoryEl = document.getElementById('a-category');
     var dobEl      = document.getElementById('a-dob');
 
     var missingFields = [];
     if (genderEl && !genderEl.value)     { missingFields.push('Gender');        genderEl.classList.add('error'); }
     else if (genderEl)                   { genderEl.classList.remove('error'); }
-
-    if (categoryEl && !categoryEl.value) { missingFields.push('Category');      categoryEl.classList.add('error'); }
-    else if (categoryEl)                 { categoryEl.classList.remove('error'); }
 
     if (dobEl && !dobEl.value)           { missingFields.push('Date of Birth'); dobEl.classList.add('error'); }
     else if (dobEl)                      { dobEl.classList.remove('error'); }
