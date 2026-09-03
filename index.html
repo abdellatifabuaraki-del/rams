@@ -1091,6 +1091,7 @@ button[disabled][data-rbac-locked] {
   <div class="sb-section">
     <div class="sb-sec-lbl">Workspace</div>
     <div class="sb-item" onclick="go('chat',this)" data-page="chat"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="sb-label">Chat</span><span class="sb-badge amber" id="sb-chat-count" style="display:none">0</span></div>
+    <div class="sb-item" onclick="go('whatsapp',this)" data-page="whatsapp"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 0 0-8.5 15.2L2 22l4.9-1.5A10 10 0 1 0 12 2z"/><path d="M8.5 8.5c0 4 3 7 7 7"/></svg><span class="sb-label">WhatsApp</span><span class="sb-badge amber" id="sb-wa-count" style="display:none">0</span></div>
     <div class="sb-item" onclick="go('integrations',this)" data-page="integrations"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><line x1="12" y1="8" x2="5" y2="16"/><line x1="12" y1="8" x2="19" y2="16"/></svg><span class="sb-label">Integrations</span></div>
 
     <div class="sb-item" onclick="go('roles',this)" data-page="roles"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg><span class="sb-label">Roles & Permissions</span></div>
@@ -2450,6 +2451,109 @@ button[disabled][data-rbac-locked] {
     </div>
 
     <!-- ══════════════════════════════════════
+         WHATSAPP INBOX
+    ══════════════════════════════════════ -->
+    <div class="page" id="page-whatsapp" style="flex-direction:column;height:calc(100vh - 56px);overflow:hidden;padding:0;position:relative">
+
+      <!-- Not-connected banner -->
+      <div id="wa-inbox-disconnected" style="display:none;padding:10px 16px;background:#FEF3C7;color:#92400E;font-size:12.5px;display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid var(--border)">
+        <span>WhatsApp Business isn't connected yet — connect it to start sending and receiving messages.</span>
+        <button class="btn btn-s btn-xs" onclick="go('integrations')">Go to Integrations</button>
+      </div>
+
+      <div style="display:flex;flex:1;overflow:hidden">
+
+        <!-- Sidebar: Conversations -->
+        <div id="wa-sidebar" style="width:280px;flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column;background:var(--surface);overflow:hidden">
+          <div style="padding:14px 12px 10px;border-bottom:1px solid var(--border)">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+              <div style="font-size:14px;font-weight:800">🟢 WhatsApp</div>
+              <button onclick="openWaWebhookSetup()" id="wa-webhook-setup-btn" class="btn btn-ghost btn-xs" title="Webhook setup">⚙️</button>
+            </div>
+            <div style="position:relative">
+              <svg style="position:absolute;left:8px;top:50%;transform:translateY(-50%);color:var(--muted)" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input id="wa-search" type="text" placeholder="Search conversations…" oninput="renderWaConversationList()" style="width:100%;padding:6px 8px 6px 26px;border:1.5px solid var(--border);border-radius:7px;font-size:12px;background:var(--s2);color:var(--text);outline:none">
+            </div>
+          </div>
+          <div id="wa-conv-list" style="flex:1;overflow-y:auto;padding:6px 0"></div>
+          <div id="wa-conv-empty" style="display:none;padding:24px 16px;text-align:center;color:var(--muted);font-size:12.5px">No conversations yet. Messages from applicants will show up here.</div>
+        </div>
+
+        <!-- Main thread -->
+        <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--surface)">
+
+          <div id="wa-thread-empty" style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px;flex-direction:column;gap:8px">
+            <div style="font-size:32px">💬</div>
+            <div>Select a conversation to view messages</div>
+          </div>
+
+          <div id="wa-thread" style="display:none;flex-direction:column;flex:1;overflow:hidden">
+            <div id="wa-thread-header" style="padding:11px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;background:var(--surface);flex-shrink:0">
+              <div style="width:32px;height:32px;border-radius:8px;background:#25D366;color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;flex-shrink:0">🟢</div>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:14px;font-weight:800" id="wa-thread-name">—</div>
+                <div style="font-size:11px;color:var(--muted)" id="wa-thread-number">—</div>
+              </div>
+            </div>
+
+            <div id="wa-msgs" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:6px"></div>
+
+            <!-- Outside-24h-window notice -->
+            <div id="wa-window-notice" style="display:none;padding:8px 16px;font-size:11.5px;color:#92400E;background:#FEF3C7;border-top:1px solid var(--border)">
+              This conversation is outside WhatsApp's 24-hour reply window — only pre-approved template messages can be sent now (set up in Meta Business Manager). Free-form replies will resume once the applicant messages in again.
+            </div>
+
+            <div style="border-top:1px solid var(--border);padding:10px 14px;flex-shrink:0;background:var(--surface)">
+              <div style="display:flex;align-items:flex-end;gap:8px">
+                <textarea id="wa-input" rows="1" placeholder="Type a message… (Enter to send)" onkeydown="waInputKeydown(event)" style="flex:1;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13.5px;resize:none;outline:none;background:var(--s2);color:var(--text);font-family:inherit;line-height:1.4;box-sizing:border-box"></textarea>
+                <button onclick="sendWaMessage()" id="wa-send-btn" style="padding:9px 14px;background:#25D366;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:700;flex-shrink:0">➤ Send</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- WhatsApp Webhook Setup Modal -->
+    <div id="overlay-wa-webhook" class="overlay" onclick="closeOverlayIfBg(event,'overlay-wa-webhook')" style="display:none">
+      <div class="modal" style="max-width:460px">
+        <div class="modal-hdr">
+          <div><h2>WhatsApp Webhook Setup</h2><p>Paste these into Meta's App Dashboard → WhatsApp → Configuration.</p></div>
+          <button class="close-btn" onclick="closeOverlay('overlay-wa-webhook')">✕</button>
+        </div>
+        <div class="modal-body">
+          <div id="wa-webhook-not-connected" style="display:none;font-size:12.5px;color:var(--muted)">Connect WhatsApp from Integrations first — the webhook URL and verify token are generated on connect.</div>
+          <div id="wa-webhook-fields">
+            <div class="form-group">
+              <label class="form-label">Webhook Callback URL</label>
+              <div style="display:flex;gap:6px">
+                <input type="text" id="wa-webhook-url" class="form-input" readonly style="font-family:monospace;font-size:11.5px">
+                <button class="btn btn-s btn-xs" onclick="_copyWaField('wa-webhook-url')">Copy</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Verify Token</label>
+              <div style="display:flex;gap:6px">
+                <input type="text" id="wa-webhook-token" class="form-input" readonly style="font-family:monospace;font-size:11.5px">
+                <button class="btn btn-s btn-xs" onclick="_copyWaField('wa-webhook-token')">Copy</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">App Secret (optional — verifies inbound events are really from Meta)</label>
+              <input type="password" id="wa-webhook-secret" class="form-input" placeholder="Leave blank to skip signature verification">
+              <div style="font-size:10.5px;color:var(--muted);margin-top:3px" id="wa-webhook-secret-hint"></div>
+            </div>
+          </div>
+          <div id="wa-webhook-error" style="display:none;color:var(--red);font-size:12px;margin-top:6px"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="closeOverlay('overlay-wa-webhook')">Close</button>
+          <button class="btn btn-p" id="wa-webhook-save-btn" onclick="saveWaWebhookConfig()">Save App Secret</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════
          BILLING
     ══════════════════════════════════════ -->
     
@@ -2894,6 +2998,59 @@ button[disabled][data-rbac-locked] {
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="closeOverlay('overlay-doc')">Cancel</button>
       <button class="btn btn-p" onclick="saveDoc()" id="save-doc-btn">Upload Document</button>
+    </div>
+  </div>
+</div>
+
+<!-- WhatsApp Business Connect -->
+<div class="overlay" id="overlay-whatsapp" onclick="closeOverlayIfBg(event,'overlay-whatsapp')" role="dialog" aria-modal="true" aria-label="Connect WhatsApp Business">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-hdr">
+      <div>
+        <h2>🟢 WhatsApp Business</h2>
+        <p>Connect your WhatsApp Business Platform account to message applicants.</p>
+      </div>
+      <button class="close-btn" onclick="closeOverlay('overlay-whatsapp')" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="wa-error" style="display:none;background:var(--rbg);color:var(--red);border:1px solid #fca5a5;border-radius:8px;padding:10px 12px;font-size:12.5px;margin-bottom:14px"></div>
+
+      <!-- Connect form (shown when not connected) -->
+      <div id="wa-form-view">
+        <div style="background:var(--s2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:12px;color:var(--muted);line-height:1.6">
+          Get these from <strong>Meta Business Suite → WhatsApp → API Setup</strong> for a phone number already registered on the WhatsApp Business Platform. The access token is verified against Meta before anything is saved, and is never shown again once connected.
+        </div>
+        <div class="form-group">
+          <label class="form-label">Phone Number ID <span class="req">*</span></label>
+          <input type="text" class="form-input" id="wa-phone-id" placeholder="e.g. 109876543210987">
+        </div>
+        <div class="form-group">
+          <label class="form-label">WhatsApp Business Account ID <span style="color:var(--muted);font-weight:400">(optional)</span></label>
+          <input type="text" class="form-input" id="wa-waba-id" placeholder="e.g. 123456789012345">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Access Token <span class="req">*</span></label>
+          <input type="password" class="form-input" id="wa-token" placeholder="Permanent access token from Meta" autocomplete="new-password">
+        </div>
+      </div>
+
+      <!-- Connected view -->
+      <div id="wa-connected-view" style="display:none">
+        <div style="background:var(--gbg);border:1px solid #86efac;border-radius:10px;padding:14px;margin-bottom:16px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;color:var(--green);font-weight:700;font-size:13px">✓ Connected</div>
+          <div style="font-size:12.5px;color:var(--text2);line-height:1.9">
+            <div><strong>Business:</strong> <span id="wa-connected-name">—</span></div>
+            <div><strong>Number:</strong> <span id="wa-connected-number">—</span></div>
+            <div><strong>Connected:</strong> <span id="wa-connected-date">—</span></div>
+          </div>
+        </div>
+        <div style="font-size:12px;color:var(--muted)">Disconnecting removes the stored credentials. You can reconnect any time with the same or a different WhatsApp Business number.</div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeOverlay('overlay-whatsapp')">Close</button>
+      <button class="btn btn-danger" id="wa-disconnect-btn" onclick="disconnectWhatsApp()" style="display:none">Disconnect</button>
+      <button class="btn btn-p" id="wa-connect-btn" onclick="submitWhatsAppConnect()">Connect</button>
     </div>
   </div>
 </div>
@@ -3979,7 +4136,8 @@ var _pageFetchMap = {
   analytics:   function() { return _smartSync(['applicants','jobs']); },
   roles:       function() { return Promise.resolve(); },
   chat:        function() { return _pollChatMessages(); },
-  integrations:function() { return Promise.resolve(); },
+  integrations:function() { return apiFetchWhatsAppStatus(); },
+  whatsapp:    function() { return Promise.all([apiFetchWhatsAppStatus(), apiFetchWhatsAppConversations()]).then(function(){ if (currentPage === 'whatsapp') renderWhatsAppInbox(); }); },
   billing:     function() { return Promise.resolve(); },
 };
 
@@ -4931,6 +5089,7 @@ const DB = {
     {id:'INT-004',name:'Zoom',desc:'Video interviews and team meetings integration',icon:'📹',connected:false,category:'Communication'},
     {id:'INT-005',name:'Slack',desc:'Team notifications and applicant status alerts',icon:'💬',connected:false,category:'Communication'},
     {id:'INT-006',name:'Google Drive',desc:'Document storage and file synchronization',icon:'📁',connected:false,category:'Storage'},
+    {id:'INT-WHATSAPP',name:'WhatsApp Business',desc:'Send and receive WhatsApp messages with applicants',icon:'🟢',connected:false,category:'Communication'},
   ],
   agents:        [],
   agentLedger:   [],
@@ -5443,7 +5602,8 @@ const PAGE_TITLES = {
   dashboard:'Dashboard', pipeline:'Pipeline', applicants:'Applicants',
   documents:'Documents', jobs:'Job Orders', analytics:'Analytics',
   accounting:'Accounting', audit:'Audit Trail', inquiries:'Inquiries', complaints:'Complaints', chat:'Chat', integrations:'Integrations', settings:'Settings', roles:'Roles & Permissions',
-  chat:'Team Chat', integrations:'Integrations', settings:'Settings', roles:'Roles & Permissions'
+  chat:'Team Chat', integrations:'Integrations', settings:'Settings', roles:'Roles & Permissions',
+  whatsapp:'WhatsApp'
 };
 
 function nav(page) {
@@ -5474,6 +5634,9 @@ function nav(page) {
   if (page === 'chat') { renderChat(); }
   // Chat poll always runs regardless of page — for badge updates
   if (!_chatPollTimer) startChatPoll();
+  if (page === 'whatsapp') { renderWhatsAppInbox(); }
+  // Same idea for WhatsApp — keep the sidebar unread badge live everywhere
+  if (!_waPollTimer) startWaPoll();
   if (page === 'complaints') renderComplaints();
   if (page === 'integrations') renderIntegrations();
   if (page === 'settings') renderSettings();
@@ -11216,21 +11379,43 @@ function stringToColor(str) {
 // ════════════════════════════════════════════════════════
 // INTEGRATIONS
 // ════════════════════════════════════════════════════════
+// WhatsApp is the one integration on this page backed by a real connection
+// (see whatsappController.js on the backend) — every other card here is a
+// decorative toggle with nothing behind it. window._waStatus is populated by
+// apiFetchWhatsAppStatus() and never contains the access token.
 function renderIntegrations() {
-  document.getElementById('integ-grid').innerHTML = DB.integrations.map(ig=>`
-    <div class="integ-card">
-      <div class="integ-logo" style="background:var(--s2)">${ig.icon}</div>
-      <div class="integ-info">
-        <div class="integ-name">${ig.name}</div>
-        <div class="integ-sub">${ig.desc}</div>
-        <div style="margin-top:4px;font-size:10.5px;font-family:monospace;color:var(--dim)">${ig.category}</div>
-      </div>
-      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
-        ${pillHtml(ig.connected?'Active':'Inactive')}
-        <button class="toggle ${ig.connected?'on':''}" onclick="toggleInteg('${ig.id}')" aria-label="${ig.connected?'Disable':'Enable'} ${ig.name}" aria-pressed="${ig.connected}"></button>
-      </div>
-    </div>
-  `).join('');
+  document.getElementById('integ-grid').innerHTML = DB.integrations.map(function(ig) {
+    if (ig.id === 'INT-WHATSAPP') {
+      var st = window._waStatus || { connected: false };
+      var sub = st.connected
+        ? 'Connected · ' + (st.verifiedName ? st.verifiedName + ' · ' : '') + (st.displayPhoneNumber || st.phoneNumberId || '')
+        : ig.desc;
+      return '<div class="integ-card">' +
+        '<div class="integ-logo" style="background:#25D36622;color:#128C7E">' + ig.icon + '</div>' +
+        '<div class="integ-info">' +
+          '<div class="integ-name">' + ig.name + '</div>' +
+          '<div class="integ-sub">' + escapeHtml(sub) + '</div>' +
+          '<div style="margin-top:4px;font-size:10.5px;font-family:monospace;color:var(--dim)">' + ig.category + '</div>' +
+        '</div>' +
+        '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">' +
+          pillHtml(st.connected ? 'Active' : 'Inactive') +
+          '<button class="btn btn-s btn-xs" onclick="openWhatsAppConnect()">' + (st.connected ? 'Manage' : 'Connect') + '</button>' +
+        '</div>' +
+      '</div>';
+    }
+    return '<div class="integ-card">' +
+      '<div class="integ-logo" style="background:var(--s2)">' + ig.icon + '</div>' +
+      '<div class="integ-info">' +
+        '<div class="integ-name">' + ig.name + '</div>' +
+        '<div class="integ-sub">' + ig.desc + '</div>' +
+        '<div style="margin-top:4px;font-size:10.5px;font-family:monospace;color:var(--dim)">' + ig.category + '</div>' +
+      '</div>' +
+      '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">' +
+        pillHtml(ig.connected ? 'Active' : 'Inactive') +
+        '<button class="toggle ' + (ig.connected?'on':'') + '" onclick="toggleInteg(\'' + ig.id + '\')" aria-label="' + (ig.connected?'Disable':'Enable') + ' ' + ig.name + '" aria-pressed="' + ig.connected + '"></button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
 }
 function toggleInteg(id) {
   const ig = DB.integrations.find(x=>x.id===id);
@@ -11240,6 +11425,355 @@ function toggleInteg(id) {
   addAudit('UPDATE','Integration',`${ig.connected?'Connected':'Disconnected'} ${ig.name}`);
   renderIntegrations();
   toast(`${ig.name} ${ig.connected?'connected':'disconnected'}`, ig.connected?'success':'info');
+}
+
+// ── WhatsApp Business connection ─────────────────────────────────────
+async function apiFetchWhatsAppStatus() {
+  var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
+  if (!isLive) { window._waStatus = { connected: false }; return; }
+  var r = await apiFetch('/integrations/whatsapp/status');
+  if (r.ok) window._waStatus = r.data;
+  if (currentPage === 'integrations') renderIntegrations();
+  if (currentPage === 'whatsapp' && typeof renderWhatsAppInbox === 'function') renderWhatsAppInbox();
+}
+async function apiConnectWhatsApp(payload) {
+  if (window._ramsSessionToken === 'demo') return { ok: false, error: 'Not available in demo mode' };
+  var r = await apiFetch('/integrations/whatsapp/connect', { method: 'POST', body: JSON.stringify(payload) });
+  if (r.ok) window._waStatus = r.data;
+  return r;
+}
+async function apiDisconnectWhatsApp() {
+  if (window._ramsSessionToken === 'demo') return { ok: false };
+  var r = await apiFetch('/integrations/whatsapp/disconnect', { method: 'DELETE' });
+  if (r.ok) window._waStatus = r.data;
+  return r;
+}
+
+function openWhatsAppConnect() {
+  if (typeof getCurrentRole !== 'function' || getCurrentRole() !== 'Admin') {
+    toast('Only Admins can manage the WhatsApp connection', 'error'); return;
+  }
+  var st = window._waStatus || { connected: false };
+  var errEl = document.getElementById('wa-error'); if (errEl) errEl.style.display = 'none';
+
+  var connectedView = document.getElementById('wa-connected-view');
+  var formView       = document.getElementById('wa-form-view');
+  var connectBtn     = document.getElementById('wa-connect-btn');
+  var disconnectBtn  = document.getElementById('wa-disconnect-btn');
+  if (st.connected) {
+    if (connectedView) connectedView.style.display = 'block';
+    if (formView) formView.style.display = 'none';
+    if (connectBtn) connectBtn.style.display = 'none';
+    if (disconnectBtn) disconnectBtn.style.display = '';
+    var nameEl = document.getElementById('wa-connected-name'); if (nameEl) nameEl.textContent = st.verifiedName || '—';
+    var numEl  = document.getElementById('wa-connected-number'); if (numEl) numEl.textContent = st.displayPhoneNumber || st.phoneNumberId || '—';
+    var dateEl = document.getElementById('wa-connected-date'); if (dateEl) dateEl.textContent = st.connectedAt ? new Date(st.connectedAt).toLocaleString() : '—';
+  } else {
+    if (connectedView) connectedView.style.display = 'none';
+    if (formView) formView.style.display = 'block';
+    if (connectBtn) { connectBtn.style.display = ''; connectBtn.disabled = false; connectBtn.textContent = 'Connect'; }
+    if (disconnectBtn) disconnectBtn.style.display = 'none';
+    ['wa-phone-id','wa-waba-id','wa-token'].forEach(function(id){ var el = document.getElementById(id); if (el) el.value = ''; });
+  }
+  openOverlay('overlay-whatsapp');
+}
+
+async function submitWhatsAppConnect() {
+  var phoneId = (document.getElementById('wa-phone-id')||{}).value.trim();
+  var wabaId  = (document.getElementById('wa-waba-id')||{}).value.trim();
+  var token   = (document.getElementById('wa-token')||{}).value.trim();
+  var errEl   = document.getElementById('wa-error');
+  var btn     = document.getElementById('wa-connect-btn');
+
+  if (!phoneId || !token) {
+    if (errEl) { errEl.textContent = 'Phone Number ID and Access Token are both required.'; errEl.style.display = 'block'; }
+    return;
+  }
+  if (errEl) errEl.style.display = 'none';
+  if (btn) { btn.disabled = true; btn.textContent = 'Verifying with Meta…'; }
+
+  try {
+    var r = await apiConnectWhatsApp({ phone_number_id: phoneId, waba_id: wabaId || null, access_token: token });
+    if (!r.ok) {
+      if (errEl) { errEl.textContent = (r.data && r.data.error) || r.error || 'Could not connect — check your credentials.'; errEl.style.display = 'block'; }
+      return;
+    }
+    addAudit('UPDATE', 'Integration', 'Connected WhatsApp Business (' + (r.data.displayPhoneNumber||phoneId) + ')');
+    toast('WhatsApp Business connected', 'success');
+    closeOverlay('overlay-whatsapp');
+    renderIntegrations();
+  } catch (e) {
+    if (errEl) { errEl.textContent = 'Unexpected error — please try again.'; errEl.style.display = 'block'; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Connect'; }
+  }
+}
+
+async function disconnectWhatsApp() {
+  if (!confirm('Disconnect WhatsApp Business? RAMS will no longer be able to send or receive messages until reconnected.')) return;
+  var r = await apiDisconnectWhatsApp();
+  if (!r.ok) { toast('Failed to disconnect — try again', 'error'); return; }
+  addAudit('UPDATE', 'Integration', 'Disconnected WhatsApp Business');
+  toast('WhatsApp Business disconnected', 'info');
+  closeOverlay('overlay-whatsapp');
+  renderIntegrations();
+}
+
+// ── WhatsApp Messaging (actual inbox — send/receive) ──────────────────
+window._waConversations = window._waConversations || [];
+window._waActiveNumber  = window._waActiveNumber  || null;
+window._waMessages      = window._waMessages      || [];
+
+function _waFmtTime(ts) {
+  if (!ts) return '';
+  var d = new Date(ts);
+  if (isNaN(d.getTime())) return '';
+  var now = new Date();
+  var sameDay = d.toDateString() === now.toDateString();
+  if (sameDay) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  var diffDays = Math.floor((now - d) / 86400000);
+  if (diffDays < 7) return d.toLocaleDateString([], { weekday: 'short' });
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+// Any signed-in role can use the inbox, but a scoped viewer (agent limited
+// to specific job orders) only sees conversations tied to an applicant in
+// their scope — same fail-closed rule used everywhere else in RAMS.
+// Unlinked numbers (no matching applicant) are hidden from scoped viewers
+// since there's nothing to verify they belong in that viewer's scope.
+function _waVisibleConversations() {
+  var list = window._waConversations || [];
+  var scope = (typeof getViewerScopedJobs === 'function') ? getViewerScopedJobs() : null;
+  if (scope === null) return list; // unrestricted role — see everything
+  var scopedIds = new Set((typeof getScopedApplicants === 'function' ? getScopedApplicants() : []).map(function(a){ return a.id || a._dbId; }));
+  return list.filter(function(c) { return c.applicantId && scopedIds.has(c.applicantId); });
+}
+
+async function apiFetchWhatsAppConversations() {
+  var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
+  if (!isLive) { window._waConversations = []; return; }
+  var r = await apiFetch('/integrations/whatsapp/conversations');
+  if (r.ok && Array.isArray(r.data)) window._waConversations = r.data;
+  _updateWaSidebarBadge();
+  if (currentPage === 'whatsapp') renderWaConversationList();
+}
+
+function _updateWaSidebarBadge() {
+  var badge = document.getElementById('sb-wa-count');
+  if (!badge) return;
+  var list = _waVisibleConversations();
+  var unread = list.reduce(function(sum, c){ return sum + (c.unreadCount || 0); }, 0);
+  if (unread > 0) { badge.textContent = unread > 99 ? '99+' : String(unread); badge.style.display = ''; }
+  else { badge.style.display = 'none'; }
+}
+
+function renderWhatsAppInbox() {
+  var st = window._waStatus || {};
+  var banner = document.getElementById('wa-inbox-disconnected');
+  if (banner) banner.style.display = st.connected ? 'none' : 'flex';
+  renderWaConversationList();
+  if (window._waActiveNumber) renderWaMessages();
+}
+
+function renderWaConversationList() {
+  var listEl = document.getElementById('wa-conv-list');
+  var emptyEl = document.getElementById('wa-conv-empty');
+  if (!listEl) return;
+  var q = (document.getElementById('wa-search') || {}).value || '';
+  q = q.toLowerCase().trim();
+  var list = _waVisibleConversations().filter(function(c) {
+    if (!q) return true;
+    return (c.applicantName || '').toLowerCase().includes(q) || (c.waNumber || '').includes(q);
+  });
+  if (!list.length) {
+    listEl.innerHTML = '';
+    if (emptyEl) emptyEl.style.display = 'block';
+    return;
+  }
+  if (emptyEl) emptyEl.style.display = 'none';
+  listEl.innerHTML = list.map(function(c) {
+    var active = c.waNumber === window._waActiveNumber;
+    var name = c.applicantName || ('+' + c.waNumber);
+    var preview = c.lastDirection === 'outbound' ? 'You: ' : '';
+    preview += c.lastType === 'text' ? (c.lastBody || '') : ('[' + (c.lastType || 'message') + ']');
+    return '<div onclick="openWaConversation(\'' + c.waNumber + '\')" style="padding:9px 14px;cursor:pointer;display:flex;align-items:center;gap:10px;' +
+        (active ? 'background:var(--brand-l)' : '') + '">' +
+      '<div style="width:34px;height:34px;border-radius:50%;background:#25D36622;color:#128C7E;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;flex-shrink:0">' + escapeHtml(name.charAt(0).toUpperCase()) + '</div>' +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="display:flex;justify-content:space-between;gap:6px">' +
+          '<span style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(name) + '</span>' +
+          '<span style="font-size:10px;color:var(--muted);flex-shrink:0">' + _waFmtTime(c.lastAt) + '</span>' +
+        '</div>' +
+        '<div style="display:flex;justify-content:space-between;gap:6px">' +
+          '<span style="font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(preview) + '</span>' +
+          (c.unreadCount ? '<span class="sb-badge amber" style="position:static;flex-shrink:0">' + c.unreadCount + '</span>' : '') +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+async function openWaConversation(waNumber) {
+  window._waActiveNumber = waNumber;
+  document.getElementById('wa-thread-empty').style.display = 'none';
+  document.getElementById('wa-thread').style.display = 'flex';
+  var conv = (window._waConversations || []).find(function(c){ return c.waNumber === waNumber; });
+  document.getElementById('wa-thread-name').textContent = (conv && conv.applicantName) || ('+' + waNumber);
+  document.getElementById('wa-thread-number').textContent = '+' + waNumber;
+  document.getElementById('wa-msgs').innerHTML = '<div style="text-align:center;color:var(--muted);font-size:12px;padding:20px">Loading…</div>';
+  renderWaConversationList();
+
+  var r = await apiFetch('/integrations/whatsapp/conversations/' + encodeURIComponent(waNumber) + '/messages');
+  if (r.ok && Array.isArray(r.data)) {
+    window._waMessages = r.data;
+    // Clear local unread count now that we've fetched (server marked them read)
+    if (conv) conv.unreadCount = 0;
+    _updateWaSidebarBadge();
+  } else {
+    window._waMessages = [];
+  }
+  renderWaMessages();
+  renderWaConversationList();
+}
+
+function renderWaMessages() {
+  var el = document.getElementById('wa-msgs');
+  if (!el) return;
+  var msgs = window._waMessages || [];
+  if (!msgs.length) {
+    el.innerHTML = '<div style="text-align:center;color:var(--muted);font-size:12px;padding:20px">No messages yet</div>';
+  } else {
+    el.innerHTML = msgs.map(function(m) {
+      var out = m.direction === 'outbound';
+      return '<div style="display:flex;justify-content:' + (out ? 'flex-end' : 'flex-start') + '">' +
+        '<div style="max-width:70%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.4;' +
+          (out ? 'background:#25D366;color:#fff;border-bottom-right-radius:3px' : 'background:var(--s2);color:var(--text);border-bottom-left-radius:3px') + '">' +
+          escapeHtml(m.type === 'text' ? (m.body || '') : ('[' + m.type + ']' + (m.body ? ' ' + escapeHtml(m.body) : ''))) +
+          '<div style="font-size:9.5px;opacity:.7;margin-top:3px;text-align:right">' + _waFmtTime(m.createdAt) + (out ? ' · ' + (m.status || 'sent') : '') + '</div>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+  el.scrollTop = el.scrollHeight;
+
+  var conv = (window._waConversations || []).find(function(c){ return c.waNumber === window._waActiveNumber; });
+  var notice = document.getElementById('wa-window-notice');
+  if (notice) notice.style.display = (conv && !conv.withinWindow) ? 'block' : 'none';
+}
+
+function waInputKeydown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendWaMessage(); }
+}
+
+async function sendWaMessage() {
+  var input = document.getElementById('wa-input');
+  var text = (input.value || '').trim();
+  if (!text || !window._waActiveNumber) return;
+  var btn = document.getElementById('wa-send-btn');
+  if (btn) btn.disabled = true;
+  input.value = '';
+  try {
+    var r = await apiFetch('/integrations/whatsapp/conversations/' + encodeURIComponent(window._waActiveNumber) + '/messages', {
+      method: 'POST', body: JSON.stringify({ text: text }),
+    });
+    if (!r.ok) {
+      toast((r.data && r.data.error) || 'Failed to send message', 'error');
+      input.value = text; // restore so nothing is lost
+      return;
+    }
+    window._waMessages.push(r.data);
+    renderWaMessages();
+    // Update the conversation preview locally rather than waiting on the next poll
+    var conv = (window._waConversations || []).find(function(c){ return c.waNumber === window._waActiveNumber; });
+    if (conv) { conv.lastBody = text; conv.lastDirection = 'outbound'; conv.lastType = 'text'; conv.lastAt = r.data.createdAt; }
+    renderWaConversationList();
+  } catch (e) {
+    toast('Unexpected error sending message', 'error');
+    input.value = text;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+var _waPollTimer = null;
+function startWaPoll() {
+  stopWaPoll();
+  function _tick() {
+    if (document.hidden || !window._ramsSessionToken) { _waPollTimer = setTimeout(_tick, 10000); return; }
+    apiFetchWhatsAppConversations().catch(function(){});
+    if (window._waActiveNumber && currentPage === 'whatsapp') {
+      apiFetch('/integrations/whatsapp/conversations/' + encodeURIComponent(window._waActiveNumber) + '/messages').then(function(r) {
+        if (r.ok && Array.isArray(r.data)) { window._waMessages = r.data; renderWaMessages(); }
+      }).catch(function(){});
+    }
+    _waPollTimer = setTimeout(_tick, 8000);
+  }
+  _waPollTimer = setTimeout(_tick, 3000);
+}
+function stopWaPoll() {
+  if (_waPollTimer) { clearTimeout(_waPollTimer); _waPollTimer = null; }
+}
+
+// ── Webhook setup modal ────────────────────────────────────────────────
+function openWaWebhookSetup() {
+  if (typeof getCurrentRole !== 'function' || getCurrentRole() !== 'Admin') {
+    toast('Only Admins can view webhook setup details', 'error'); return;
+  }
+  var st = window._waStatus || {};
+  var notConn = document.getElementById('wa-webhook-not-connected');
+  var fields  = document.getElementById('wa-webhook-fields');
+  var errEl   = document.getElementById('wa-webhook-error');
+  if (errEl) errEl.style.display = 'none';
+  if (!st.connected) {
+    if (notConn) notConn.style.display = 'block';
+    if (fields) fields.style.display = 'none';
+  } else {
+    if (notConn) notConn.style.display = 'none';
+    if (fields) fields.style.display = 'block';
+    document.getElementById('wa-webhook-url').value   = st.webhookUrl || '';
+    document.getElementById('wa-webhook-token').value = st.verifyToken || '';
+    document.getElementById('wa-webhook-secret').value = '';
+    var hint = document.getElementById('wa-webhook-secret-hint');
+    if (hint) hint.textContent = st.appSecretSet ? 'An app secret is already set — leave blank to keep it, or enter a new one to replace it.' : 'Not set yet — inbound events won\'t be signature-verified until you add one.';
+  }
+  openOverlay('overlay-wa-webhook');
+}
+
+function _copyWaField(id) {
+  var el = document.getElementById(id);
+  if (!el || !el.value) return;
+  navigator.clipboard.writeText(el.value).then(function() { toast('Copied', 'success'); }).catch(function() {
+    el.select(); document.execCommand('copy'); toast('Copied', 'success');
+  });
+}
+
+async function saveWaWebhookConfig() {
+  var secretInput = document.getElementById('wa-webhook-secret');
+  var errEl = document.getElementById('wa-webhook-error');
+  var btn = document.getElementById('wa-webhook-save-btn');
+  // Blank means "leave unchanged" only if a secret is already set; otherwise
+  // an explicit blank submit clears it. To keep this unambiguous we only
+  // submit when the field actually has a value, unless the user wants to
+  // clear an existing one (handled by typing a single space then clearing —
+  // simplest UX here is: blank + nothing set = no-op, blank + something set
+  // is treated as "no change" too, since clearing has its own risk).
+  var val = (secretInput.value || '');
+  var st = window._waStatus || {};
+  if (!val && !st.appSecretSet) { closeOverlay('overlay-wa-webhook'); return; }
+  if (!val && st.appSecretSet) { closeOverlay('overlay-wa-webhook'); return; } // no change made
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    var r = await apiFetch('/integrations/whatsapp/webhook-config', { method: 'PATCH', body: JSON.stringify({ app_secret: val }) });
+    if (!r.ok) {
+      if (errEl) { errEl.textContent = (r.data && r.data.error) || 'Failed to save'; errEl.style.display = 'block'; }
+      return;
+    }
+    window._waStatus = r.data;
+    toast('Webhook app secret saved', 'success');
+    closeOverlay('overlay-wa-webhook');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save App Secret'; }
+  }
 }
 
 // ════════════════════════════════════════════════════════
@@ -11767,6 +12301,7 @@ async function _doLogin() {
 async function handleLogout() {
   stopPolling();
   stopChatPoll();
+  stopWaPoll();
   _stopInvoiceSync();
   if (window._notifTickTimer) { clearInterval(window._notifTickTimer); window._notifTickTimer = null; }
   await flushAutosave();
@@ -19440,6 +19975,7 @@ _showApp = function(user) {
     if (typeof renderNotifications === 'function') renderNotifications();
     startPolling();
     startChatPoll();
+    startWaPoll();
     _fetchChatDMs().catch(function(){});
     _startInvoiceSync();
     if (typeof _startNotifTicker === "function") _startNotifTicker();
