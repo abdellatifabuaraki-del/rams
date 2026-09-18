@@ -7931,9 +7931,9 @@ function _inlineSaveMedical(appId, newMedical) {
       } else {
         var _medCountry = app.job ? app.job.split('·').pop().trim() : '';
         var _medRule    = DB.countryRules.find(function(r){ return r.country===_medCountry && r.active; });
-        // Same precedence as _resolveCommission: per-country override → agent
-        // primary rate → country rule → default
-        var _agentRate = getAgentRateForCountry(_agent, _medCountry);
+        // Same precedence as _resolveCommission: worker override → per-country
+        // override → agent primary rate → country rule → default
+        var _agentRate = getAgentRateForApplicant(_agent, app);
         var _medTotal  = _agentRate ? _agentRate.amount   : (_medRule ? _medRule.commissionAmt : 15000);
         var _medCurr   = _agentRate ? _agentRate.currency : (_medRule ? (_medRule.commissionCurrency||'PHP') : 'PHP');
         var _medGP     = _medRule ? (_medRule.guaranteePeriod||6) : 6;
@@ -13242,6 +13242,13 @@ function renderAgentGrid(query) {
                     return r.country+': '+(r.currency==='USD'?'$':'₱')+Number(r.amount).toLocaleString();
                   }).join(' · '))+
                 '">+'+a.extraRates.length+' more</span>'
+              : '')+
+            ((a.workerRates && a.workerRates.length)
+              ? ' <span style="color:var(--purple, #7c3aed);font-weight:700" title="'+
+                  escapeHtml(a.workerRates.map(function(r){
+                    return (r.applicantName||r.applicantId)+': '+(r.currency==='USD'?'$':'₱')+Number(r.amount).toLocaleString();
+                  }).join(' · '))+
+                '">· '+a.workerRates.length+' worker rate'+(a.workerRates.length>1?'s':'')+'</span>'
               : '')+'</div>'+
           '<div class="agent-sub">'+a.phone+'</div>'+
         '</div>'+
@@ -15142,10 +15149,11 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
     var country  = app.job ? app.job.split('·').pop().trim() : '';
     var rule     = DB.countryRules.find(function(r){ return r.country === country && r.active; })
                 || DB.countryRules.find(function(r){ return r.active; });
-    // Priority: 1) Agent's per-country override for this destination
-    //           2) Agent's primary commission rate
-    //           3) Country rule  4) Default ₱15,000
-    var agentRate = getAgentRateForCountry(agent, country);
+    // Priority: 1) Agent's worker-specific override for this applicant
+    //           2) Agent's per-country override for this destination
+    //           3) Agent's primary commission rate
+    //           4) Country rule  5) Default ₱15,000
+    var agentRate = getAgentRateForApplicant(agent, app);
     var total    = agentRate ? agentRate.amount   : (rule ? rule.commissionAmt : 15000);
     var currency = agentRate ? agentRate.currency : (rule ? (rule.commissionCurrency || 'PHP') : 'PHP');
     return { country: country || 'Philippines', rule: rule, total: total, currency: currency };
@@ -15491,6 +15499,91 @@ function _collectAgentRateRows() {
   return out;
 }
 
+// ── Worker-specific commission overrides (per applicant, under this agent) ──
+// Applicants currently linked to this agent — same match logic as the
+// Manual Adjustment modal's agent→applicant filter (_filterAdjApplicants).
+function _agentWorkers(agentId) {
+  if (!agentId) return [];
+  var agent = DB.agents.find(function(a){ return a.id === agentId || a._dbId === agentId; });
+  if (!agent) return [];
+  return DB.applicants.filter(function(a){
+    if (a._agentDbId && (a._agentDbId === agentId || a._agentDbId === agent._dbId)) return true;
+    if (a._agentId   && (a._agentId   === agentId || a._agentId   === agent._dbId)) return true;
+    if (agent.name && a.agent && a.agent === agent.name) return true;
+    return false;
+  });
+}
+
+function _agentWorkerRateRowHtml(rate) {
+  rate = rate || {};
+  var cur = rate.currency === 'USD' ? 'USD' : 'PHP';
+  var agentId = editingAgentIdx >= 0 ? DB.agents[editingAgentIdx].id : '';
+  var workers = _agentWorkers(agentId);
+  var opts = '<option value="">Select worker…</option>' + workers.map(function(a){
+    return '<option value="' + a.id + '" data-name="' + escapeHtml(a.name) + '"' +
+      (rate.applicantId === a.id ? ' selected' : '') + '>' +
+      escapeHtml(a.name) + ' (' + escapeHtml(a.displayId || a.id) + ')</option>';
+  }).join('');
+  // A worker saved here previously but no longer linked to this agent (e.g.
+  // reassigned since) — keep the row visible rather than silently dropping
+  // the rate the next time this modal is opened.
+  if (rate.applicantId && workers.every(function(a){ return a.id !== rate.applicantId; })) {
+    opts = '<option value="' + rate.applicantId + '" data-name="' + escapeHtml(rate.applicantName || '') + '" selected>' +
+      escapeHtml(rate.applicantName || rate.applicantId) + ' (not currently under this agent)</option>' + opts;
+  }
+  return '<div class="ag-worker-rate-row" style="display:flex;gap:6px;align-items:center">' +
+      '<select class="f-inp ag-worker-rate-applicant" style="flex:1.4;min-width:0">' + opts + '</select>' +
+      '<select class="f-inp ag-worker-rate-currency" style="width:90px">' +
+        '<option value="PHP"' + (cur==='PHP'?' selected':'') + '>₱ PHP</option>' +
+        '<option value="USD"' + (cur==='USD'?' selected':'') + '>$ USD</option>' +
+      '</select>' +
+      '<input class="f-inp ag-worker-rate-amount" type="number" min="0" step="100" placeholder="Amount" ' +
+        'style="width:110px" value="' + (rate.amount != null ? rate.amount : '') + '">' +
+      '<button type="button" onclick="this.closest(\'.ag-worker-rate-row\').remove();_syncAgentWorkerRateEmpty()" ' +
+        'style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px;padding:0 4px" title="Remove">✕</button>' +
+    '</div>';
+}
+
+function _syncAgentWorkerRateEmpty() {
+  var wrap  = document.getElementById('ag-worker-rates');
+  var empty = document.getElementById('ag-worker-empty');
+  if (empty) empty.style.display = (wrap && wrap.children.length) ? 'none' : '';
+}
+
+function addAgentWorkerRateRow(rate) {
+  // Only meaningful once editing an existing agent — a brand-new agent has
+  // no applicants linked to it yet to pick from.
+  if (editingAgentIdx < 0) { toast('Save the agent first, then add worker-specific rates from Edit Agent', 'info'); return; }
+  var wrap = document.getElementById('ag-worker-rates');
+  if (!wrap) return;
+  wrap.insertAdjacentHTML('beforeend', _agentWorkerRateRowHtml(rate));
+  _syncAgentWorkerRateEmpty();
+}
+
+function _renderAgentWorkerRateRows(rates) {
+  var wrap = document.getElementById('ag-worker-rates');
+  if (!wrap) return;
+  wrap.innerHTML = (rates || []).map(_agentWorkerRateRowHtml).join('');
+  _syncAgentWorkerRateEmpty();
+}
+
+// Read the rows back out, dropping blanks and duplicate workers
+function _collectAgentWorkerRateRows() {
+  var out = [], seen = {};
+  document.querySelectorAll('#ag-worker-rates .ag-worker-rate-row').forEach(function(row){
+    var sel = row.querySelector('.ag-worker-rate-applicant');
+    var applicantId = sel ? sel.value : '';
+    var applicantName = sel && sel.selectedIndex >= 0 ? (sel.options[sel.selectedIndex].getAttribute('data-name') || '') : '';
+    var amount  = parseFloat((row.querySelector('.ag-worker-rate-amount')||{}).value);
+    var currency= (row.querySelector('.ag-worker-rate-currency')||{}).value || 'PHP';
+    if (!applicantId || !isFinite(amount) || amount <= 0) return;
+    if (seen[applicantId]) return;
+    seen[applicantId] = true;
+    out.push({ applicantId: applicantId, applicantName: applicantName, amount: amount, currency: currency === 'USD' ? 'USD' : 'PHP' });
+  });
+  return out;
+}
+
 function openAddAgent() {
   editingAgentIdx = -1;
   document.getElementById('agent-modal-title').textContent = 'Add Agent';
@@ -15499,6 +15592,10 @@ function openAddAgent() {
   });
   var ci = document.getElementById('ag-commission'); if(ci) ci.value='5';
   _renderAgentRateRows([]);
+  _renderAgentWorkerRateRows([]);
+  // Worker-specific rates need an existing agent id to pick applicants from —
+  // hide the section until the agent has been saved once.
+  var wsec = document.getElementById('ag-worker-section'); if (wsec) wsec.style.display = 'none';
   openOverlay('overlay-agent');
   setTimeout(function(){ var el=document.getElementById('ag-name'); if(el) el.focus(); },100);
 }
@@ -15518,6 +15615,8 @@ function openEditAgent(idx) {
   var ci = document.getElementById('ag-country');
   if (ci) ci.value = a.country;
   _renderAgentRateRows(a.extraRates || []);
+  _renderAgentWorkerRateRows(a.workerRates || []);
+  var wsec = document.getElementById('ag-worker-section'); if (wsec) wsec.style.display = '';
   openOverlay('overlay-agent');
 }
 
@@ -15552,6 +15651,7 @@ function submitAgent() {
     commissionAmt:       parseFloat(document.getElementById('ag-commission').value)||15000,
     commissionCurrency:  (document.getElementById('ag-commission-currency') || {}).value || 'PHP',
     extraRates:          _collectAgentRateRows(),
+    workerRates:         _collectAgentWorkerRateRows(),
     address: (document.getElementById('ag-address').value||'').trim(),
     notes: (document.getElementById('ag-notes').value||'').trim(),
     status: 'Active',
@@ -16396,14 +16496,18 @@ function _doStatusChangeDeployed(applicantId, oldStatus, deployDate) {
         ' — T3 commission skipped. Assign an agent then use ⚡ Backfill Commissions.', 'error');
     } else {
     // Inline commission resolver — _resolveCommission is a closure in onApplicantStatusChange
-    // and not accessible here, so we duplicate the logic
+    // and not accessible here, so we duplicate the logic. Now goes through the
+    // same getAgentRateForApplicant() as T1/T2/backfill (worker override →
+    // per-country override → agent primary rate) — this previously only
+    // checked agent.commissionAmt directly, silently ignoring both the
+    // per-country and worker-specific overrides on the biggest tranche (60%).
     var _dc = (function() {
       var country  = app.job ? app.job.split('·').pop().trim() : (app.destination || '');
       var rule     = DB.countryRules.find(function(r){ return r.country === country && r.active; })
                   || DB.countryRules.find(function(r){ return r.active; });
-      var agentHasRate = agent && agent.commissionAmt != null && agent.commissionAmt > 0;
-      var total    = agentHasRate ? agent.commissionAmt : (rule ? rule.commissionAmt : 15000);
-      var currency = agentHasRate ? (agent.commissionCurrency || 'PHP') : (rule ? (rule.commissionCurrency || 'PHP') : 'PHP');
+      var agentRate = agent ? getAgentRateForApplicant(agent, app) : null;
+      var total    = agentRate ? agentRate.amount   : (rule ? rule.commissionAmt : 15000);
+      var currency = agentRate ? agentRate.currency : (rule ? (rule.commissionCurrency || 'PHP') : 'PHP');
       return { country: country || 'Philippines', rule: rule, total: total, currency: currency };
     })();
     var t3amt = Math.round(_dc.total * 0.60);
@@ -17815,8 +17919,8 @@ function _createMissingCommissions() {
     if (!agent) { skipped++; return; }
     var appId=app.id||app._dbId, country=app.job?app.job.split('·').pop().trim():'';
     var rule=DB.countryRules.find(function(r){return r.country===country&&r.active;})||DB.countryRules.find(function(r){return r.active;});
-    // Honour the agent's per-country rate, matching the live commission path
-    var _rate = (typeof getAgentRateForCountry === 'function') ? getAgentRateForCountry(agent, country) : null;
+    // Honour the agent's worker-specific / per-country rate, matching the live commission path
+    var _rate = (typeof getAgentRateForApplicant === 'function') ? getAgentRateForApplicant(agent, app) : null;
     var total    = _rate ? _rate.amount   : (rule ? rule.commissionAmt : 15000);
     var currency = _rate ? _rate.currency : (rule ? (rule.commissionCurrency||'PHP') : 'PHP');
     var gp=rule?(rule.guaranteePeriod||6):6;
@@ -20937,6 +21041,53 @@ function getAgentRateForCountry(agent, country) {
   return null;
 }
 
+// Per-worker commission overrides: [{ applicantId, applicantName, amount, currency }].
+// Stored as JSONB server-side (same pattern as extraRates), so it may arrive
+// as an array or a JSON string.
+function _parseWorkerRates(raw) {
+  var list = raw;
+  if (typeof list === 'string') { try { list = JSON.parse(list); } catch(e) { list = []; } }
+  if (!Array.isArray(list)) return [];
+  var seen = {};
+  return list.filter(function(r){
+    if (!r || !r.applicantId) return false;
+    var amt = parseFloat(r.amount);
+    if (!isFinite(amt) || amt <= 0) return false;
+    if (seen[r.applicantId]) return false;
+    seen[r.applicantId] = true;
+    return true;
+  }).map(function(r){
+    return {
+      applicantId:   String(r.applicantId),
+      applicantName: r.applicantName || '',
+      amount:        parseFloat(r.amount),
+      currency:      (r.currency === 'USD' ? 'USD' : 'PHP'),
+    };
+  });
+}
+
+// Resolve an agent's commission for a specific applicant. Precedence:
+//   1) A worker-specific override for this exact applicant (set from the
+//      Edit Agent modal's "Worker Commissions" list) — highest priority,
+//      since it was deliberately set for this one person.
+//   2) The agent's per-country override (extraRates) for the applicant's
+//      destination.
+//   3) The agent's primary commission rate.
+// Falls through to getAgentRateForCountry for 2+3 so every existing call
+// site that only had a country to go on keeps working unchanged.
+function getAgentRateForApplicant(agent, app) {
+  if (!agent || !app) return null;
+  var rates = agent.workerRates || [];
+  if (rates.length) {
+    var appId  = app.id || app._dbId || '';
+    var dbId   = app._dbId || '';
+    var hit = rates.find(function(r){ return r.applicantId === appId || (dbId && r.applicantId === dbId); });
+    if (hit) return { amount: hit.amount, currency: hit.currency || 'PHP', source: 'worker' };
+  }
+  var country = app.job ? app.job.split('·').pop().trim() : (app.destination || '');
+  return getAgentRateForCountry(agent, country);
+}
+
 function mapAgent(row) {
   return {
     id:              row.id,
@@ -20948,6 +21099,7 @@ function mapAgent(row) {
     commissionAmt:      row.commission_amt != null ? parseFloat(row.commission_amt) : null,
     commissionCurrency: row.commission_currency || 'PHP',
     extraRates:      _parseExtraRates(row.extra_rates),
+    workerRates:     _parseWorkerRates(row.worker_rates),
     address:         row.address || '',
     notes:           row.notes || '',
     status:          row.status || 'Active',
@@ -21003,6 +21155,7 @@ async function apiCreateAgent(data) {
       commission_amt:      data.commissionAmt != null ? data.commissionAmt : 15000,
       commission_currency: data.commissionCurrency || 'PHP',
       extra_rates:         data.extraRates || [],
+      worker_rates:        data.workerRates || [],
       address:        data.address || null,
       notes:          data.notes || null,
     })
@@ -21055,6 +21208,7 @@ async function apiUpdateAgent(data) {
       commission_amt:      data.commissionAmt || 15000,
       commission_currency: data.commissionCurrency || 'PHP',
       extra_rates:         data.extraRates || [],
+      worker_rates:        data.workerRates || [],
       address:          data.address || null,
       notes:            data.notes || null,
       status:           data.status,
@@ -21505,6 +21659,18 @@ async function loadSharedPermissions() {
           No additional countries — the commission above applies everywhere.
         </div>
         <button type="button" class="btn btn-s btn-sm" onclick="addAgentRateRow()" style="margin-top:8px;align-self:flex-start">+ Add Country</button>
+      </div>
+      <!-- Worker-specific commission overrides — for individual applicants under this agent -->
+      <div class="f-grp" id="ag-worker-section" style="display:none">
+        <label class="f-lbl" style="display:flex;align-items:center;gap:8px">
+          Worker Commissions
+          <span style="font-weight:400;font-size:11px;color:var(--muted)">— overrides the country/primary rate for specific workers under this agent</span>
+        </label>
+        <div id="ag-worker-rates" style="display:flex;flex-direction:column;gap:8px"></div>
+        <div id="ag-worker-empty" style="font-size:12px;color:var(--muted);padding:8px 0">
+          No worker-specific rates — the country/primary commission applies to all this agent's workers.
+        </div>
+        <button type="button" class="btn btn-s btn-sm" onclick="addAgentWorkerRateRow()" style="margin-top:8px;align-self:flex-start">+ Add Worker</button>
       </div>
       <div class="f-grp">
         <label class="f-lbl">Address / Area</label>
