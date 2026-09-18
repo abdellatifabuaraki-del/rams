@@ -2715,7 +2715,7 @@ button[disabled][data-rbac-locked] {
         <div class="form-group">
           <label class="form-label">Medical Status</label>
           <select class="form-input" id="a-medical">
-            <option>Pending</option><option>Passed</option><option>Failed</option>
+            <option>Pending</option><option>Passed</option><option>Failed</option><option>Exempted</option>
           </select>
         </div>
       </div>
@@ -3610,7 +3610,7 @@ async function apiCreateApplicant(data) {
     status:         toServerStatus(data.status),
     position:       (data.job || '').split('·')[0].trim() || null,
     destination:    data.destination || ((data.job || '').split('·')[1] ? (data.job || '').split('·')[1].trim() : '') || null,
-    medical_status: data.medical === 'Passed' ? 'Passed' : data.medical === 'Failed' ? 'Failed' : 'Pending',
+    medical_status: ['Passed','Failed','Exempted'].indexOf(data.medical) !== -1 ? data.medical : 'Pending',
     notes:          data.notes || null,
     nationality:    data.gender || null,
     passport_number: data.passport || null,
@@ -3635,7 +3635,7 @@ async function apiUpdateApplicant(data) {
     status:          toServerStatus(data.status),
     position:        (data.job || '').split('·')[0].trim(),
     destination:     data.destination || ((data.job || '').split('·')[1] ? (data.job || '').split('·')[1].trim() : ''),
-    medical_status:  data.medical === 'Passed' ? 'Passed' : data.medical === 'Failed' ? 'Failed' : 'Pending',
+    medical_status:  ['Passed','Failed','Exempted'].indexOf(data.medical) !== -1 ? data.medical : 'Pending',
     notes:           data.notes || null,
     nationality:     data.gender || '',
     passport_number: data.passport || null,
@@ -7814,15 +7814,23 @@ function _inlineSaveStatus(appId, newStatus) {
   if (!app || app.status===newStatus) return;
   var oldStatus = app.status;
 
-  // ── Stage gate: Deployed requires Medical + (OWWA or Processing) ──
+  // ── Stage gate: Deployed requires Medical (passed/exempted) + Processing ──
+  // Medical is checked from the actual Medical Status field (app.medical),
+  // not just whether the pipeline status ever touched "Medical" — a worker
+  // can sit in that stage without having passed medical yet. Skilled
+  // workers don't go through OWWA (that's a Household-only requirement),
+  // so for them only "Processing" is required, and OWWA is never mentioned.
   if (newStatus === 'Deployed') {
     var hist = app._stageHistory || [];
-    var hasMedical     = hist.indexOf('Medical')     !== -1;
-    var hasProcessing  = hist.indexOf('Processing')  !== -1 || hist.indexOf('OWWA') !== -1;
+    var hasMedical    = app.medical === 'Passed' || app.medical === 'Exempted';
+    var isSkilled      = app.category === 'Skilled';
+    var hasProcessing  = isSkilled
+      ? hist.indexOf('Processing') !== -1
+      : (hist.indexOf('Processing') !== -1 || hist.indexOf('OWWA') !== -1);
     if (!hasMedical || !hasProcessing) {
       var missing = [];
       if (!hasMedical)    missing.push('Medical');
-      if (!hasProcessing) missing.push('Processing or OWWA');
+      if (!hasProcessing) missing.push(isSkilled ? 'Processing' : 'Processing or OWWA');
       toast('⛔ Cannot deploy ' + app.name + ' — required stage' + (missing.length > 1 ? 's' : '') +
         ' not completed: ' + missing.join(', '), 'error');
       var sel = document.querySelector('[data-app-id="' + appId + '"] .status-select, select[onchange*="' + appId + '"]');
@@ -8399,15 +8407,22 @@ function saveApplicant() {
     if (existing && existing.status !== data.status) {
       data._statusUpdatedAt = new Date().toISOString();
 
-      // ── Stage gate: Deployed requires Medical + (OWWA or Processing) ──
+      // ── Stage gate: Deployed requires Medical (passed/exempted) + Processing ──
+      // Same rules as _inlineSaveStatus: medical is read from the actual
+      // Medical Status field, and OWWA is never required for Skilled workers.
       if (data.status === 'Deployed') {
         var _hist = existing._stageHistory || [];
-        var _hasMed  = _hist.indexOf('Medical')    !== -1;
-        var _hasProc = _hist.indexOf('Processing') !== -1 || _hist.indexOf('OWWA') !== -1;
+        var _medVal  = data.medical !== undefined ? data.medical : existing.medical;
+        var _hasMed  = _medVal === 'Passed' || _medVal === 'Exempted';
+        var _catVal   = data.category !== undefined ? data.category : existing.category;
+        var _isSkilled = _catVal === 'Skilled';
+        var _hasProc = _isSkilled
+          ? (_hist.indexOf('Processing') !== -1)
+          : (_hist.indexOf('Processing') !== -1 || _hist.indexOf('OWWA') !== -1);
         if (!_hasMed || !_hasProc) {
           var _miss = [];
           if (!_hasMed)  _miss.push('Medical');
-          if (!_hasProc) _miss.push('Processing or OWWA');
+          if (!_hasProc) _miss.push(_isSkilled ? 'Processing' : 'Processing or OWWA');
           var errEl = document.getElementById('a-error') || document.getElementById('applicant-error');
           if (errEl) {
             errEl.textContent = '⛔ Cannot deploy — required stage' + (_miss.length > 1 ? 's' : '') +
