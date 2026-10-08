@@ -7936,14 +7936,15 @@ function _inlineSaveMedical(appId, newMedical) {
         var _agentRate = getAgentRateForApplicant(_agent, app);
         var _medTotal  = _agentRate ? _agentRate.amount   : (_medRule ? _medRule.commissionAmt : 15000);
         var _medCurr   = _agentRate ? _agentRate.currency : (_medRule ? (_medRule.commissionCurrency||'PHP') : 'PHP');
-        var _medGP     = _medRule ? (_medRule.guaranteePeriod||6) : 6;
-        var _t1amt     = Math.round(_medTotal * 0.20);
+        var _medGP     = getAgentGuaranteeMonths(_agent, _medRule);
+        var _medSplit  = getAgentCommissionSplit(_agent);
+        var _t1amt     = Math.round(_medTotal * _medSplit.t1);
         var _t1gEnd    = (function(){ var d=new Date(); d.setMonth(d.getMonth()+_medGP); return d.toISOString().split('T')[0]; })();
         var _t1 = {
           id: 'COM-' + Date.now() + '-T1',
           agentId: _agent.id, applicantId: appId, applicantName: app.name,
           country: _medCountry || 'Philippines', amount: _t1amt,
-          totalCommission: _medTotal, tranche: 1, trancheLabel: 'Medical — Passed (20%)',
+          totalCommission: _medTotal, tranche: 1, trancheLabel: 'Medical — Passed (' + _medSplit.p1 + '%)',
           currency: _medCurr, status: 'Pending Release', triggerStatus: 'Medical Passed',
           triggerDate: new Date().toISOString().split('T')[0],
           guaranteeEnd: _t1gEnd, releaseDate: null,
@@ -7951,8 +7952,8 @@ function _inlineSaveMedical(appId, newMedical) {
         DB.commissions.push(_t1);
         window._commissionFired[_t1Key] = true;
         autosave('commissions');
-        addAudit('CREATE','Commission','Tranche 1 (20%) — '+(_medCurr==='USD'?'$':'₱')+_t1amt.toLocaleString()+' pending for '+app.name+' — Medical Passed');
-        toast('Commission T1: '+(_medCurr==='USD'?'$':'₱')+_t1amt.toLocaleString()+' (20%) pending for '+_agent.name,'info');
+        addAudit('CREATE','Commission','Tranche 1 ('+_medSplit.p1+'%) — '+(_medCurr==='USD'?'$':'₱')+_t1amt.toLocaleString()+' pending for '+app.name+' — Medical Passed');
+        toast('Commission T1: '+(_medCurr==='USD'?'$':'₱')+_t1amt.toLocaleString()+' ('+_medSplit.p1+'%) pending for '+_agent.name,'info');
         apiCreateCommission(_t1).then(function(r){ if(r&&r.ok&&r.data&&r.data.id){ _t1._dbId=r.data.id; autosave('commissions'); } }).catch(function(){});
         if (currentPage==='accounting') renderCommissions();
       }
@@ -15188,19 +15189,20 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
       toast('\u2139\uFE0F Processing commission for ' + app.name + ' already recorded — skipped', 'info');
     } else {
       var _oc = _resolveCommission();
-      var t2amt = Math.round(_oc.total * 0.20);
+      var _split2 = getAgentCommissionSplit(agent);
+      var t2amt = Math.round(_oc.total * _split2.t2);
       var _t2 = {
         id: 'COM-' + Date.now() + '-T2', agentId: agent.id, applicantId: applicantId,
         applicantName: app.name, country: _oc.country, amount: t2amt,
-        totalCommission: _oc.total, tranche: 2, trancheLabel: newStatus + ' (20%)',
+        totalCommission: _oc.total, tranche: 2, trancheLabel: newStatus + ' (' + _split2.p2 + '%)',
         currency: _oc.currency, status: 'Pending Release', triggerStatus: newStatus,
         triggerDate: new Date().toISOString().split('T')[0],
-        guaranteeEnd: (function(){ var d=new Date(); d.setMonth(d.getMonth()+(_oc.rule?(_oc.rule.guaranteePeriod||6):6)); return d.toISOString().split('T')[0]; })(),
+        guaranteeEnd: (function(){ var d=new Date(); d.setMonth(d.getMonth()+getAgentGuaranteeMonths(agent, _oc.rule)); return d.toISOString().split('T')[0]; })(),
         releaseDate: null,
       };
       DB.commissions.push(_t2); _markTrancheFired(2); autosave('commissions');
-      addAudit('CREATE','Commission','Tranche 2 (20%) — '+_oc.currency+' '+t2amt.toLocaleString()+' pending for '+app.name+' — '+newStatus);
-      toast('Commission T2: '+(_oc.currency==='USD'?'$':'\u20B1')+t2amt.toLocaleString()+' (20%) pending for '+agent.name,'info');
+      addAudit('CREATE','Commission','Tranche 2 ('+_split2.p2+'%) — '+_oc.currency+' '+t2amt.toLocaleString()+' pending for '+app.name+' — '+newStatus);
+      toast('Commission T2: '+(_oc.currency==='USD'?'$':'\u20B1')+t2amt.toLocaleString()+' ('+_split2.p2+'%) pending for '+agent.name,'info');
       apiCreateCommission(_t2).then(function(r){ if(r&&r.ok&&r.data&&r.data.id){ _t2._dbId=r.data.id; autosave('commissions'); } }).catch(function(){});
     }
   }
@@ -15217,19 +15219,20 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
     // Show guarantee period info
     var _country = _appForDeploy && _appForDeploy.job ? _appForDeploy.job.split('·').pop().trim() : '';
     var _rule = DB.countryRules.find(function(r){ return r.country===_country && r.active; });
-    var _gp = _rule ? (_rule.guaranteePeriod||6) : 6;
+    var _gp = getAgentGuaranteeMonths(agent, _rule);
+    var _gpFromAgent = !!(agent && agent.commissionRule && agent.commissionRule.guaranteeMonths != null);
     var _giEl = document.getElementById('deploy-guarantee-info');
     if (_giEl) {
       var _gEnd = new Date(_dateEl ? _dateEl.value : new Date());
       _gEnd.setMonth(_gEnd.getMonth() + _gp);
       _giEl.innerHTML = _gp + ' months &nbsp;→&nbsp; <strong>ends ' + _gEnd.toISOString().split('T')[0] + '</strong>' +
-        '<span style="font-size:11px;color:var(--muted);margin-left:6px">(based on ' + (_country||'country') + ' rule)</span>';
+        '<span style="font-size:11px;color:var(--muted);margin-left:6px">(' + (_gpFromAgent ? 'agent-specific rule' : 'based on ' + (_country||'country') + ' rule') + ')</span>';
       // Update end date when date input changes
       if (_dateEl) {
         _dateEl.oninput = function() {
           var d = new Date(this.value); d.setMonth(d.getMonth()+_gp);
           _giEl.innerHTML = _gp + ' months &nbsp;→&nbsp; <strong>ends ' + d.toISOString().split('T')[0] + '</strong>' +
-            '<span style="font-size:11px;color:var(--muted);margin-left:6px">(based on ' + (_country||'country') + ' rule)</span>';
+            '<span style="font-size:11px;color:var(--muted);margin-left:6px">(' + (_gpFromAgent ? 'agent-specific rule' : 'based on ' + (_country||'country') + ' rule') + ')</span>';
         };
       }
     }
@@ -15584,8 +15587,46 @@ function _collectAgentWorkerRateRows() {
   return out;
 }
 
+// ── Commission rule section of the Edit Agent modal ──
+function _setAgentRuleFields(rule) {
+  var d = DEFAULT_COMMISSION_SPLIT;
+  var set = function(id, v){ var el = document.getElementById(id); if (el) el.value = v; };
+  set('ag-rule-t1', rule && rule.t1 != null ? rule.t1 : d.t1);
+  set('ag-rule-t2', rule && rule.t2 != null ? rule.t2 : d.t2);
+  set('ag-rule-t3', rule && rule.t3 != null ? rule.t3 : d.t3);
+  set('ag-rule-guarantee', rule && rule.guaranteeMonths != null ? rule.guaranteeMonths : '');
+  _syncAgentRuleSum();
+}
+function _resetAgentRule() { _setAgentRuleFields(null); }
+function _agentRuleSum() {
+  var v = function(id){ return parseFloat((document.getElementById(id)||{}).value) || 0; };
+  return v('ag-rule-t1') + v('ag-rule-t2') + v('ag-rule-t3');
+}
+function _syncAgentRuleSum() {
+  var el = document.getElementById('ag-rule-sum'); if (!el) return;
+  var sum = _agentRuleSum();
+  var ok = Math.abs(sum - 100) < 0.001;
+  el.textContent = 'Total: ' + (Math.round(sum * 100) / 100) + '%' + (ok ? '' : ' — must equal 100%');
+  el.style.color = ok ? 'var(--muted)' : 'var(--red)';
+  el.style.fontWeight = ok ? '400' : '700';
+}
+// Read the section back. Returns { rule: null|object, error: string|null }.
+// Default values collapse to null so untouched agents stay on system defaults.
+function _collectAgentRule() {
+  if (Math.abs(_agentRuleSum() - 100) >= 0.001) {
+    return { rule: null, error: 'Commission rule percentages must total 100% (currently ' + (Math.round(_agentRuleSum()*100)/100) + '%)' };
+  }
+  var v = function(id){ return parseFloat((document.getElementById(id)||{}).value) || 0; };
+  var gRaw = (document.getElementById('ag-rule-guarantee')||{}).value;
+  return { rule: _parseCommissionRule({
+    t1: v('ag-rule-t1'), t2: v('ag-rule-t2'), t3: v('ag-rule-t3'),
+    guaranteeMonths: gRaw === '' || gRaw == null ? null : gRaw,
+  }), error: null };
+}
+
 function openAddAgent() {
   editingAgentIdx = -1;
+  _setAgentRuleFields(null);
   document.getElementById('agent-modal-title').textContent = 'Add Agent';
   ['ag-name','ag-code','ag-phone','ag-email','ag-address','ag-notes'].forEach(function(id){
     var el = document.getElementById(id); if(el) el.value='';
@@ -15616,6 +15657,7 @@ function openEditAgent(idx) {
   if (ci) ci.value = a.country;
   _renderAgentRateRows(a.extraRates || []);
   _renderAgentWorkerRateRows(a.workerRates || []);
+  _setAgentRuleFields(a.commissionRule || null);
   var wsec = document.getElementById('ag-worker-section'); if (wsec) wsec.style.display = '';
   openOverlay('overlay-agent');
 }
@@ -15642,7 +15684,10 @@ function submitAgent() {
   var name  = (document.getElementById('ag-name').value||'').trim();
   var phone = (document.getElementById('ag-phone').value||'').trim();
   if (!name || !phone) { toast('Name and phone are required','error'); return; }
+  var _ruleRes = _collectAgentRule();
+  if (_ruleRes.error) { toast(_ruleRes.error, 'error'); return; }
   var data = {
+    commissionRule:      _ruleRes.rule,
     name: name,
     code: (document.getElementById('ag-code').value||'').trim() || _nextAgentCode(),
     phone: phone,
@@ -16510,8 +16555,9 @@ function _doStatusChangeDeployed(applicantId, oldStatus, deployDate) {
       var currency = agentRate ? agentRate.currency : (rule ? (rule.commissionCurrency || 'PHP') : 'PHP');
       return { country: country || 'Philippines', rule: rule, total: total, currency: currency };
     })();
-    var t3amt = Math.round(_dc.total * 0.60);
-    var _gp   = _dc.rule ? (_dc.rule.guaranteePeriod||6) : 6;
+    var _split3 = getAgentCommissionSplit(agent);
+    var t3amt = Math.round(_dc.total * _split3.t3);
+    var _gp   = getAgentGuaranteeMonths(agent, _dc.rule);
     // Guarantee period calculated from ACTUAL deployment date
     var _gEnd = new Date(deployDate);
     _gEnd.setMonth(_gEnd.getMonth() + _gp);
@@ -16521,7 +16567,7 @@ function _doStatusChangeDeployed(applicantId, oldStatus, deployDate) {
     var _t3 = {
       id: 'COM-'+Date.now()+'-T3', agentId: agent.id, applicantId: applicantId,
       applicantName: app.name, country: _dc.country, amount: t3amt,
-      totalCommission: _dc.total, tranche: 3, trancheLabel: 'Deployment (60%)',
+      totalCommission: _dc.total, tranche: 3, trancheLabel: 'Deployment (' + _split3.p3 + '%)',
       currency: _dc.currency, status: 'Pending Release', triggerStatus: 'Deployed',
       triggerDate: deployDate, deploymentDate: deployDate,
       guaranteeEnd: guaranteeEnd, releaseDate: null,
@@ -16533,7 +16579,7 @@ function _doStatusChangeDeployed(applicantId, oldStatus, deployDate) {
     }).catch(function(){});
     agent.totalDeployed = (agent.totalDeployed||0)+1;
     autosave('agents');
-    addAudit('CREATE','Commission','T3 (60%) — '+(_dc.currency==='USD'?'$':'₱')+t3amt.toLocaleString()+
+    addAudit('CREATE','Commission','T3 ('+_split3.p3+'%) — '+(_dc.currency==='USD'?'$':'₱')+t3amt.toLocaleString()+
       ' for '+app.name+' — deployed '+deployDate+' — guarantee ends '+guaranteeEnd);
     toast('✅ Commission T3 created — guarantee ends '+guaranteeEnd, 'success');
     autosave('commissions');
@@ -17943,17 +17989,18 @@ function _createMissingCommissions() {
     var _rate = (typeof getAgentRateForApplicant === 'function') ? getAgentRateForApplicant(agent, app) : null;
     var total    = _rate ? _rate.amount   : (rule ? rule.commissionAmt : 15000);
     var currency = _rate ? _rate.currency : (rule ? (rule.commissionCurrency||'PHP') : 'PHP');
-    var gp=rule?(rule.guaranteePeriod||6):6;
+    var gp=getAgentGuaranteeMonths(agent, rule);
+    var _bfSplit=getAgentCommissionSplit(agent);
     var gEnd=(function(){ var d=new Date(); d.setMonth(d.getMonth()+gp); return d.toISOString().split('T')[0]; })();
     function _hasT(n){ return DB.commissions.some(function(c){ var idMatch=c.applicantId===appId||c.applicantId===(app._dbId||'')||c.applicantId===(app.id||''); var nameMatch=c.applicantName&&app.name&&c.applicantName.toLowerCase().trim()===app.name.toLowerCase().trim(); return (idMatch||nameMatch)&&c.tranche===n&&c.status!=='Reversed'; }); }
     function _makeT(n,label,pct,trigger){ var amt=Math.round(total*pct); return {id:'COM-BF-'+Date.now()+'-'+String(appId).slice(-4)+'-T'+n,agentId:agent.id,applicantId:appId,applicantName:app.name,country:country||'Philippines',amount:amt,totalCommission:total,tranche:n,trancheLabel:label,currency:currency,status:'Pending Release',triggerStatus:trigger,triggerDate:today,guaranteeEnd:gEnd,releaseDate:null,_backfilled:true}; }
-    if (app.medical==='Passed'&&!_hasT(1)){ var t1=_makeT(1,'Medical Cleared (20%)',0.20,'Medical Passed'); DB.commissions.push(t1); created.T1.push(app.name); apiCreateCommission(t1).then(function(r){if(r&&r.ok&&r.data&&r.data.id){t1._dbId=r.data.id;t1.id=r.data.id;autosave('commissions');}}).catch(function(){}); }
-    if ((app.status==='OWWA'||app.status==='Processing')&&!_hasT(2)){ var t2=_makeT(2,app.status+' (20%)',0.20,app.status); DB.commissions.push(t2); created.T2.push(app.name); apiCreateCommission(t2).then(function(r){if(r&&r.ok&&r.data&&r.data.id){t2._dbId=r.data.id;t2.id=r.data.id;autosave('commissions');}}).catch(function(){}); }
+    if (app.medical==='Passed'&&!_hasT(1)){ var t1=_makeT(1,'Medical Cleared ('+_bfSplit.p1+'%)',_bfSplit.t1,'Medical Passed'); DB.commissions.push(t1); created.T1.push(app.name); apiCreateCommission(t1).then(function(r){if(r&&r.ok&&r.data&&r.data.id){t1._dbId=r.data.id;t1.id=r.data.id;autosave('commissions');}}).catch(function(){}); }
+    if ((app.status==='OWWA'||app.status==='Processing')&&!_hasT(2)){ var t2=_makeT(2,app.status+' ('+_bfSplit.p2+'%)',_bfSplit.t2,app.status); DB.commissions.push(t2); created.T2.push(app.name); apiCreateCommission(t2).then(function(r){if(r&&r.ok&&r.data&&r.data.id){t2._dbId=r.data.id;t2.id=r.data.id;autosave('commissions');}}).catch(function(){}); }
     if (app.status==='Deployed'&&!_hasT(3)){
       // Use actual deployment date if stored, otherwise today
       var _depDate = app.deploymentDate || today;
       var _gEnd3 = new Date(_depDate); _gEnd3.setMonth(_gEnd3.getMonth()+gp);
-      var t3 = _makeT(3,'Deployment (60%)',0.60,'Deployed');
+      var t3 = _makeT(3,'Deployment ('+_bfSplit.p3+'%)',_bfSplit.t3,'Deployed');
       t3.triggerDate      = _depDate;
       t3.deploymentDate   = _depDate;
       t3.guaranteeEnd     = _gEnd3.toISOString().split('T')[0];
@@ -21108,6 +21155,47 @@ function getAgentRateForApplicant(agent, app) {
   return getAgentRateForCountry(agent, country);
 }
 
+// ── Per-agent commission rule ────────────────────────────────────────────
+// The tranche split (T1 medical / T2 OWWA-Processing / T3 deployment) and the
+// guarantee period used to be hard-coded at 20/20/60 and "per country rule".
+// Those stay the defaults; an agent can now override them from Edit Agent.
+// Stored as { t1, t2, t3, guaranteeMonths } — guaranteeMonths null = use the
+// destination country's rule (as before).
+var DEFAULT_COMMISSION_SPLIT = { t1: 20, t2: 20, t3: 60 };
+
+// Returns a clean rule object or null (null = nothing custom, use defaults).
+// A split that doesn't total 100 is discarded rather than trusted, so a bad
+// value can never over- or under-pay commission.
+function _parseCommissionRule(raw) {
+  var r = raw;
+  if (typeof r === 'string') { try { r = JSON.parse(r); } catch(e) { r = null; } }
+  if (!r || typeof r !== 'object') return null;
+  var out = {};
+  var t1 = parseFloat(r.t1), t2 = parseFloat(r.t2), t3 = parseFloat(r.t3);
+  var hasSplit = isFinite(t1) && isFinite(t2) && isFinite(t3) && t1 >= 0 && t2 >= 0 && t3 >= 0 &&
+                 Math.abs(t1 + t2 + t3 - 100) < 0.001 &&
+                 !(t1 === DEFAULT_COMMISSION_SPLIT.t1 && t2 === DEFAULT_COMMISSION_SPLIT.t2 && t3 === DEFAULT_COMMISSION_SPLIT.t3);
+  if (hasSplit) { out.t1 = t1; out.t2 = t2; out.t3 = t3; }
+  var gm = parseInt(r.guaranteeMonths);
+  if (isFinite(gm) && gm >= 0 && gm <= 60) out.guaranteeMonths = gm;
+  return (hasSplit || out.guaranteeMonths != null) ? out : null;
+}
+
+// Effective split for an agent as fractions, e.g. { t1:0.2, t2:0.2, t3:0.6 }
+function getAgentCommissionSplit(agent) {
+  var r = agent && agent.commissionRule;
+  var s = (r && r.t1 != null) ? r : DEFAULT_COMMISSION_SPLIT;
+  return { t1: s.t1 / 100, t2: s.t2 / 100, t3: s.t3 / 100,
+           p1: s.t1, p2: s.t2, p3: s.t3 };
+}
+
+// Guarantee months: agent override wins, else the country rule, else 6.
+function getAgentGuaranteeMonths(agent, countryRule) {
+  var r = agent && agent.commissionRule;
+  if (r && r.guaranteeMonths != null) return r.guaranteeMonths;
+  return countryRule ? (countryRule.guaranteePeriod || 6) : 6;
+}
+
 function mapAgent(row) {
   return {
     id:              row.id,
@@ -21120,6 +21208,7 @@ function mapAgent(row) {
     commissionCurrency: row.commission_currency || 'PHP',
     extraRates:      _parseExtraRates(row.extra_rates),
     workerRates:     _parseWorkerRates(row.worker_rates),
+    commissionRule:  _parseCommissionRule(row.commission_rule),
     address:         row.address || '',
     notes:           row.notes || '',
     status:          row.status || 'Active',
@@ -21176,6 +21265,7 @@ async function apiCreateAgent(data) {
       commission_currency: data.commissionCurrency || 'PHP',
       extra_rates:         data.extraRates || [],
       worker_rates:        data.workerRates || [],
+      commission_rule:     data.commissionRule || null,
       address:        data.address || null,
       notes:          data.notes || null,
     })
@@ -21229,6 +21319,7 @@ async function apiUpdateAgent(data) {
       commission_currency: data.commissionCurrency || 'PHP',
       extra_rates:         data.extraRates || [],
       worker_rates:        data.workerRates || [],
+      commission_rule:     data.commissionRule || null,
       address:          data.address || null,
       notes:            data.notes || null,
       status:           data.status,
@@ -21691,6 +21782,36 @@ async function loadSharedPermissions() {
           No worker-specific rates — the country/primary commission applies to all this agent's workers.
         </div>
         <button type="button" class="btn btn-s btn-sm" onclick="addAgentWorkerRateRow()" style="margin-top:8px;align-self:flex-start">+ Add Worker</button>
+      </div>
+      <!-- Commission rule — tranche split + guarantee period, per agent -->
+      <div class="f-grp">
+        <label class="f-lbl" style="display:flex;align-items:center;gap:8px">
+          Commission Rule
+          <span style="font-weight:400;font-size:11px;color:var(--muted)">— how this agent's commission is released. Defaults: 20 / 20 / 60</span>
+        </label>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr) 1.2fr;gap:8px;align-items:end">
+          <div>
+            <div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">T1 · Medical Passed (%)</div>
+            <input class="f-inp" id="ag-rule-t1" type="number" min="0" max="100" step="1" value="20" oninput="_syncAgentRuleSum()">
+          </div>
+          <div>
+            <div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">T2 · OWWA/Processing (%)</div>
+            <input class="f-inp" id="ag-rule-t2" type="number" min="0" max="100" step="1" value="20" oninput="_syncAgentRuleSum()">
+          </div>
+          <div>
+            <div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">T3 · Deployment (%)</div>
+            <input class="f-inp" id="ag-rule-t3" type="number" min="0" max="100" step="1" value="60" oninput="_syncAgentRuleSum()">
+          </div>
+          <div>
+            <div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">Guarantee (months)</div>
+            <input class="f-inp" id="ag-rule-guarantee" type="number" min="0" max="60" step="1" placeholder="Country default">
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
+          <div id="ag-rule-sum" style="font-size:11.5px;color:var(--muted)">Total: 100%</div>
+          <button type="button" class="btn btn-ghost btn-xs" onclick="_resetAgentRule()">Reset to default</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">Applies to commissions created from now on — tranches already recorded keep their amounts.</div>
       </div>
       <div class="f-grp">
         <label class="f-lbl">Address / Area</label>
