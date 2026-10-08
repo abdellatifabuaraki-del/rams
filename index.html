@@ -3960,6 +3960,8 @@ function mapCountryRule(row) {
     currency:           row.currency            || 'PHP',
     expenseRule:        row.expense_rule        || 'full',
     active:             row.active !== false,
+    // Per-country tranche split { t1, t2, t3 } or null (= system default)
+    commissionSplit:    _parseCommissionRule(row.commission_split),
   };
 }
 async function apiFetchCountryRules() {
@@ -3996,6 +3998,7 @@ async function apiSaveCountryRule(rule) {
     commission_currency: rule.commissionCurrency || 'PHP',
     withhold_pct: rule.withholdPct, currency: rule.currency,
     expense_rule: rule.expenseRule, active: rule.active,
+    commission_split: rule.commissionSplit || null,
   };
   var dbId = rule._dbId || rule.id;
   if (dbId && isUUID(dbId)) {
@@ -7936,8 +7939,8 @@ function _inlineSaveMedical(appId, newMedical) {
         var _agentRate = getAgentRateForApplicant(_agent, app);
         var _medTotal  = _agentRate ? _agentRate.amount   : (_medRule ? _medRule.commissionAmt : 15000);
         var _medCurr   = _agentRate ? _agentRate.currency : (_medRule ? (_medRule.commissionCurrency||'PHP') : 'PHP');
-        var _medGP     = getAgentGuaranteeMonths(_agent, _medRule);
-        var _medSplit  = getAgentCommissionSplit(_agent);
+        var _medGP     = getAgentGuaranteeMonths(_agent, _medRule, _medCountry);
+        var _medSplit  = getAgentCommissionSplit(_agent, _medCountry);
         var _t1amt     = Math.round(_medTotal * _medSplit.t1);
         var _t1gEnd    = (function(){ var d=new Date(); d.setMonth(d.getMonth()+_medGP); return d.toISOString().split('T')[0]; })();
         var _t1 = {
@@ -14373,6 +14376,7 @@ function renderCountryRules() {
       '<div class="rule-row"><span>Guarantee Period</span><span class="rule-val">'+r.guaranteePeriod+' mo</span></div>'+
       '<div class="rule-row"><span>Commission Amount</span><span class="rule-val">'+(r.commissionCurrency==='USD'?'$':'₱')+r.commissionAmt.toLocaleString()+' '+(r.commissionCurrency||'PHP')+'</span></div>'+
       '<div class="rule-row"><span>Withhold (guarantee)</span><span class="rule-val">'+r.withholdPct+'%</span></div>'+
+      '<div class="rule-row"><span>Split T1/T2/T3</span><span class="rule-val">'+(r.commissionSplit ? r.commissionSplit.t1+'/'+r.commissionSplit.t2+'/'+r.commissionSplit.t3 : '20/20/60')+'%'+(r.commissionSplit?' ✎':'')+'</span></div>'+
       '<div class="rule-row"><span>Expense Rule</span><span style="font-size:11.5px;color:var(--muted)">'+expLabel+'</span></div>'+
       '<div class="rule-row"><span>Currency</span><span class="rule-val">'+r.currency+'</span></div>'+
       '<div style="display:flex;gap:6px;margin-top:10px">'+
@@ -15189,7 +15193,7 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
       toast('\u2139\uFE0F Processing commission for ' + app.name + ' already recorded — skipped', 'info');
     } else {
       var _oc = _resolveCommission();
-      var _split2 = getAgentCommissionSplit(agent);
+      var _split2 = getAgentCommissionSplit(agent, _oc.country);
       var t2amt = Math.round(_oc.total * _split2.t2);
       var _t2 = {
         id: 'COM-' + Date.now() + '-T2', agentId: agent.id, applicantId: applicantId,
@@ -15197,7 +15201,7 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
         totalCommission: _oc.total, tranche: 2, trancheLabel: newStatus + ' (' + _split2.p2 + '%)',
         currency: _oc.currency, status: 'Pending Release', triggerStatus: newStatus,
         triggerDate: new Date().toISOString().split('T')[0],
-        guaranteeEnd: (function(){ var d=new Date(); d.setMonth(d.getMonth()+getAgentGuaranteeMonths(agent, _oc.rule)); return d.toISOString().split('T')[0]; })(),
+        guaranteeEnd: (function(){ var d=new Date(); d.setMonth(d.getMonth()+getAgentGuaranteeMonths(agent, _oc.rule, _oc.country)); return d.toISOString().split('T')[0]; })(),
         releaseDate: null,
       };
       DB.commissions.push(_t2); _markTrancheFired(2); autosave('commissions');
@@ -15219,7 +15223,7 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
     // Show guarantee period info
     var _country = _appForDeploy && _appForDeploy.job ? _appForDeploy.job.split('·').pop().trim() : '';
     var _rule = DB.countryRules.find(function(r){ return r.country===_country && r.active; });
-    var _gp = getAgentGuaranteeMonths(agent, _rule);
+    var _gp = getAgentGuaranteeMonths(agent, _rule, (_rule&&_rule.country)||'');
     var _gpFromAgent = !!(agent && agent.commissionRule && agent.commissionRule.guaranteeMonths != null);
     var _giEl = document.getElementById('deploy-guarantee-info');
     if (_giEl) {
@@ -15453,7 +15457,8 @@ function _agentRateRowHtml(rate) {
   if (rate && rate.country && _AGENT_COUNTRIES.indexOf(rate.country) === -1) {
     opts = '<option value="' + escapeHtml(rate.country) + '" selected>' + escapeHtml(rate.country) + '</option>' + opts;
   }
-  return '<div class="ag-rate-row" style="display:flex;gap:6px;align-items:center">' +
+  var rule = (rate && rate.rule) || {};
+  return '<div class="ag-rate-row" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">' +
       '<select class="f-inp ag-rate-country" style="flex:1;min-width:0">' + opts + '</select>' +
       '<select class="f-inp ag-rate-currency" style="width:90px">' +
         '<option value="PHP"' + (cur==='PHP'?' selected':'') + '>₱ PHP</option>' +
@@ -15463,6 +15468,12 @@ function _agentRateRowHtml(rate) {
         'style="width:110px" value="' + (rate && rate.amount != null ? rate.amount : '') + '">' +
       '<button type="button" onclick="this.closest(\'.ag-rate-row\').remove();_syncAgentRateEmpty()" ' +
         'style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px;padding:0 4px" title="Remove">✕</button>' +
+      '<div style="width:100%;display:flex;gap:6px;align-items:center;font-size:11px;color:var(--muted)">' +
+        'Split %: T1 <input class="f-inp ag-rate-t1" type="number" min="0" max="100" placeholder="20" style="width:62px" value="' + (rule.t1 != null ? rule.t1 : '') + '">' +
+        'T2 <input class="f-inp ag-rate-t2" type="number" min="0" max="100" placeholder="20" style="width:62px" value="' + (rule.t2 != null ? rule.t2 : '') + '">' +
+        'T3 <input class="f-inp ag-rate-t3" type="number" min="0" max="100" placeholder="60" style="width:62px" value="' + (rule.t3 != null ? rule.t3 : '') + '">' +
+        ' Guarantee (mo) <input class="f-inp ag-rate-gm" type="number" min="0" max="60" placeholder="default" style="width:78px" value="' + (rule.guaranteeMonths != null ? rule.guaranteeMonths : '') + '">' +
+      '</div>' +
     '</div>';
 }
 
@@ -15497,9 +15508,26 @@ function _collectAgentRateRows() {
     var key = country.toLowerCase();
     if (seen[key]) return;
     seen[key] = true;
-    out.push({ country: country, amount: amount, currency: currency === 'USD' ? 'USD' : 'PHP' });
+    var entry = { country: country, amount: amount, currency: currency === 'USD' ? 'USD' : 'PHP' };
+    var v = function(c){ return (row.querySelector(c)||{}).value; };
+    var rule = _parseCommissionRule({ t1: v('.ag-rate-t1'), t2: v('.ag-rate-t2'), t3: v('.ag-rate-t3'), guaranteeMonths: v('.ag-rate-gm') });
+    if (rule) entry.rule = rule;
+    out.push(entry);
   });
   return out;
+}
+
+// Per-country split must be blank (= use default) or total exactly 100.
+function _validateAgentRateRules() {
+  var bad = '';
+  document.querySelectorAll('#ag-extra-rates .ag-rate-row').forEach(function(row){
+    if (bad) return;
+    var f = ['t1','t2','t3'].map(function(k){ return (row.querySelector('.ag-rate-'+k)||{}).value; });
+    if (f.every(function(x){ return x === '' || x == null; })) return;
+    var sum = f.reduce(function(a,x){ return a + (parseFloat(x)||0); }, 0);
+    if (Math.abs(sum - 100) > 0.001) bad = (row.querySelector('.ag-rate-country')||{}).value + ': split must total 100% (now ' + sum + '%)';
+  });
+  return bad;
 }
 
 // ── Worker-specific commission overrides (per applicant, under this agent) ──
@@ -15686,6 +15714,8 @@ function submitAgent() {
   if (!name || !phone) { toast('Name and phone are required','error'); return; }
   var _ruleRes = _collectAgentRule();
   if (_ruleRes.error) { toast(_ruleRes.error, 'error'); return; }
+  var _cErr = _validateAgentRateRules();
+  if (_cErr) { toast(_cErr, 'error'); return; }
   var data = {
     commissionRule:      _ruleRes.rule,
     name: name,
@@ -16555,9 +16585,9 @@ function _doStatusChangeDeployed(applicantId, oldStatus, deployDate) {
       var currency = agentRate ? agentRate.currency : (rule ? (rule.commissionCurrency || 'PHP') : 'PHP');
       return { country: country || 'Philippines', rule: rule, total: total, currency: currency };
     })();
-    var _split3 = getAgentCommissionSplit(agent);
+    var _split3 = getAgentCommissionSplit(agent, _dc.country);
     var t3amt = Math.round(_dc.total * _split3.t3);
-    var _gp   = getAgentGuaranteeMonths(agent, _dc.rule);
+    var _gp   = getAgentGuaranteeMonths(agent, _dc.rule, _dc.country);
     // Guarantee period calculated from ACTUAL deployment date
     var _gEnd = new Date(deployDate);
     _gEnd.setMonth(_gEnd.getMonth() + _gp);
@@ -17524,7 +17554,28 @@ function openAddCountryRule() {
   var gu=document.getElementById('cr-guarantee'); if(gu) gu.value='6';
   var co=document.getElementById('cr-commission'); if(co) co.value='5';
   var wh=document.getElementById('cr-withhold'); if(wh) wh.value='20';
+  _setCountrySplitFields(null);
   openOverlay('overlay-country-rule');
+}
+
+function _setCountrySplitFields(s) {
+  var d = s || DEFAULT_COMMISSION_SPLIT;
+  ['t1','t2','t3'].forEach(function(k){
+    var el = document.getElementById('cr-split-' + k); if (el) el.value = d[k];
+  });
+  _syncCountrySplitSum();
+}
+function _countrySplitSum() {
+  return ['t1','t2','t3'].reduce(function(a,k){
+    var el = document.getElementById('cr-split-' + k);
+    return a + (parseFloat(el && el.value) || 0);
+  }, 0);
+}
+function _syncCountrySplitSum() {
+  var el = document.getElementById('cr-split-sum'); if (!el) return;
+  var s = Math.round(_countrySplitSum() * 100) / 100;
+  el.textContent = '= ' + s + '%';
+  el.style.color = Math.abs(s - 100) < 0.001 ? '#16a34a' : '#dc2626';
 }
 
 function openEditCountryRule(idx) {
@@ -17540,15 +17591,22 @@ function openEditCountryRule(idx) {
   document.getElementById('cr-withhold').value   = r.withholdPct;
   document.getElementById('cr-currency').value   = r.currency;
   document.getElementById('cr-expense-rule').value = r.expenseRule;
+  _setCountrySplitFields(r.commissionSplit || null);
   openOverlay('overlay-country-rule');
 }
 
 function submitCountryRule() {
   var country = (document.getElementById('cr-country').value||'').trim();
   if (!country) { toast('Country name is required','error'); return; }
+  if (Math.abs(_countrySplitSum() - 100) > 0.001) { toast('Commission split must total 100% (currently ' + _countrySplitSum() + '%)','error'); return; }
   var data = {
     country: country,
     flag: '🌍',
+    commissionSplit: _parseCommissionRule({
+      t1: parseFloat(document.getElementById('cr-split-t1').value) || 0,
+      t2: parseFloat(document.getElementById('cr-split-t2').value) || 0,
+      t3: parseFloat(document.getElementById('cr-split-t3').value) || 0
+    }),
     guaranteePeriod: (function(){ var v = document.getElementById('cr-guarantee').value; return v !== '' && !isNaN(parseInt(v)) ? parseInt(v) : 6; })(),
     commissionAmt:   (function(){ var v = document.getElementById('cr-commission').value; return v !== '' && !isNaN(parseFloat(v)) ? parseFloat(v) : 15000; })(),
     commissionCurrency: (document.getElementById('cr-commission-currency') || {}).value || 'PHP',
@@ -17989,8 +18047,8 @@ function _createMissingCommissions() {
     var _rate = (typeof getAgentRateForApplicant === 'function') ? getAgentRateForApplicant(agent, app) : null;
     var total    = _rate ? _rate.amount   : (rule ? rule.commissionAmt : 15000);
     var currency = _rate ? _rate.currency : (rule ? (rule.commissionCurrency||'PHP') : 'PHP');
-    var gp=getAgentGuaranteeMonths(agent, rule);
-    var _bfSplit=getAgentCommissionSplit(agent);
+    var gp=getAgentGuaranteeMonths(agent, rule, country);
+    var _bfSplit=getAgentCommissionSplit(agent, country);
     var gEnd=(function(){ var d=new Date(); d.setMonth(d.getMonth()+gp); return d.toISOString().split('T')[0]; })();
     function _hasT(n){ return DB.commissions.some(function(c){ var idMatch=c.applicantId===appId||c.applicantId===(app._dbId||'')||c.applicantId===(app.id||''); var nameMatch=c.applicantName&&app.name&&c.applicantName.toLowerCase().trim()===app.name.toLowerCase().trim(); return (idMatch||nameMatch)&&c.tranche===n&&c.status!=='Reversed'; }); }
     function _makeT(n,label,pct,trigger){ var amt=Math.round(total*pct); return {id:'COM-BF-'+Date.now()+'-'+String(appId).slice(-4)+'-T'+n,agentId:agent.id,applicantId:appId,applicantName:app.name,country:country||'Philippines',amount:amt,totalCommission:total,tranche:n,trancheLabel:label,currency:currency,status:'Pending Release',triggerStatus:trigger,triggerDate:today,guaranteeEnd:gEnd,releaseDate:null,_backfilled:true}; }
@@ -21083,11 +21141,14 @@ function _parseExtraRates(raw) {
     seen[key] = true;
     return true;
   }).map(function(r){
-    return {
+    var o = {
       country:  String(r.country).trim(),
       amount:   parseFloat(r.amount),
       currency: (r.currency === 'USD' ? 'USD' : 'PHP'),
     };
+    var rule = _parseCommissionRule(r.rule);   // optional per-country split / guarantee
+    if (rule) o.rule = rule;
+    return o;
   });
 }
 
@@ -21181,16 +21242,39 @@ function _parseCommissionRule(raw) {
   return (hasSplit || out.guaranteeMonths != null) ? out : null;
 }
 
-// Effective split for an agent as fractions, e.g. { t1:0.2, t2:0.2, t3:0.6 }
-function getAgentCommissionSplit(agent) {
-  var r = agent && agent.commissionRule;
-  var s = (r && r.t1 != null) ? r : DEFAULT_COMMISSION_SPLIT;
+// Effective split as fractions, e.g. { t1:0.2, t2:0.2, t3:0.6 }.
+// Precedence: the agent's own rule → the destination country's rule →
+// system default 20/20/60. Only an EXACT country match counts here (unlike
+// the commission amount lookup, which falls back to "any active rule") so a
+// split set for one country can never leak onto a different destination.
+function _agentCountryRule(agent, country) {
+  var key = String(country || '').toLowerCase().trim();
+  if (!agent || !key) return null;
+  var hit = (agent.extraRates || []).find(function(r){ return String(r.country).toLowerCase().trim() === key; });
+  return (hit && hit.rule) || null;
+}
+function getAgentCommissionSplit(agent, country) {
+  var s = null;
+  var cr0 = _agentCountryRule(agent, country);       // this agent + this country
+  if (cr0 && cr0.t1 != null) s = cr0;
+  var r = agent && agent.commissionRule;             // agent-wide
+  if (!s && r && r.t1 != null) s = r;
+  if (!s && country) {
+    var key = String(country).toLowerCase().trim();
+    var cr = (DB.countryRules || []).find(function(x){
+      return x.active && String(x.country).toLowerCase().trim() === key;
+    });
+    if (cr && cr.commissionSplit && cr.commissionSplit.t1 != null) s = cr.commissionSplit;
+  }
+  if (!s) s = DEFAULT_COMMISSION_SPLIT;
   return { t1: s.t1 / 100, t2: s.t2 / 100, t3: s.t3 / 100,
            p1: s.t1, p2: s.t2, p3: s.t3 };
 }
 
 // Guarantee months: agent override wins, else the country rule, else 6.
-function getAgentGuaranteeMonths(agent, countryRule) {
+function getAgentGuaranteeMonths(agent, countryRule, country) {
+  var cr0 = _agentCountryRule(agent, country || (countryRule && countryRule.country));
+  if (cr0 && cr0.guaranteeMonths != null) return cr0.guaranteeMonths;
   var r = agent && agent.commissionRule;
   if (r && r.guaranteeMonths != null) return r.guaranteeMonths;
   return countryRule ? (countryRule.guaranteePeriod || 6) : 6;
@@ -21928,6 +22012,16 @@ async function loadSharedPermissions() {
             <option>CAD</option><option>EUR</option>
           </select>
         </div>
+      </div>
+      <div class="f-grp">
+        <label class="f-lbl">Commission Split (%) — T1 Medical / T2 OWWA-Processing / T3 Deployed</label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input class="f-inp" id="cr-split-t1" type="number" min="0" max="100" value="20" oninput="_syncCountrySplitSum()" style="flex:1">
+          <input class="f-inp" id="cr-split-t2" type="number" min="0" max="100" value="20" oninput="_syncCountrySplitSum()" style="flex:1">
+          <input class="f-inp" id="cr-split-t3" type="number" min="0" max="100" value="60" oninput="_syncCountrySplitSum()" style="flex:1">
+          <span id="cr-split-sum" style="font-size:12px;min-width:70px;text-align:right">= 100%</span>
+        </div>
+        <div style="font-size:11px;color:var(--text-3,#888);margin-top:4px">Applies to all agents for this country unless an agent has its own rule. Must total 100.</div>
       </div>
       <div class="f-grp">
         <label class="f-lbl">Expense Responsibility on Backout</label>
