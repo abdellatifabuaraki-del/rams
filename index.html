@@ -4616,7 +4616,7 @@ function startPolling() {
                 if (parsed && typeof parsed === 'object') {
                   viewerScopes = parsed;
                   Store.set('rams:db:viewerScopes', viewerScopes); // sync to private too
-                  filteredApps = [...getScopedApplicants()];
+                  _reapplyFiltersIfActive();
                   if (currentPage === 'applicants') renderApplicants();
                   if (currentPage === 'pipeline')   renderKanban();
                   if (currentPage === 'dashboard')  renderDashboard();
@@ -7569,8 +7569,10 @@ function _reapplyFiltersIfActive() {
     var saved = localStorage.getItem('rams:filters:applicants');
     if (!saved) { filteredApps = [...getScopedApplicants()]; return; }
     var f = JSON.parse(saved);
-    if (f.q || f.s || f.a || f.m || f.jo) {
-      filterApplicants(); // re-run with current dropdown state
+    if (f.q || f.s || f.a || f.m || f.jo || f.c || f.cat) {
+      // Re-run the active filters but stay on the page the user was on
+      window._keepAppPage = true;
+      try { filterApplicants(); } finally { window._keepAppPage = false; }
     } else {
       filteredApps = [...getScopedApplicants()];
     }
@@ -7586,8 +7588,10 @@ function _reapplyFiltersIfActive() {
     var saved = localStorage.getItem('rams:filters:applicants');
     if (!saved) { filteredApps = [...getScopedApplicants()]; return; }
     var f = JSON.parse(saved);
-    if (f.q || f.s || f.a || f.m || f.jo) {
-      filterApplicants(); // re-runs with current saved state
+    if (f.q || f.s || f.a || f.m || f.jo || f.c || f.cat) {
+      // Re-run the active filters but stay on the page the user was on
+      window._keepAppPage = true;
+      try { filterApplicants(); } finally { window._keepAppPage = false; }
     } else {
       filteredApps = [...getScopedApplicants()];
     }
@@ -7644,7 +7648,7 @@ function filterApplicants() {
     if (cat && (x.category || '') !== cat) return false;
     return true;
   });
-  appPage = 1;
+  if (!window._keepAppPage) appPage = 1;
   renderApplicants();
 }
 function _restoreApplicantFilters() {
@@ -8085,6 +8089,9 @@ function renderApplicants() {
       }
     }
   }
+  var _maxPg = Math.max(1, Math.ceil(filteredApps.length / APP_PER_PAGE));
+  if (appPage > _maxPg) appPage = _maxPg;
+  if (appPage < 1) appPage = 1;
   const start = (appPage-1)*APP_PER_PAGE;
   const pageApps = filteredApps.slice(start, start+APP_PER_PAGE);
   const tbody = document.getElementById('app-tbody');
@@ -8639,7 +8646,7 @@ function saveApplicant() {
             if (_activeTabName === 'overview') switchDrawerTab('overview', _activeDrawerTab);
           }
         }
-        filteredApps = [...getScopedApplicants()];
+        _reapplyFiltersIfActive();
         autosave('applicants');
       }
     });
@@ -8676,7 +8683,7 @@ function saveApplicant() {
     var _did = getDisplayId(data);
     if (_did) data.displayId = _did;
   }
-  filteredApps = [...getScopedApplicants()];
+  _reapplyFiltersIfActive();
   autosave('applicants');
   closeOverlay('overlay-applicant');
   // Immediately refresh drawer if it's open for this applicant — shows category change right away
@@ -8710,7 +8717,7 @@ function confirmDelete(type, id) {
       var _delA = DB.applicants.find(x=>x.id===id);
       var _delDbId = _delA ? (_delA._dbId||_delA.id) : id;
       DB.applicants=DB.applicants.filter(x=>x.id!==id);
-      filteredApps=[...getScopedApplicants()];
+      _reapplyFiltersIfActive();
       if (!window._deletedApplicantIds) window._deletedApplicantIds = new Set();
       window._deletedApplicantIds.add(id);
       if (_delDbId !== id) window._deletedApplicantIds.add(_delDbId);
@@ -15788,7 +15795,7 @@ function deleteAgent(idx) {
       ap._agentDbId = '';
     }
   });
-  filteredApps = [...getScopedApplicants()];
+  _reapplyFiltersIfActive();
   autosave('applicants');
 
   // Clear from persistent agent assignment store
