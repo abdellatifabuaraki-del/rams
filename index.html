@@ -1173,7 +1173,7 @@ button[disabled][data-rbac-locked] {
     <div class="page active content-pad" id="page-dashboard">
       <div class="pg-hdr">
         <div class="pg-hdr-l">
-          <h1>Good morning 👋</h1>
+          <h1 id="dash-greeting">Good morning 👋</h1>
           <p>Here's what's happening at My Recruitment Company today.</p>
         </div>
         <div class="pg-hdr-r">
@@ -7101,6 +7101,12 @@ function addAudit(action, entity, detail) {
 // DASHBOARD
 // ════════════════════════════════════════════════════════
 function renderDashboard() {
+  // Greeting follows the business-timezone hour (morning / afternoon / evening)
+  try {
+    var _gh = parseInt(new Intl.DateTimeFormat('en-GB', { timeZone: _ramsTz(), hour: '2-digit', hour12: false }).format(new Date()), 10) % 24;
+    var _ge = document.getElementById('dash-greeting');
+    if (_ge) _ge.textContent = (_gh < 12 ? 'Good morning' : _gh < 18 ? 'Good afternoon' : 'Good evening') + ' 👋';
+  } catch (e) {}
   const _dashApps = getScopedApplicants();
   const _dashJobs = getScopedJobs();
 
