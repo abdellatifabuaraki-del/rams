@@ -3715,7 +3715,7 @@ async function apiCreateExpense(data) {
     amount:       parseFloat(data.amount) || 0,
     category:     data.category || 'Other',
     status:       data.status || 'Paid',
-    expense_date: data.date || data.expense_date || new Date().toISOString().slice(0,10),
+    expense_date: data.date || data.expense_date || _ymd(new Date()),
     applicant_id: (data.applicantId && isUUID(data.applicantId)) ? data.applicantId : null,
     notes:        data.ref || data.notes || null,
   };
@@ -6544,7 +6544,7 @@ function _checkStaleApplicants() {
   var STALE_DAYS = 7; // "more than a week" in the same status
   var STALE_MS   = STALE_DAYS * 24 * 60 * 60 * 1000;
   var now        = Date.now();
-  var today_str  = new Date().toISOString().slice(0, 10);
+  var today_str  = _ymd(new Date());
 
   // Skip terminal statuses — no action needed
   var TERMINAL = ['Deployed', 'Cancelled', 'Rejected', 'Blacklisted', 'Backout', 'Repatriated'];
@@ -6649,7 +6649,7 @@ function _checkJobDeadlines() {
       // Only push once per job per day — check last notified
       var key = 'notif:job:deadline:' + j.id;
       var lastNotified = window._jobDeadlineNotified && window._jobDeadlineNotified[j.id];
-      var today_str = today.toISOString().slice(0, 10);
+      var today_str = _ymd(today);
       if (lastNotified === today_str) return; // already notified today
       // Also check DB.notifications directly — catches cross-tab duplicates
       var alreadyInPanel = (DB.notifications || []).some(function(nx) {
@@ -7946,14 +7946,14 @@ function _inlineSaveMedical(appId, newMedical) {
         var _medGP     = getAgentGuaranteeMonths(_agent, _medRule, _medCountry);
         var _medSplit  = getAgentCommissionSplit(_agent, _medCountry);
         var _t1amt     = Math.round(_medTotal * _medSplit.t1);
-        var _t1gEnd    = (function(){ var d=new Date(); d.setMonth(d.getMonth()+_medGP); return d.toISOString().split('T')[0]; })();
+        var _t1gEnd    = (function(){ var d=new Date(); d.setMonth(d.getMonth()+_medGP); return _ymd(d); })();
         var _t1 = {
           id: 'COM-' + Date.now() + '-T1',
           agentId: _agent.id, applicantId: appId, applicantName: app.name,
           country: _medCountry || 'Philippines', amount: _t1amt,
           totalCommission: _medTotal, tranche: 1, trancheLabel: 'Medical — Passed (' + _medSplit.p1 + '%)',
           currency: _medCurr, status: 'Pending Release', triggerStatus: 'Medical Passed',
-          triggerDate: new Date().toISOString().split('T')[0],
+          triggerDate: _ymd(new Date()),
           guaranteeEnd: _t1gEnd, releaseDate: null,
         };
         DB.commissions.push(_t1);
@@ -8362,7 +8362,7 @@ function saveApplicant() {
       return v || '';
     })(),
     medical: document.getElementById('a-medical').value,
-    date: editId ? DB.applicants.find(a=>a.id===editId).date : new Date().toISOString().split('T')[0],
+    date: editId ? DB.applicants.find(a=>a.id===editId).date : _ymd(new Date()),
     notes: document.getElementById('a-notes').value,
     gender: document.getElementById('a-gender').value,
     passport:  document.getElementById('a-passport').value.trim().toUpperCase(),
@@ -9085,7 +9085,7 @@ function saveDoc() {
     status:         'Approved',
     applicant:      applicant,
     applicantId:    applicantId,
-    date:           new Date().toISOString().slice(0, 10),
+    date:           _ymd(new Date()),
     size:           sizeStr,
     notes:          notesEl ? notesEl.value.trim() : '',
     fileName:       _docFile ? _docFile.name   : null,
@@ -10332,7 +10332,7 @@ function saveExpense() {
   var _expAgent   = app ? DB.agents.find(function(a){ return a.name===app.agent || a.id===app._agentDbId; }) : null;
   var exp = {
     id:          genId('EXP'),
-    date:        document.getElementById('e-date').value || new Date().toISOString().split('T')[0],
+    date:        document.getElementById('e-date').value || _ymd(new Date()),
     desc:        desc,
     applicant:   appName,
     applicantId: app ? (app._dbId || app.id) : null,
@@ -12183,7 +12183,7 @@ function exportCSV(rows, name) {
   const keys = Object.keys(rows[0]);
   const csv = [keys.join(','), ...rows.map(r=>keys.map(k=>`"${String(r[k]).replace(/"/g,'""')}"`).join(','))].join('\n');
   const blob = new Blob([csv], {type:'text/csv'});
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${name}_${new Date().toISOString().split('T')[0]}.csv`; a.click();
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${name}_${_ymd(new Date())}.csv`; a.click();
   addAudit('EXPORT','System',`Exported ${name} (${rows.length} records)`);
   toast(`Exported ${rows.length} records to CSV`, 'success');
 }
@@ -13698,7 +13698,7 @@ function exportCommissions() {
   });
   rows.push('');
   rows.push([_csvCell('FX rate used'), _csvCell(fx)].join(','));
-  _downloadCsv(rows, 'commissions_'+new Date().toISOString().split('T')[0]+'.csv');
+  _downloadCsv(rows, 'commissions_'+_ymd(new Date())+'.csv');
   toast('Exported '+list.length+' commission record(s)','success');
 }
 
@@ -13712,7 +13712,7 @@ function exportAgentPayouts() {
                Math.round(r.released), Math.round(r.reversed), Math.round(r.owed)]
               .map(_csvCell).join(','));
   });
-  _downloadCsv(rows, 'agent_payouts_'+new Date().toISOString().split('T')[0]+'.csv');
+  _downloadCsv(rows, 'agent_payouts_'+_ymd(new Date())+'.csv');
   toast('Exported payout summary for '+rows0.length+' agent(s)','success');
 }
 
@@ -13847,7 +13847,7 @@ function renderCommissions() {
             type: 'adjustment',
             amount: -phpAmt,  // negative = debit — agent owes this back
             desc: 'Clawback — T' + cm.tranche + ' commission reversed (applicant ' + (cm.applicantName||'') + ' backed out/rejected after release)',
-            date: new Date().toISOString().slice(0,10),
+            date: _ymd(new Date()),
             ts: new Date().toISOString(),
           };
           DB.agentLedger.push(ledgerEntry);
@@ -14066,7 +14066,7 @@ function resetCommissions() {
     'Proceed? This will set them to Reversed and remove ledger entries.'
   )) return;
 
-  var today = new Date().toISOString().split('T')[0];
+  var today = _ymd(new Date());
   mismatches.forEach(function(m) {
     var cm = m.cm;
     cm.status = 'Reversed';
@@ -14243,7 +14243,7 @@ function releaseCommission(commId) {
     (currency==='USD'?' (≈ ₱'+phpAmt.toLocaleString()+' PHP)':'')+' for '+c.applicantName+'?')) return;
 
   c.status      = 'Released';
-  c.releaseDate = new Date().toISOString().split('T')[0];
+  c.releaseDate = _ymd(new Date());
   c.fxRate      = fx;      // ← store FX rate used so reversal mirrors it exactly
   c.phpAmount   = phpAmt;  // ← store PHP payout amount for accurate reversal
 
@@ -14492,7 +14492,7 @@ function addLedgerEntry(agentId, type, desc, amount, applicantId) {
     type:           type,
     desc:           desc,
     amount:         amount,
-    date:           new Date().toISOString().split('T')[0],
+    date:           _ymd(new Date()),
     runningBalance: newBalance,
   };
   if (!DB.agentLedger) DB.agentLedger = [];
@@ -14906,7 +14906,7 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
       // Mark each expense as Charged and post individual ledger entries
       uncharged.forEach(function(e) {
         e.status      = 'Charged';
-        e.chargedDate = new Date().toISOString().split('T')[0];
+        e.chargedDate = _ymd(new Date());
         e.chargedTo   = agent.id;
         grandTotal   += e.amount;
 
@@ -14984,7 +14984,7 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
   // Backout: always waive — worker never deployed, employer owes nothing
   // Repatriated: only waive if still within guarantee period — if post-guarantee, employer owes full fee
   if (newStatus === 'Backout' || newStatus === 'Repatriated') {
-    var _today = new Date().toISOString().split('T')[0];
+    var _today = _ymd(new Date());
 
     // For Repatriated: check guarantee period from T3 commission record
     var _shouldWaiveRepatriated = false;
@@ -15129,7 +15129,7 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
     if (openComm) {
       var prevStatus    = openComm.status;
       openComm.status   = 'Reversed';
-      openComm.reversedDate = new Date().toISOString().split('T')[0];
+      openComm.reversedDate = _ymd(new Date());
       openComm.reversedReason = newStatus;
 
       // Debit agent balance if commission was already released
@@ -15207,8 +15207,8 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
         applicantName: app.name, country: _oc.country, amount: t2amt,
         totalCommission: _oc.total, tranche: 2, trancheLabel: newStatus + ' (' + _split2.p2 + '%)',
         currency: _oc.currency, status: 'Pending Release', triggerStatus: newStatus,
-        triggerDate: new Date().toISOString().split('T')[0],
-        guaranteeEnd: (function(){ var d=new Date(); d.setMonth(d.getMonth()+getAgentGuaranteeMonths(agent, _oc.rule, _oc.country)); return d.toISOString().split('T')[0]; })(),
+        triggerDate: _ymd(new Date()),
+        guaranteeEnd: (function(){ var d=new Date(); d.setMonth(d.getMonth()+getAgentGuaranteeMonths(agent, _oc.rule, _oc.country)); return _ymd(d); })(),
         releaseDate: null,
       };
       DB.commissions.push(_t2); _markTrancheFired(2); autosave('commissions');
@@ -15226,7 +15226,7 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
     var _nameEl = document.getElementById('deploy-modal-name');
     if (_nameEl) _nameEl.textContent = (_appForDeploy ? _appForDeploy.name : '') + ' — setting deployment date';
     var _dateEl = document.getElementById('deploy-date-input');
-    if (_dateEl) _dateEl.value = (_appForDeploy && _appForDeploy.deploymentDate) || new Date().toISOString().split('T')[0];
+    if (_dateEl) _dateEl.value = (_appForDeploy && _appForDeploy.deploymentDate) || _ymd(new Date());
     // Show guarantee period info
     var _country = _appForDeploy && _appForDeploy.job ? _appForDeploy.job.split('·').pop().trim() : '';
     var _rule = DB.countryRules.find(function(r){ return r.country===_country && r.active; });
@@ -15236,13 +15236,13 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
     if (_giEl) {
       var _gEnd = new Date(_dateEl ? _dateEl.value : new Date());
       _gEnd.setMonth(_gEnd.getMonth() + _gp);
-      _giEl.innerHTML = _gp + ' months &nbsp;→&nbsp; <strong>ends ' + _gEnd.toISOString().split('T')[0] + '</strong>' +
+      _giEl.innerHTML = _gp + ' months &nbsp;→&nbsp; <strong>ends ' + _ymd(_gEnd) + '</strong>' +
         '<span style="font-size:11px;color:var(--muted);margin-left:6px">(' + (_gpFromAgent ? 'agent-specific rule' : 'based on ' + (_country||'country') + ' rule') + ')</span>';
       // Update end date when date input changes
       if (_dateEl) {
         _dateEl.oninput = function() {
           var d = new Date(this.value); d.setMonth(d.getMonth()+_gp);
-          _giEl.innerHTML = _gp + ' months &nbsp;→&nbsp; <strong>ends ' + d.toISOString().split('T')[0] + '</strong>' +
+          _giEl.innerHTML = _gp + ' months &nbsp;→&nbsp; <strong>ends ' + _ymd(d) + '</strong>' +
             '<span style="font-size:11px;color:var(--muted);margin-left:6px">(' + (_gpFromAgent ? 'agent-specific rule' : 'based on ' + (_country||'country') + ' rule') + ')</span>';
         };
       }
@@ -15382,7 +15382,7 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
           status:        'Pending',
           settledBy:     '',
           settledAt:     '',
-          createdAt:     new Date().toISOString().split('T')[0],
+          createdAt:     _ymd(new Date()),
         };
         DB.employerFees.push(newFee);
         autosave('employerFees');
@@ -15409,7 +15409,7 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
     } else {
       // Auto-create a complaint record and then open the drawer so user can fill details
       var _compUser2  = _compUser();
-      var _today2 = new Date().toISOString().split('T')[0];
+      var _today2 = _ymd(new Date());
       var _newComp = {
         id:            'COMP-' + String(DB.complaints.length + 1).padStart(4,'0'),
         applicantId:   applicantId,
@@ -15854,7 +15854,7 @@ function openManualAdjustment() {
   _filterAdjApplicants();
   ['adj-amount','adj-desc'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
   var _adjDate = document.getElementById('adj-date');
-  if (_adjDate) _adjDate.value = new Date().toISOString().split('T')[0];
+  if (_adjDate) _adjDate.value = _ymd(new Date());
   var cur = document.getElementById('adj-currency'); if (cur) cur.value = 'PHP';
   var hint = document.getElementById('adj-php-equiv'); if (hint) hint.style.display = 'none';
   _updateAdjCurrencyLabel();
@@ -15862,7 +15862,7 @@ function openManualAdjustment() {
   // Default date to today
   var adjDateEl = document.getElementById('adj-date');
   if (adjDateEl && !adjDateEl.value) {
-    adjDateEl.value = new Date().toISOString().split('T')[0];
+    adjDateEl.value = _ymd(new Date());
   }
 }
 
@@ -15927,7 +15927,7 @@ function submitAdjustment() {
   var amount   = parseFloat(document.getElementById('adj-amount').value)||0;
   var desc     = (document.getElementById('adj-desc').value||'').trim();
   var appId    = document.getElementById('adj-applicant').value||null;
-  var adjDate  = (document.getElementById('adj-date')||{}).value || new Date().toISOString().split('T')[0];
+  var adjDate  = (document.getElementById('adj-date')||{}).value || _ymd(new Date());
 
   if (!agentId||!desc||amount<=0) { toast('Agent, description and amount are required','error'); return; }
   if (!adjDate) { toast('Please enter a date for this adjustment','error'); return; }
@@ -16142,7 +16142,7 @@ function markFeeSettled(feeId) {
   var currentUser = _compUser();
   fee.status    = 'Settled';
   fee.settledBy = currentUser;
-  fee.settledAt = new Date().toISOString().split('T')[0];
+  fee.settledAt = _ymd(new Date());
   autosave('employerFees');
   _syncEmployerFees();
   apiPatchEmployerFee(fee._dbId || fee.id, {
@@ -16164,7 +16164,7 @@ function markFeeWaived(feeId) {
   var currentUser = _compUser();
   fee.status    = 'Waived';
   fee.settledBy = currentUser + ' (waived)';
-  fee.settledAt = new Date().toISOString().split('T')[0];
+  fee.settledAt = _ymd(new Date());
   autosave('employerFees');
   _syncEmployerFees();
   apiPatchEmployerFee(fee._dbId || fee.id, {
@@ -16205,7 +16205,7 @@ function exportEmployerFees() {
   var blob = new Blob([rows.join('\n')], { type: 'text/csv' });
   var a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'employer_fees_' + new Date().toISOString().split('T')[0] + '.csv';
+  a.download = 'employer_fees_' + _ymd(new Date()) + '.csv';
   a.click();
 }
 
@@ -16347,7 +16347,7 @@ function submitManualFee() {
     status:        'Pending',
     settledBy:     '',
     settledAt:     '',
-    createdAt:     new Date().toISOString().split('T')[0],
+    createdAt:     _ymd(new Date()),
   });
 
   autosave('employerFees');
@@ -16443,7 +16443,7 @@ function autoWaiveBackoutFees() {
       .map(function(a){ return a.name; })
   );
 
-  var today = new Date().toISOString().split('T')[0];
+  var today = _ymd(new Date());
 
   // Build set of repatriated applicants still within guarantee period
   var withinGuaranteeIds = new Set();
@@ -16598,7 +16598,7 @@ function _doStatusChangeDeployed(applicantId, oldStatus, deployDate) {
     // Guarantee period calculated from ACTUAL deployment date
     var _gEnd = new Date(deployDate);
     _gEnd.setMonth(_gEnd.getMonth() + _gp);
-    var guaranteeEnd = _gEnd.toISOString().split('T')[0];
+    var guaranteeEnd = _ymd(_gEnd);
     var _fx = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
 
     var _t3 = {
@@ -16704,7 +16704,7 @@ function backfillEmployerFees() {
       jobId: linkedJob._dbId || linkedJob.id, jobTitle: linkedJob.title,
       employer: linkedJob.employer, country: linkedJob.country || app.destination || '',
       feeUSD: feeUSD, status: 'Pending', settledBy: '', settledAt: '',
-      createdAt: new Date().toISOString().split('T')[0],
+      createdAt: _ymd(new Date()),
     });
     created++;
     report.push({ app: app, job: linkedJob, feeUSD: feeUSD, reason: '✅ Created — $'+feeUSD+' USD', ok: true });
@@ -16899,7 +16899,22 @@ function _compUser() {
   } catch (e) {}
   return 'Unknown user';
 }
-function _today() { return new Date().toISOString().split('T')[0]; }
+// ── Business-timezone dates ──────────────────────────────────────────
+// Date.toISOString() is UTC, so between 00:00 and 08:00 in Manila (UTC+8) it
+// returned YESTERDAY's date. _ymd() formats a Date as YYYY-MM-DD in the
+// business timezone (Settings → Timezone, default Asia/Manila) instead.
+function _ramsTz() { return window._ramsTimezone || 'Asia/Manila'; }
+function _ymd(d) {
+  d = d || new Date();
+  if (!(d instanceof Date)) d = new Date(d);
+  if (isNaN(d.getTime())) return '';
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: _ramsTz(), year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+  } catch (e) {
+    return new Date(d.getTime() + 8 * 3600000).toISOString().slice(0, 10);   // Manila fallback
+  }
+}
+function _today() { return _ymd(new Date()); }
 function _docIcon(name) {
   if (!name) return '📄';
   var ext = (name.split('.').pop()||'').toLowerCase();
@@ -17731,7 +17746,7 @@ function openNewInvoice() {
   }
   _editingInvoiceId=null;
   var modal_title=document.getElementById('inv-modal-title'); if(modal_title) modal_title.textContent='🧾 New Invoice';
-  ['inv-number','inv-date','inv-counterpart','inv-charges-for','inv-employer-address','inv-notes'].forEach(function(id){ var el=document.getElementById(id); if(el){ if(id==='inv-number') el.value=_nextInvoiceNo(); else if(id==='inv-date') el.value=new Date().toISOString().split('T')[0]; else if(id==='inv-charges-for') el.value='APPLICANTS DEPLOYMENT'; else el.value=''; } });
+  ['inv-number','inv-date','inv-counterpart','inv-charges-for','inv-employer-address','inv-notes'].forEach(function(id){ var el=document.getElementById(id); if(el){ if(id==='inv-number') el.value=_nextInvoiceNo(); else if(id==='inv-date') el.value=_ymd(new Date()); else if(id==='inv-charges-for') el.value='APPLICANTS DEPLOYMENT'; else el.value=''; } });
   var pd=document.getElementById('inv-paid'); if(pd) pd.value='0';
   var empSel=document.getElementById('inv-employer');
   if(empSel){ var employers=[...new Set((DB.jobs||[]).map(function(j){return j.employer;}).filter(Boolean))].sort(); empSel.innerHTML='<option value="">— Select employer —</option>'+employers.map(function(e){return '<option value="'+e+'">'+e+'</option>';}).join(''); }
@@ -17801,7 +17816,7 @@ function previewInvoice() { var inv=_collectInvoiceData(); _renderInvoicePrint(i
 function _collectInvoiceData() {
   var rows=[]; document.querySelectorAll('#inv-rows .inv-row').forEach(function(row){ var usd=parseFloat((row.querySelector('.inv-usd')||{}).value||0)||0; rows.push({applicant:(row.querySelector('.inv-applicant')||{}).value||'',particular:(row.querySelector('.inv-particular')||{}).value||'PROCESSING FEES',company:(row.querySelector('.inv-company')||{}).value||'',usd:usd}); });
   var totalUSD=rows.reduce(function(s,r){return s+r.usd;},0); var paid=parseFloat((document.getElementById('inv-paid')||{}).value)||0;
-  return { id:_editingInvoiceId||('INV-'+Date.now()), number:(document.getElementById('inv-number')||{}).value||_nextInvoiceNo(), date:(document.getElementById('inv-date')||{}).value, counterpart:(document.getElementById('inv-counterpart')||{}).value, chargesFor:(document.getElementById('inv-charges-for')||{}).value, employer:(document.getElementById('inv-employer')||{}).value, employerAddress:(document.getElementById('inv-employer-address')||{}).value, rows:rows, totalUSD:totalUSD, paid:paid, balance:totalUSD-paid, notes:(document.getElementById('inv-notes')||{}).value, createdAt:new Date().toISOString().split('T')[0] };
+  return { id:_editingInvoiceId||('INV-'+Date.now()), number:(document.getElementById('inv-number')||{}).value||_nextInvoiceNo(), date:(document.getElementById('inv-date')||{}).value, counterpart:(document.getElementById('inv-counterpart')||{}).value, chargesFor:(document.getElementById('inv-charges-for')||{}).value, employer:(document.getElementById('inv-employer')||{}).value, employerAddress:(document.getElementById('inv-employer-address')||{}).value, rows:rows, totalUSD:totalUSD, paid:paid, balance:totalUSD-paid, notes:(document.getElementById('inv-notes')||{}).value, createdAt:_ymd(new Date()) };
 }
 // Candidates due for payment (Pending employer fee) for a given employer \u2014
 // the actual "check" the invoice form runs whenever the employer changes.
@@ -18044,7 +18059,7 @@ function backfillCommissions() {
 
 // Shared scan used by both the manual button and the automatic pass.
 function _createMissingCommissions() {
-  var created={T1:[],T2:[],T3:[]}, skipped=0, today=new Date().toISOString().split('T')[0];
+  var created={T1:[],T2:[],T3:[]}, skipped=0, today=_ymd(new Date());
   DB.applicants.forEach(function(app) {
     var agent=DB.agents.find(function(a){ return a.id===app._agentDbId||a.id===app._agentId||a.id===app.agentId||a.name===app.agent; });
     if (!agent) { skipped++; return; }
@@ -18056,7 +18071,7 @@ function _createMissingCommissions() {
     var currency = _rate ? _rate.currency : (rule ? (rule.commissionCurrency||'PHP') : 'PHP');
     var gp=getAgentGuaranteeMonths(agent, rule, country);
     var _bfSplit=getAgentCommissionSplit(agent, country);
-    var gEnd=(function(){ var d=new Date(); d.setMonth(d.getMonth()+gp); return d.toISOString().split('T')[0]; })();
+    var gEnd=(function(){ var d=new Date(); d.setMonth(d.getMonth()+gp); return _ymd(d); })();
     function _hasT(n){ return DB.commissions.some(function(c){ var idMatch=c.applicantId===appId||c.applicantId===(app._dbId||'')||c.applicantId===(app.id||''); var nameMatch=c.applicantName&&app.name&&c.applicantName.toLowerCase().trim()===app.name.toLowerCase().trim(); return (idMatch||nameMatch)&&c.tranche===n&&c.status!=='Reversed'; }); }
     function _makeT(n,label,pct,trigger){ var amt=Math.round(total*pct); return {id:'COM-BF-'+Date.now()+'-'+String(appId).slice(-4)+'-T'+n,agentId:agent.id,applicantId:appId,applicantName:app.name,country:country||'Philippines',amount:amt,totalCommission:total,tranche:n,trancheLabel:label,currency:currency,status:'Pending Release',triggerStatus:trigger,triggerDate:today,guaranteeEnd:gEnd,releaseDate:null,_backfilled:true}; }
     if (app.medical==='Passed'&&!_hasT(1)){ var t1=_makeT(1,'Medical Cleared ('+_bfSplit.p1+'%)',_bfSplit.t1,'Medical Passed'); DB.commissions.push(t1); created.T1.push(app.name); apiCreateCommission(t1).then(function(r){if(r&&r.ok&&r.data&&r.data.id){t1._dbId=r.data.id;t1.id=r.data.id;autosave('commissions');}}).catch(function(){}); }
@@ -18068,7 +18083,7 @@ function _createMissingCommissions() {
       var t3 = _makeT(3,'Deployment ('+_bfSplit.p3+'%)',_bfSplit.t3,'Deployed');
       t3.triggerDate      = _depDate;
       t3.deploymentDate   = _depDate;
-      t3.guaranteeEnd     = _gEnd3.toISOString().split('T')[0];
+      t3.guaranteeEnd     = _ymd(_gEnd3);
       DB.commissions.push(t3); created.T3.push(app.name);
       apiCreateCommission(t3).then(function(r){if(r&&r.ok&&r.data&&r.data.id){t3._dbId=r.data.id;t3.id=r.data.id;autosave('commissions');}}).catch(function(){});
     }
@@ -18122,7 +18137,7 @@ function exportFilteredExpenses() {
   if (_expFilterState.agent)  label.push(_expFilterState.agent);
   if (_expFilterState.status) label.push(_expFilterState.status);
   if (_expFilterState.q)      label.push(_expFilterState.q);
-  var filename = 'expenses' + (label.length ? '_' + label.join('_').replace(/\s+/g,'-').toLowerCase() : '') + '_' + new Date().toISOString().split('T')[0] + '.csv';
+  var filename = 'expenses' + (label.length ? '_' + label.join('_').replace(/\s+/g,'-').toLowerCase() : '') + '_' + _ymd(new Date()) + '.csv';
 
   var blob = new Blob([rows.join('\n')], { type: 'text/csv' });
   var url  = URL.createObjectURL(blob);
@@ -18141,7 +18156,7 @@ function exportAccountingReport() {
   var blob = new Blob([rows.join('\n')],{type:'text/csv'});
   var url  = URL.createObjectURL(blob);
   var lnk  = document.createElement('a');
-  lnk.href = url; lnk.download = 'agent_accounting_'+new Date().toISOString().split('T')[0]+'.csv';
+  lnk.href = url; lnk.download = 'agent_accounting_'+_ymd(new Date())+'.csv';
   lnk.click();
   toast('Report exported','success');
 }
@@ -18158,7 +18173,7 @@ function exportLedger() {
   var blob = new Blob([rows.join('\n')],{type:'text/csv'});
   var url  = URL.createObjectURL(blob);
   var lnk  = document.createElement('a');
-  lnk.href = url; lnk.download = (agent?agent.name:'agent')+'_ledger_'+new Date().toISOString().split('T')[0]+'.csv';
+  lnk.href = url; lnk.download = (agent?agent.name:'agent')+'_ledger_'+_ymd(new Date())+'.csv';
   lnk.click();
   toast('Ledger exported','success');
 }
@@ -18229,7 +18244,7 @@ saveApplicant = function() {
 
 // Check guarantee periods on load
 function checkGuaranteePeriods() {
-  var today = new Date().toISOString().split('T')[0];
+  var today = _ymd(new Date());
   var expiring = DB.commissions.filter(function(c){
     if (c.status!=='In Guarantee') return false;
     var end = new Date(c.guaranteeEnd);
@@ -18907,7 +18922,7 @@ function updateFxRate() {
   var rate = parseFloat(el ? el.value : 57.5);
   if (!rate || rate < 1) { toast('Invalid exchange rate','error'); return; }
   DB.officeFunds.fxRate = rate;
-  DB.officeFunds.fxUpdated = new Date().toISOString().split('T')[0];
+  DB.officeFunds.fxUpdated = _ymd(new Date());
   autosave('officeFunds');
   apiUpdateOfficeFunds(DB.officeFunds).catch(function(){});
   var updEl = document.getElementById('fx-updated');
@@ -18924,7 +18939,7 @@ function openAddFunds(currency) {
   var cur = document.getElementById('funds-currency');
   if (cur) cur.value = currency || 'PHP';
   var dt = document.getElementById('funds-date');
-  if (dt) dt.value = new Date().toISOString().split('T')[0];
+  if (dt) dt.value = _ymd(new Date());
   var amt = document.getElementById('funds-amount');
   if (amt) { amt.value=''; }
   var src = document.getElementById('funds-source'); if (src) src.value='';
@@ -19046,7 +19061,7 @@ function openOfficeExpense(currency) {
   var cur = document.getElementById('oe-currency');
   if (cur) cur.value = currency || 'PHP';
   var dt = document.getElementById('oe-date');
-  if (dt) dt.value = new Date().toISOString().split('T')[0];
+  if (dt) dt.value = _ymd(new Date());
   ['oe-desc','oe-amount','oe-ref','oe-override-reason'].forEach(function(id){
     var el=document.getElementById(id); if(el) el.value='';
   });
@@ -19127,7 +19142,7 @@ function submitOfficeExpense() {
 // ── REFUND ────────────────────────────────────────────────────────────
 function openRefund() {
   ['rf-source-name','rf-notes'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
-  var dt=document.getElementById('rf-date'); if(dt) dt.value=new Date().toISOString().split('T')[0];
+  var dt=document.getElementById('rf-date'); if(dt) dt.value=_ymd(new Date());
   var am=document.getElementById('rf-amount'); if(am) am.value='';
   openOverlay('overlay-refund');
   setTimeout(function(){ var el=document.getElementById('rf-source-name'); if(el) el.focus(); },100);
@@ -19203,7 +19218,7 @@ function submitOfficeAdjustment() {
     desc:     'Manual adjustment — '+reason,
     ref:      'ADJ-'+String(Date.now()).slice(-5),
     category: null,
-    date:     new Date().toISOString().split('T')[0],
+    date:     _ymd(new Date()),
     postedBy: uname,
     ts:       new Date().toISOString(),
   });
@@ -19238,7 +19253,7 @@ function exportOfficeLedger() {
   var blob = new Blob([rows.join('\n')],{type:'text/csv'});
   var a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'office_fund_ledger_'+new Date().toISOString().split('T')[0]+'.csv';
+  a.download = 'office_fund_ledger_'+_ymd(new Date())+'.csv';
   a.click();
   toast('Office Fund ledger exported (' + entries.length + ' entries)', 'success');
 }
@@ -19273,7 +19288,7 @@ function exportExpensesFundLedger() {
   var blob = new Blob([rows.join('\n')], { type: 'text/csv' });
   var a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'expenses_fund_ledger_'+new Date().toISOString().split('T')[0]+'.csv';
+  a.download = 'expenses_fund_ledger_'+_ymd(new Date())+'.csv';
   a.click();
   toast('Expenses Fund ledger exported (' + rowsData.length + ' entries)', 'success');
 }
@@ -19304,7 +19319,7 @@ function submitFunds() {
   var source   = (document.getElementById('funds-source').value || '').trim();
   var notes    = (document.getElementById('funds-notes').value  || '').trim();
   var dateEl   = document.getElementById('funds-date');
-  var date     = dateEl ? dateEl.value : new Date().toISOString().split('T')[0];
+  var date     = dateEl ? dateEl.value : _ymd(new Date());
   var errEl    = document.getElementById('funds-error');
   if (errEl) errEl.style.display = 'none';
   if (amount <= 0) { toast('Amount must be greater than zero','error'); return; }
@@ -21465,7 +21480,7 @@ async function apiCreateLedgerEntry(entry) {
       description:     entry.desc,
       amount:          entry.amount,
       running_balance: entry.runningBalance,
-      entry_date:      entry.date || new Date().toISOString().split('T')[0],
+      entry_date:      entry.date || _ymd(new Date()),
     }),
   });
   // Replace local LDG-xxx id with real UUID from DB
