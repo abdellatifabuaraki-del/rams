@@ -2592,7 +2592,6 @@ button[disabled][data-rbac-locked] {
           <button class="btn btn-s btn-sm" onclick="savePermissions()">💾 Save Permissions</button>
           <button class="btn btn-s btn-sm" onclick="exportData('roles')">⬇ Export</button>
           <button class="btn btn-s btn-sm" onclick="openCreateUser()">+ Create User</button>
-          <button class="btn btn-p btn-sm" onclick="openAddRole()">+ Custom Role</button>
         </div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px" id="role-cards"></div>
@@ -3156,10 +3155,10 @@ function noteTip(applicant) {
 // Map frontend role labels → backend DB role values
 function toDbRole(role) {
   var map = {
-    'Admin':'admin', 'admin':'admin', 'super_admin':'super_admin',
+    'Admin':'admin', 'admin':'admin', 'super_admin':'super_admin', 'Super Admin':'super_admin',
     'Recruiter':'agent', 'recruiter':'agent', 'agent':'agent',
     'Manager':'manager', 'manager':'manager',
-    'Compliance':'viewer', 'compliance':'viewer',
+    'Compliance':'compliance', 'compliance':'compliance',
     'Finance':'finance', 'finance':'finance',
     'Viewer':'viewer', 'viewer':'viewer',
   };
@@ -3169,9 +3168,9 @@ function toDbRole(role) {
 // Map backend DB role → frontend display label
 function fromDbRole(role) {
   var map = {
-    'super_admin':'Admin', 'admin':'Admin',
+    'super_admin':'Super Admin', 'admin':'Admin',
     'agent':'Recruiter', 'recruiter':'Recruiter',
-    'manager':'Manager',
+    'manager':'Manager', 'compliance':'Compliance',
     'finance':'Finance', 'viewer':'Viewer',
   };
   return map[role] || role;
@@ -3295,28 +3294,7 @@ async function _tryRevalidateSession() {
       return true;
     }
 
-    // Token truly expired — try to re-login with stored credentials
-    var storedUser = window._ramsSessionUser;
-    var storedPass = await Store.get('rams:session:pass').catch(function(){ return null; });
-    storedPass = storedPass ? (typeof storedPass === 'string' ? storedPass : storedPass.value) : null;
-
-    if (storedUser && storedUser.email && storedPass) {
-      var loginRes = await fetch(RAILWAY_URL + '/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: storedUser.email, password: storedPass }),
-      });
-      if (loginRes.ok) {
-        var loginData = await loginRes.json();
-        if (loginData && loginData.token) {
-          window._ramsSessionToken = loginData.token;
-          await Store.set('rams:session:token', loginData.token);
-          console.log('[RAMS] Session silently refreshed');
-          return true;
-        }
-      }
-    }
-
+    // Token expired or revoked — the user must sign in again (no stored credentials).
     return false;
   } catch(e) {
     console.warn('[_tryRevalidateSession]', e.message);
@@ -3355,7 +3333,15 @@ async function _fetchFresh(path, headers, opts) {
       handleLogout();
       return { ok: false, error: 'Unauthorized', httpStatus: 401 };
     }
-    if (res.status === 403) { toast('Permission denied: '+(data.error||'Your role cannot perform this action'),'error'); return {ok:false,error:data.error||'Forbidden',httpStatus:403}; }
+    if (res.status === 403) {
+      if (data && data.code === '2FA_SETUP_REQUIRED') {
+        if (!window._2faToastShown) { window._2faToastShown = true; toast('Two-factor authentication is required for your role. Enable it in Settings → Security to continue.', 'error'); }
+      } else if (String(opts.method || 'GET').toUpperCase() !== 'GET') {
+        // Only announce denied ACTIONS; background reads a role has no access to stay silent
+        toast('Permission denied: '+(data.error||'Your role cannot perform this action'),'error');
+      }
+      return {ok:false,error:data.error||'Forbidden',httpStatus:403};
+    }
     // Return (not throw) for all other HTTP errors so callers can check r.httpStatus
     if (!res.ok) return { ok: false, error: data.error || data.message || 'Server error ['+res.status+']', httpStatus: res.status, data: data };
     return { ok: true, data: data, httpStatus: res.status };
@@ -11990,32 +11976,59 @@ const ROLES_CONFIG=[
   {name:'Viewer',color:'#8FA0BE',desc:'Read-only access to data',users:0},
 ];
 const PERMISSIONS=[
-  ['Create Applicants',true,true,false,false,false,false],
+  ['Create Applicants',true,true,true,false,false,false],
   ['Edit Applicants',true,true,true,false,false,false],
-  ['Delete Applicants',true,false,false,false,false,false],
+  ['Delete Applicants',true,false,true,false,false,false],
   ['View All Applicants',true,true,true,true,true,true],
   ['Export Applicant Data',true,true,true,true,false,false],
-  ['Manage Job Orders',true,true,true,false,false,false],
+  ['View Job Orders',true,true,true,false,false,false],
+  ['Manage Job Orders',true,false,true,false,false,false],
+  ['Delete Job Orders',true,false,false,false,false,false],
   ['Approve Documents',true,false,true,true,false,false],
-  ['Upload Documents',true,true,false,true,false,false],
+  ['Upload Documents',true,true,true,true,false,false],
+  ['Delete Documents',true,false,true,false,false,false],
   ['View Analytics',true,true,true,true,true,true],
-  ['Manage Accounting',true,true, false,false,true, false],
-  ['View Accounting',true,true, true, false,true, false],
+  ['Manage Accounting',true,false,true,false,true,false],
+  ['View Accounting',true,true,true,false,true,false],
   ['Export Reports',true,true,true,false,true,false],
   ['Manage Users',true,false,false,false,false,false],
   ['Manage Roles',true,false,false,false,false,false],
   ['View Audit Log',true,false,true,true,false,false],
   ['Manage Integrations',true,false,false,false,false,false],
-  ['Manage Expenses',true,false,false,false,false,false],
+  ['Manage Expenses',true,false,true,false,true,false],
+  ['Delete Expenses',true,false,false,false,true,false],
   ['System Settings',true,false,false,false,false,false],
   ['Send Chat Messages',true,true,true,true,true,false],
+  ['Manage Chat Rooms',true,false,true,false,false,false],
   ['View Dashboard',true,true,true,true,true,true],
   ['View Complaints',true,true,true,false,false,false],
   ['Manage Complaints',true,true,false,false,false,false],
   ['View Inquiries',true,true,true,false,false,false],
+  ['Manage Inquiries',true,true,true,false,false,false],
+  ['Delete Inquiries',true,false,true,false,false,false],
   ['Release/Reverse Commissions',true,false,true,false,true,false],
   ['Manage Invoices',true,false,false,false,true,false],
+  ['Delete Invoices',true,false,true,false,false,false],
+  ['Manage Agents',true,false,true,false,false,false],
+  ['Delete Agents',true,false,false,false,false,false],
+  ['Manage Country Rules',true,false,false,false,false,false],
+  ['Manage Employer Fees',true,false,true,false,false,false],
+  ['Settle Employer Fees',true,false,false,false,false,false],
+  ['Delete Accounting Records',true,false,false,false,false,false],
+  ['Manage Viewer Access',true,false,true,false,false,false],
+  ['Send Notifications',true,false,true,false,false,false],
+  ['Use WhatsApp Inbox',true,true,true,false,false,false],
 ];
+// Live head-count per built-in role (was a hard-coded number)
+function _roleUserCount(r) {
+  if (!DB.users || !DB.users.length) return r.users || 0;
+  return DB.users.filter(function(u){
+    var d = (typeof getDisplayRole === 'function') ? getDisplayRole(u.role) : u.role;
+    return String(d || '').toLowerCase() === String(r.name).toLowerCase() ||
+           (r.name === 'Admin' && /admin/i.test(String(u.role))) ||
+           (r.name === 'Recruiter' && /^(agent|recruiter)$/i.test(String(u.role)));
+  }).length;
+}
 function renderRoles() {
   document.getElementById('role-cards').innerHTML = ROLES_CONFIG.map((r,ri)=>`
     <div class="card cp" style="position:relative">
@@ -12023,13 +12036,12 @@ function renderRoles() {
         <div style="width:32px;height:32px;border-radius:8px;background:${r.color}20;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:${r.color}">${r.name[0]}</div>
         <div style="flex:1">
           <div style="font-size:13.5px;font-weight:800">${r.name}</div>
-          <div style="font-size:11px;color:var(--dim)">${r.users} user${r.users!==1?'s':''}</div>
+          <div style="font-size:11px;color:var(--dim)">${_roleUserCount(r)} user${_roleUserCount(r)!==1?'s':''}</div>
         </div>
       </div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:10px">${r.desc}</div>
       <div class="role-actions">
         <button class="btn btn-s btn-sm" style="flex:1" onclick="editRole(${ri})">✏ Edit</button>
-        <button class="btn btn-danger btn-xs" onclick="deleteRole(${ri})">✕</button>
       </div>
     </div>
   `).join('');
@@ -12317,7 +12329,7 @@ async function _doLogin() {
     Store.set('rams:session:user',  JSON.stringify(r.data.user));
     // Store credentials for silent session refresh on 401 (token expiry)
     // Stored only in private Store — never shared
-    Store.set('rams:session:pass', pass).catch(function(){});
+    Store.remove('rams:session:pass').catch(function(){});   // never keep the password
     window._ramsSessionUser  = r.data.user;
     window._ramsSessionToken = r.data.token;
     _showApp(r.data.user);
@@ -12492,6 +12504,11 @@ function submitChangePassword() {
     return res.json().then(function(d) { return { ok: res.ok, data: d }; });
   }).then(function(r) {
     if (!r.ok) throw new Error(r.data.error || 'Password change failed');
+    // Server revoked every older session; adopt the fresh token so this one continues
+    if (r.data && r.data.token) {
+      window._ramsSessionToken = r.data.token;
+      try { Store.set('rams:session:token', r.data.token); } catch (e) {}
+    }
     closeOverlay('overlay-change-password');
     toast('Password updated successfully', 'success');
   }).catch(function(err) {
@@ -12595,20 +12612,12 @@ renderRoles = function() {
     actions.className = 'role-actions';
     actions.style.cssText = 'display:flex;gap:6px;margin-top:10px;border-top:1px solid var(--border);padding-top:10px;';
     actions.innerHTML =
-      '<button class="btn btn-s btn-sm" style="flex:1" onclick="editRole(' + idx + ')">✏ Edit</button>' +
-      '<button class="btn btn-danger btn-sm" onclick="deleteRole(' + idx + ')">✕</button>';
+      '<button class="btn btn-s btn-sm" style="flex:1" onclick="editRole(' + idx + ')">✏ Edit</button>';
     card.appendChild(actions);
   });
-  // Add "Add Role" button if not already there
-  var rolesPage = document.getElementById('page-roles');
-  if (rolesPage && !rolesPage.querySelector('.add-role-btn')) {
-    var addBtn = document.createElement('button');
-    addBtn.className = 'btn btn-p btn-sm add-role-btn';
-    addBtn.style.cssText = 'margin-top:16px;';
-    addBtn.textContent = '+ Add Custom Role';
-    addBtn.onclick = openAddRole;
-    rolesPage.appendChild(addBtn);
-  }
+  // Roles are the six built-in server roles — custom roles can't be assigned to
+  // accounts or enforced by the API, so the add/delete controls are not offered.
+  // Permissions for each role are edited in the matrix below.
 };
 
 // Settings patch moved to combined patch below
@@ -19937,7 +19946,7 @@ function deleteDocFromPreview() {
 
 // ── Role index map (matches PERMISSIONS column order) ─────────────────
 var ROLE_INDEX = {
-  'Admin':0, 'admin':0, 'super_admin':0,
+  'Admin':0, 'admin':0, 'super_admin':0, 'Super Admin':0,
   'Recruiter':1, 'recruiter':1, 'agent':1,
   'Manager':2, 'manager':2,
   'Compliance':3, 'compliance':3,
@@ -19951,7 +19960,7 @@ var PAGE_PERM_MAP = {
   'pipeline':     'View All Applicants',
   'applicants':   'View All Applicants',
   'documents':    'View All Applicants',
-  'jobs':         'Manage Job Orders',
+  'jobs':         'View Job Orders',
   'analytics':    'View Analytics',
   'accounting':   'View Accounting',
   'audit':        'View Audit Log',
@@ -20004,10 +20013,10 @@ function getCurrentRole() {
   // Map DB roles → display roles used throughout the UI
   var dbToDisplay = {
     'super_admin':'Admin', 'admin':'Admin',
-    'agent':'Recruiter', 'manager':'Manager',
-    'finance':'Finance', 'viewer':'Viewer',
+    'agent':'Recruiter', 'recruiter':'Recruiter', 'manager':'Manager',
+    'compliance':'Compliance', 'finance':'Finance', 'viewer':'Viewer',
     // Already display format:
-    'Admin':'Admin', 'Recruiter':'Recruiter', 'Manager':'Manager',
+    'Admin':'Admin', 'Super Admin':'Admin', 'Recruiter':'Recruiter', 'Manager':'Manager',
     'Compliance':'Compliance', 'Finance':'Finance', 'Viewer':'Viewer',
   };
   return dbToDisplay[r] || dbToDisplay[r.charAt(0).toUpperCase()+r.slice(1).toLowerCase()] || 'Viewer';
@@ -20030,12 +20039,21 @@ function canAccessPage(page) {
 
 // ── Demo mode — allow switching roles for testing ─────────────────────
 var _demoRoleOverride = null;
+// The role switcher only changes what THIS browser shows — the server keeps
+// enforcing the real account's permissions — so it is a developer tool, hidden
+// in production. Enable on localhost, or with localStorage 'rams:devRoleSwitch' = '1'.
+function _devRoleSwitchEnabled() {
+  try {
+    return location.hostname === 'localhost' || location.hostname === '127.0.0.1' ||
+           localStorage.getItem('rams:devRoleSwitch') === '1';
+  } catch (e) { return false; }
+}
 function setDemoRole(role) {
+  if (!_devRoleSwitchEnabled()) return;
   _demoRoleOverride = role;
   var u = getCurrentUser();
   if (u) {
-    u.role = role;
-    Store.set('rams:session:user', JSON.stringify(u));
+    u.role = role;      // in-memory only: a refresh restores the real role
   }
   // Close the dropdown
   var dd = document.getElementById('role-dropdown');
@@ -20045,7 +20063,7 @@ function setDemoRole(role) {
   _syncRoleLabel();
   _addRoleSwitcher(); // Re-render dropdown to update active checkmark
   nav('dashboard');
-  toast('Role switched to ' + role + ' — RBAC applied', 'success');
+  toast('Previewing the ' + role + ' view — display only, the server still applies your real permissions', 'info');
 }
 
 // ── Apply RBAC after login ─────────────────────────────────────────────
@@ -20143,9 +20161,9 @@ function _gateButtons() {
     ['[onclick*="toggleInteg"]',          'Manage Integrations',  'Your role cannot manage integrations'],
     ['[onclick*="connectInteg"]',         'Manage Integrations',  'Your role cannot manage integrations'],
     // Agents
-    ['[onclick*="openAddAgent"]',         'Manage Accounting',    'Your role cannot manage agents'],
-    ['[onclick*="openEditAgent"]',        'Manage Accounting',    'Your role cannot manage agents'],
-    ['[onclick*="deleteAgent"]',          'Manage Accounting',    'Your role cannot manage agents'],
+    ['[onclick*="openAddAgent"]',         'Manage Agents',        'Your role cannot manage agents'],
+    ['[onclick*="openEditAgent"]',        'Manage Agents',        'Your role cannot manage agents'],
+    ['[onclick*="deleteAgent"]',          'Delete Agents',        'Your role cannot delete agents'],
     ['[onclick*="chargeExpenseToAgent"]', 'Manage Accounting',    'Your role cannot charge expenses'],
     ['[onclick*="addLedgerEntry"]',       'Manage Accounting',    'Your role cannot edit ledger'],
     ['[onclick*="submitAdjustment"]',     'Manage Accounting',    'Your role cannot post adjustments'],
@@ -20154,7 +20172,7 @@ function _gateButtons() {
     ['[onclick*="saveInvoice"]',          'Manage Invoices',      'Only Admin and Finance can create invoices'],
     ['[onclick*="editInvoice"]',          'Manage Invoices',      'Only Admin and Finance can edit invoices'],
     ['[onclick*="markInvoicePaid"]',      'Manage Invoices',      'Only Admin and Finance can mark invoices as paid'],
-    ['[onclick*="deleteInvoice"]',        'Manage Accounting',    'Your role cannot delete invoices'],
+    ['[onclick*="deleteInvoice"]',        'Delete Invoices',      'Your role cannot delete invoices'],
   ];
 
   gates.forEach(function(gate) {
@@ -20341,7 +20359,7 @@ function _addRoleSwitcher() {
 
   // Only Admin can switch roles — hide entire role switcher for others
   var switcher = document.querySelector('.role-switcher');
-  if (getCurrentRole() !== 'Admin') {
+  if (getCurrentRole() !== 'Admin' || !_devRoleSwitchEnabled()) {
     if (switcher) switcher.style.display = 'none';
     return;
   }
@@ -21670,8 +21688,11 @@ async function loadSharedPermissions() {
     if (!data || !data.permissions || !Array.isArray(data.permissions)) return;
 
     // Apply permissions matrix in-place (const array — mutate elements, don't reassign)
-    data.permissions.forEach(function(row, i) {
-      if (PERMISSIONS[i]) PERMISSIONS[i] = row.slice();
+    // Merge by permission NAME (rows added in newer versions keep their defaults)
+    data.permissions.forEach(function(row) {
+      if (!Array.isArray(row) || typeof row[0] !== 'string') return;
+      var idx = PERMISSIONS.findIndex(function(p){ return p[0] === row[0]; });
+      if (idx !== -1) PERMISSIONS[idx] = row.slice(); else PERMISSIONS.push(row.slice());
     });
 
     // Apply roles config if present
@@ -21787,6 +21808,7 @@ async function loadSharedPermissions() {
         <div class="f-grp">
           <label class="f-lbl">Role <span class="req">*</span></label>
           <select class="f-inp" id="u-role">
+            <option value="Super Admin">Super Admin</option>
             <option value="Admin">Admin</option>
             <option value="Recruiter" selected>Recruiter</option>
             <option value="Manager">Manager</option>
@@ -22167,6 +22189,7 @@ async function loadSharedPermissions() {
             <option value="Rent">Rent</option>
             <option value="Insurance">Insurance</option>
             <option value="Tickets">Tickets</option>
+            <option value="Super Admin">Super Admin</option>
             <option value="Admin">Admin</option>
             <option value="Meals">Meals &amp; Entertainment</option>
             <option value="Printing">Printing &amp; Docs</option>
