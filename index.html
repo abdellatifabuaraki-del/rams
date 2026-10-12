@@ -1579,6 +1579,7 @@ button[disabled][data-rbac-locked] {
     <button class="acc-tab" onclick="switchAccTab('reports',this)" role="tab">📈 Reports</button>
     <button class="acc-tab" onclick="switchAccTab('office',this)" role="tab">🏢 Office Funds</button>
     <button class="acc-tab" onclick="switchAccTab('invoices',this)" role="tab">🧾 Invoices</button>
+    <button class="acc-tab" id="acc-tab-controls" onclick="switchAccTab('controls',this)" role="tab">🛡 Controls</button>
   </div>
 
   <!-- OVERVIEW TAB -->
@@ -2105,6 +2106,9 @@ button[disabled][data-rbac-locked] {
       </div>
     </div>
   </div>
+
+  <!-- CONTROLS TAB -->
+  <div class="acc-section" id="acc-controls"></div>
 
   <!-- INVOICES TAB -->
   <div class="acc-section" id="acc-invoices">
@@ -3384,9 +3388,9 @@ async function _fetchFresh(path, headers, opts) {
         if (!window._2faToastShown) { window._2faToastShown = true; toast('Two-factor authentication is required for your role. Enable it in Settings → Security to continue.', 'error'); }
       } else if (String(opts.method || 'GET').toUpperCase() !== 'GET') {
         // Only announce denied ACTIONS; background reads a role has no access to stay silent
-        toast('Permission denied: '+(data.error||'Your role cannot perform this action'),'error');
+        toast('Permission denied: '+(data.message||data.error||'Your role cannot perform this action'),'error');
       }
-      return {ok:false,error:data.error||'Forbidden',httpStatus:403};
+      return {ok:false,error:data.message||data.error||'Forbidden',httpStatus:403,data:data};
     }
     // Return (not throw) for all other HTTP errors so callers can check r.httpStatus
     if (!res.ok) return { ok: false, error: data.error || data.message || 'Server error ['+res.status+']', httpStatus: res.status, data: data };
@@ -3589,6 +3593,8 @@ function mapExpense(row) {
     category:    row.category || '',
     amount:      parseFloat(row.amount) || 0,
     status:      row.status || 'Pending',
+    currency:    row.currency || 'PHP',
+    rejectReason: row.reject_reason || '',
     _dbId:       row.id,
   };
 }
@@ -3750,8 +3756,12 @@ async function apiCreateExpense(data) {
     expense_date: data.date || data.expense_date || _ymd(new Date()),
     applicant_id: (data.applicantId && isUUID(data.applicantId)) ? data.applicantId : null,
     notes:        data.ref || data.notes || null,
+    currency:     data.currency || 'PHP',
   };
+  var _agentUuid = data.agentId && isUUID(data.agentId) ? data.agentId : '';
+  if (_agentUuid) payload.agent_id = _agentUuid;
   var r = await apiFetch('/expenses', { method: 'POST', body: JSON.stringify(payload) });
+  _bustAcctCache();
   if (r.ok && r.data && r.data.id) { data._dbId = r.data.id; data.id = r.data.id; }
   return r;
 }
@@ -3798,6 +3808,7 @@ function mapEmployerFee(row) {
     settledBy:     row.settled_by     || row.settledBy     || '',
     settledAt:     row.settled_at     ? String(row.settled_at).slice(0,10) : '',
     createdAt:     row.created_at     ? String(row.created_at).slice(0,10) : '',
+    amountPaid:    parseFloat(row.amount_paid) || 0,
   };
 }
 
@@ -3876,10 +3887,10 @@ function mapOfficeLedgerRow(row) {
 async function apiFetchOfficeLedger() {
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
   if (!isLive) return;
-  var r = await apiFetch('/office-ledger');
+  var r = await apiFetch('/office-ledger?limit=5000');
   if (r.ok && Array.isArray(r.data)) { DB.officeLedger = r.data.map(mapOfficeLedgerRow); recalcOfficeLedgerBalances(); autosave('officeLedger'); }
   var rf = await apiFetch('/office-funds');
-  if (rf.ok && rf.data) { Object.assign(DB.officeFunds, mapOfficeFunds(rf.data)); autosave('officeFunds'); }
+  if (rf.ok && rf.data) { Object.assign(DB.officeFunds, mapOfficeFunds(rf.data)); window._serverFx = DB.officeFunds.fxRate; autosave('officeFunds'); }
 }
 async function apiCreateOfficeLedgerEntry(entry) {
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
@@ -3901,18 +3912,14 @@ async function apiFetchOfficeFunds() {
     if (r.ok && r.data) {
       var fresh = typeof r.data === 'string' ? JSON.parse(r.data) : r.data;
       if (fresh && typeof fresh === 'object') {
-        Object.assign(DB.officeFunds, fresh);
+        Object.assign(DB.officeFunds, mapOfficeFunds(fresh));
+        window._serverFx = DB.officeFunds.fxRate;
         autosave('officeFunds');
       }
     }
   } catch(e) { console.warn('[apiFetchOfficeFunds]', e.message); }
 }
 
-async function apiUpdateOfficeFunds(funds) {
-  var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
-  if (!isLive) return { ok: true };
-  return await apiFetch('/office-funds', { method: 'PUT', body: JSON.stringify({ balance_php: funds.balancePHP, balance_usd: funds.balanceUSD, fx_rate: funds.fxRate, fx_updated: funds.fxUpdated }) });
-}
 async function apiResetOfficeLedger() {
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
   if (!isLive) return { ok: true };
@@ -3937,6 +3944,9 @@ function mapCommission(row) {
     triggerDate:     row.trigger_date ? String(row.trigger_date).slice(0,10) : '',
     releaseDate:     row.release_date    ? String(row.release_date).slice(0,10) : null,
     guaranteeEnd:    row.guarantee_end   ? String(row.guarantee_end).slice(0,10) : null,
+    phpAmount:       row.php_amount != null ? parseFloat(row.php_amount) : null,
+    fxRate:          row.fx_rate != null ? parseFloat(row.fx_rate) : null,
+    reverseReason:   row.reverse_reason || '',
   };
 }
 async function apiFetchCommissions() {
@@ -4465,7 +4475,7 @@ async function syncAllFromAPI() {
     apiFetch('/agent-ledger'),
     apiFetch('/commissions'),
     apiFetch('/country-rules'),
-    apiFetch('/office-ledger'),
+    apiFetch('/office-ledger?limit=5000'),
     apiFetch('/complaints'),
     apiFetch('/office-funds'),
   ]);
@@ -4550,11 +4560,12 @@ async function syncAllFromAPI() {
   }
   if (ofR && ofR.ok && ofR.data) {
     var _ofFresh = typeof ofR.data==='string' ? JSON.parse(ofR.data) : ofR.data;
-    if (_ofFresh && typeof _ofFresh==='object') Object.assign(DB.officeFunds, _ofFresh);
+    if (_ofFresh && typeof _ofFresh==='object') { Object.assign(DB.officeFunds, mapOfficeFunds(_ofFresh)); window._serverFx = DB.officeFunds.fxRate; }
   }
   if (olR && olR.ok && Array.isArray(olR.data)) {
     DB.officeLedger = olR.data.map(mapOfficeLedgerRow);
     recalcOfficeLedgerBalances();
+    if (ofR && ofR.ok && ofR.data) { var _of2 = mapOfficeFunds(typeof ofR.data==='string' ? JSON.parse(ofR.data) : ofR.data); DB.officeFunds.balancePHP = _of2.balancePHP; DB.officeFunds.balanceUSD = _of2.balanceUSD; }
     autosave('officeLedger');
   }
   if (compR && compR.ok && Array.isArray(compR.data)) {
@@ -5056,7 +5067,17 @@ const Store = (() => {
   // L1 in-memory cache — avoids repeated JSON parse on hot reads
   const _mem = {};
 
+  // Money data (agent ledger, agents' balances, office funds, employer fees, charge/override
+  // caches) is owned by the server. Copies in the shared key-value store used to be pushed and
+  // pulled by every browser and could resurrect stale balances, so while logged in to the real
+  // backend those keys are inert. (Demo mode keeps using them.)
+  var _SERVER_OWNED = /^rams:(shared:(agentLedger|agents|officeLedger|officeFunds|office|employerFees)(:ts)?|charged:expenses(:ts)?|agent:balance:overrides)$/;
+  function _serverOwned(key) {
+    return _SERVER_OWNED.test(key) && typeof window !== 'undefined' && window._ramsSessionToken && window._ramsSessionToken !== 'demo';
+  }
+
   async function get(key, shared) {
+    if (_serverOwned(key)) return null;
     if (!shared && _mem[key] !== undefined) return _mem[key];  // L1 hit (local only)
     try {
       var raw;
@@ -5073,6 +5094,7 @@ const Store = (() => {
   }
 
   async function set(key, value, shared) {
+    if (_serverOwned(key)) return true;
     var serialized = JSON.stringify(value);
     if (!shared) _mem[key] = value;  // update L1 for local writes
     try {
@@ -5417,14 +5439,14 @@ async function loadDB() {
   try {
     var _agentBalRaw = await Store.get('rams:agent:balance:overrides');
     var _agentBalVal = _agentBalRaw ? (typeof _agentBalRaw === 'object' ? _agentBalRaw.value : _agentBalRaw) : null;
-    window._agentBalanceOverrides = _agentBalVal ? JSON.parse(_agentBalVal) : {};
+    window._agentBalanceOverrides = {};   // balances are derived by the server now — no local overrides
   } catch(e) { window._agentBalanceOverrides = {}; }
 
   // Load charged expense tracking (protects against server not supporting PATCH /expenses)
   try {
     var _chargedRaw = await Store.get('rams:charged:expenses', true);
     var _chargedVal = _chargedRaw ? (typeof _chargedRaw === 'object' ? _chargedRaw.value : _chargedRaw) : null;
-    window._chargedExpenseIds = _chargedVal ? JSON.parse(_chargedVal) : {};
+    window._chargedExpenseIds = {};       // charge state comes from the server — no local overrides
   } catch(e) { window._chargedExpenseIds = {}; }
 
   // Seed _statusUpdatedAt for any applicants missing it (first time after upgrade)
@@ -7887,26 +7909,18 @@ function _inlineSaveStatus(appId, newStatus) {
       return;
     }
 
-    // ── Stage gate: employer fee must be settled before deploying ──────
-    // Find the employer fee for this applicant's job order
-    var appEmployer = app.employer || (app.job ? app.job.split('·')[0].trim() : '');
-    if (!appEmployer && app._jobOrderId) {
-      var jo = DB.jobs.find(function(j){ return j.id === app._jobOrderId || j._dbId === app._jobOrderId; });
-      if (jo) appEmployer = jo.employer;
-    }
-    if (appEmployer) {
-      var fee = (DB.employerFees || []).find(function(f){
-        return f.employer && f.employer.toLowerCase().trim() === appEmployer.toLowerCase().trim()
-            && f.status !== 'Settled';
-      });
-      if (fee) {
-        toast('⛔ Cannot deploy ' + app.name + ' — employer fee for ' + appEmployer +
-          ' is not yet settled ($' + (fee.feeUSD || 0).toLocaleString() + ' ' + fee.status + ')', 'error');
-        var selF = document.querySelector('[data-app-id="' + appId + '"] .status-select, select[onchange*="' + appId + '"]');
-        if (selF) selF.value = oldStatus;
-        renderApplicants();
-        return;
-      }
+    // ── Stage gate: this applicant's employer fee must be Settled or Waived before deploying ──
+    // (same rule the server enforces)
+    var _gateFee = (DB.employerFees || []).find(function(f) {
+      return (f.applicantId === appId || f.applicantId === app._dbId) && f.status === 'Pending';
+    });
+    if (_gateFee) {
+      toast('⛔ Cannot deploy ' + app.name + ' — employer fee of $' + (_gateFee.feeUSD || 0).toLocaleString() +
+        ' is still pending. Record the payment, settle or waive it first.', 'error');
+      var selF = document.querySelector('[data-app-id="' + appId + '"] .status-select, select[onchange*="' + appId + '"]');
+      if (selF) selF.value = oldStatus;
+      renderApplicants();
+      return;
     }
   }
 
@@ -10668,166 +10682,6 @@ function updateExpenseTotal() {
   var newAmt   = parseFloat(amtEl ? amtEl.value : 0) || 0;
   totalEl.textContent = '₱' + (existing + newAmt).toLocaleString();
 }
-function saveExpense() {
-  if (!hasPermission('Manage Expenses')) { toast('Your role cannot manage expenses','error'); return; }
-  var appName = (document.getElementById('e-applicant').value || '').trim();
-  var desc    = (document.getElementById('e-desc').value     || '').trim();
-  var amt     = parseFloat(document.getElementById('e-amount').value) || 0;
-  var errEl   = document.getElementById('e-error');
-  var btn     = document.getElementById('save-expense-btn');
-  if (errEl) errEl.style.display = 'none';
-
-  if (!appName) {
-    if (errEl) { errEl.textContent = 'Please select an applicant.'; errEl.style.display = 'block'; }
-    return;
-  }
-  if (!desc) {
-    if (errEl) { errEl.textContent = 'Description is required.'; errEl.style.display = 'block'; }
-    return;
-  }
-  if (!amt || amt <= 0) {
-    if (errEl) { errEl.textContent = 'Amount must be greater than zero.'; errEl.style.display = 'block'; }
-    return;
-  }
-
-  var app = DB.applicants.find(function(a){ return a.name === appName; });
-
-  // Resolve agent from the matched applicant
-  var _expAgent   = app ? DB.agents.find(function(a){ return a.name===app.agent || a.id===app._agentDbId; }) : null;
-  var exp = {
-    id:          genId('EXP'),
-    date:        document.getElementById('e-date').value || _ymd(new Date()),
-    desc:        desc,
-    applicant:   appName,
-    applicantId: app ? (app._dbId || app.id) : null,
-    agentName:   _expAgent ? _expAgent.name : (app ? app.agent || '' : ''),
-    agentId:     _expAgent ? (_expAgent._dbId || _expAgent.id) : (app ? app._agentDbId || '' : ''),
-    category:    document.getElementById('e-category').value,
-    amount:      amt,
-    status:      document.getElementById('e-status').value || 'Paid',
-    ref:         (document.getElementById('e-ref') ? document.getElementById('e-ref').value.trim() : '') || null,
-    postedBy:    (window._ramsSessionUser && window._ramsSessionUser.name) || 'System',
-  };
-
-  DB.expenses.unshift(exp);
-  autosave('expenses');  // persist locally immediately in case API fails
-
-  apiCreateExpense(exp).then(function(r) {
-    if (!r.ok) {
-      toast('💾 Expense saved — could not reach server, will sync when reconnected','error');
-    } else {
-      autosave('expenses'); // update with server-assigned _dbId
-      _bumpExpenseTs();
-    }
-  });
-
-  // Auto-trigger accounting if applicant status warrants it
-  if (app) {
-    var agent = DB.agents.find(function(a){ return a.name === app.agent; });
-    var autoCharge = ['Backout','Repatriated','Rejected'].indexOf(app.status) !== -1;
-    if (autoCharge) {
-      // Resolve country rule for this applicant's destination
-      var _country = app.job ? app.job.split('·').pop().trim() : '';
-      var _rule = DB.countryRules.find(function(r){ return r.country === _country && r.active; });
-      var _expRule = _rule ? (_rule.expenseRule || 'full') : 'full';
-
-      if (_expRule === 'none') {
-        // Agency absorbs everything — mark as Agency, don't charge agent
-        exp.status = 'Agency';
-        addAudit('CREATE','Expense',
-          'Agency absorbed ₱'+amt.toLocaleString()+' — '+exp.category+' for '+appName+
-          ' ('+app.status+', country rule: Agency absorbs)');
-
-      } else if (_expRule === 'medical') {
-        // Only medical exam expenses charged to agent
-        if (exp.category === 'Medical Exam' && agent) {
-          exp.status = 'Charged';
-          agent.totalExpenses = (agent.totalExpenses||0) + amt;
-          if (typeof addLedgerEntry === 'function')
-            addLedgerEntry(agent.id, 'expense',
-              'Auto-charged (medical rule): '+exp.category+' — '+appName+' ('+app.status+')',
-              -amt, app.id);
-          addAudit('CREATE','Expense',
-            'Auto-charged ₱'+amt.toLocaleString()+' to '+agent.name+
-            ' — medical only rule for '+_country);
-        } else {
-          exp.status = 'Agency';
-          addAudit('CREATE','Expense',
-            'Agency absorbed ₱'+amt.toLocaleString()+' — '+exp.category+
-            ' not covered under medical-only rule for '+_country);
-        }
-
-      } else if (_expRule === 'partial') {
-        // Split 50/50 — charge agent half, agency absorbs half
-        if (agent) {
-          var agentShare = Math.round(amt * 0.5);
-          var agencyShare = amt - agentShare;
-          exp.status = 'Charged';
-          exp.amount = agentShare; // agent pays half
-          agent.totalExpenses = (agent.totalExpenses||0) + agentShare;
-          if (typeof addLedgerEntry === 'function')
-            addLedgerEntry(agent.id, 'expense',
-              'Auto-charged 50% (partial rule): '+exp.category+' — '+appName+' ('+app.status+')',
-              -agentShare, app.id);
-          addAudit('CREATE','Expense',
-            'Partial rule — ₱'+agentShare.toLocaleString()+' to agent '+agent.name+
-            ', ₱'+agencyShare.toLocaleString()+' absorbed by agency ('+_country+')');
-          // Record agency portion as a second expense
-          if (agencyShare > 0) {
-            var agencyExp = Object.assign({}, exp, {
-              id:      'EXP-AG-'+Date.now(),
-              amount:  agencyShare,
-              status:  'Agency',
-              desc:    exp.desc + ' (agency 50%)',
-            });
-            DB.expenses.push(agencyExp);
-          }
-        }
-
-      } else {
-        // 'full' — agent responsible for everything (original behavior)
-        if (agent) {
-          exp.status = 'Charged';
-          agent.totalExpenses = (agent.totalExpenses||0) + amt;
-          if (typeof addLedgerEntry === 'function')
-            addLedgerEntry(agent.id, 'expense',
-              'Auto-charged: '+exp.category+' — '+appName+' ('+app.status+')',
-              -amt, app.id);
-          addAudit('CREATE','Expense',
-            'Auto-charged ₱'+amt.toLocaleString()+' to agent '+agent.name+
-            ' ('+appName+' is '+app.status+')');
-        } else {
-          // No agent assigned — agency absorbs
-          exp.status = 'Agency';
-          addAudit('CREATE','Expense',
-            'Agency absorbed ₱'+amt.toLocaleString()+' — no agent assigned for '+appName);
-        }
-      }
-    }
-  }
-
-  addAudit('CREATE', 'Expense',
-    'Recorded ' + exp.category + ': ₱' + amt.toLocaleString() + ' for ' + appName);
-
-  if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
-
-  setTimeout(function() {
-    if (btn) { btn.textContent = 'Record Expense'; btn.disabled = false; }
-    closeOverlay('overlay-expense');
-
-    // Refresh drawer if open and showing this applicant's expenses
-    if (currentDrawerApplicant && currentDrawerApplicant.name === appName) {
-      switchDrawerTab('expenses', null);
-    }
-
-    // Refresh current view
-    if (currentPage === 'accounting') renderAccounting();
-    if (typeof renderExpensesTab === 'function' && currentAccTab === 'expenses') renderExpensesTab();
-
-    toast('Expense recorded — ₱' + amt.toLocaleString() + ' for ' + appName,
-          exp.status === 'Charged' ? 'info' : 'success');
-  }, 300);
-}
 
 // ════════════════════════════════════════════════════════
 // AUDIT
@@ -12390,6 +12244,12 @@ const PERMISSIONS=[
   ['Manage Viewer Access',true,false,true,false,false,false],
   ['Send Notifications',true,false,true,false,false,false],
   ['Use WhatsApp Inbox',true,true,true,false,false,false],
+  ['Approve Expenses',true,false,true,false,true,false],
+  ['Post Ledger Adjustments',true,false,true,false,true,false],
+  ['Manage FX & Funds',true,false,false,false,true,false],
+  ['Record Payments',true,false,true,false,true,false],
+  ['Void Accounting Records',true,false,false,false,true,false],
+  ['Close Periods',true,false,false,false,true,false],
 ];
 // Live head-count per built-in role (was a hard-coded number)
 function _roleUserCount(r) {
@@ -13337,6 +13197,9 @@ function switchAccTab(tab, el) {
       toast('Your role can only view the Employers tab', 'error');
       return;
     }
+  } else if (tab === 'controls' && !hasPermission('View Accounting')) {
+    toast('Your role cannot view accounting controls', 'error');
+    return;
   } else if (tab === 'employers') {
     // Employers tab — Admin and Finance only (plus scoped Viewers, above)
     if (_r !== 'Admin' && _r !== 'Finance') {
@@ -13363,6 +13226,7 @@ function switchAccTab(tab, el) {
     else hdra.innerHTML = '<button class="btn btn-s btn-sm" onclick="exportAccountingReport()">⬇ Export</button>' + ((getCurrentRole && getCurrentRole() === 'Admin') ? '<button class="btn btn-ghost btn-sm" style="color:var(--red);border:1px solid var(--red)" onclick="resetAllExpenses()">↺ Reset</button>' : '') + '<button class="btn btn-p btn-sm" onclick="openAddExpense()">+ Record Expense</button>';
   }
 
+  if (tab === 'controls')     renderAccControls();
   if (tab === 'overview')     renderAccOverview();
   if (tab === 'agents')       renderAgentGrid();
   if (tab === 'ledger')       initLedgerTab();
@@ -13745,7 +13609,7 @@ function renderLedger() {
   var commTot   = entries.filter(function(e){ return e.type==='commission'; }).reduce(function(s,e){ return s+e.amount; }, 0);
   var expTot    = entries.filter(function(e){ return e.type==='expense'; }).reduce(function(s,e){ return s+e.amount; }, 0);
 
-  var _isAdminLedger = (typeof getCurrentRole === 'function') && getCurrentRole() === 'Admin';
+  var _isAdminLedger = hasPermission('Delete Accounting Records');
   var _balanceNonZero = agent && agent.balance !== 0;
 
   // Net balance = Credits + Debits (debits are negative) — always live from entries
@@ -13759,6 +13623,10 @@ function renderLedger() {
   ].map(function(s){
     return '<div class="ledger-sum-card"><div class="ledger-sum-val" style="color:'+s.color+'">'+s.val+'</div><div class="ledger-sum-lbl">'+s.label+'</div></div>';
   }).join('') +
+  '<div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;grid-column:1/-1;margin-top:4px">'+
+    '<button class="btn btn-ghost btn-sm" style="font-size:12px" onclick="openAgentStatement(\''+agentId+'\')">📄 Statement</button>'+
+    (hasPermission('Record Payments') && agent && agent.balance > 0 ? '<button class="btn btn-s btn-sm" style="font-size:12px" onclick="openAgentPayout(\''+agentId+'\')">💸 Record payout</button>' : '')+
+  '</div>' +
   (_isAdminLedger && _balanceNonZero
     ? '<div style="display:flex;align-items:center;justify-content:flex-end;grid-column:1/-1;margin-top:4px">'+
         '<button class="btn btn-ghost btn-sm" style="color:var(--red);border:1px solid #fca5a5;font-size:12px" '+
@@ -13802,8 +13670,8 @@ function renderLedger() {
       '<td style="text-align:right;font-weight:700;font-family:\'IBM Plex Mono\',monospace;color:'+(e.runningBalance>=0?'var(--text)':'var(--red)')+'">'+
         (e.runningBalance>=0?'₱':'−₱')+Math.abs(e.runningBalance).toLocaleString()+
       '</td>'+
-      (_isAdmin
-        ? '<td style="text-align:center;width:40px">' + ((getCurrentRole && getCurrentRole() === 'Admin') ? '<button class="btn btn-ghost btn-xs" style="color:var(--red);padding:3px 7px" onclick="deleteLedgerEntry(\''+e.id+'\')" title="Delete entry">🗑</button>' : '') + '</td>'
+      (hasPermission('Void Accounting Records')
+        ? '<td style="text-align:center;width:60px">' + ((e.commissionId || e.expenseId || e.paymentId) ? '<span title="Linked to a commission / charge / payout — reverse the source record" style="color:var(--dim);font-size:11px">🔗</span>' : '<button class="btn btn-ghost btn-xs" style="color:var(--red);padding:3px 7px" onclick="deleteLedgerEntry(\''+e.id+'\')" title="Void entry (kept in the audit trail)">Void</button>') + '</td>'
         : '<td></td>')+
     '</tr>';
   }).join('');
@@ -13927,8 +13795,9 @@ function _renderExpensesTabInner(search) {
       '<td>'+pillHtml(e.status)+'</td>'+
       '<td style="text-align:right;white-space:nowrap">'+
         (app?'<button class="btn btn-ghost btn-xs" onclick="openDrawer(\''+app.id+'\')" title="View applicant">👤</button> ':'')+
-        (agentId?'<button class="btn btn-sm" style="font-size:11px;background:var(--rbg);color:var(--red);border:1px solid #fca5a5" onclick="chargeExpenseToAgent(\''+e.id+'\',\''+agentId+'\')" >Charge Agent</button> ':'')+
-        ((getCurrentRole && getCurrentRole() === 'Admin') ? '<button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="confirmDelete(\'expense\',\''+e.id+'\')" >🗑</button>' : '')+
+        ((agentId && e.status !== 'Charged' && e.status !== 'Rejected')?'<button class="btn btn-sm" style="font-size:11px;background:var(--rbg);color:var(--red);border:1px solid #fca5a5" onclick="chargeExpenseToAgent(\''+e.id+'\',\''+agentId+'\')" >Charge Agent</button> ':'')+
+        (e.status === 'Charged' ? '<button class="btn btn-ghost btn-xs" style="font-size:11px" onclick="unchargeExpenseFromAgent(\''+e.id+'\')" title="Reverse the charge">↩ Reverse charge</button> ' : '')+
+        ((hasPermission('Delete Expenses') && e.status !== 'Charged') ? '<button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="confirmDelete(\'expense\',\''+e.id+'\')" >🗑</button>' : '')+
       '</td>'+
     '</tr>';
   }).join('');
@@ -14202,57 +14071,26 @@ function renderCommissions() {
       }
     });
 
-    // Auto-reverse stale commissions for Backout/Rejected applicants
-    if (_toAutoReverse.length) {
+    // Auto-reverse stale commissions for Backout/Rejected applicants (server: cancels, no money moves)
+    if (_toAutoReverse.length && _isLiveSession() && hasPermission('Release/Reverse Commissions')) {
       _toAutoReverse.forEach(function(cm) {
+        if (cm._autoRev) return;
+        cm._autoRev = true;
         cm.status = 'Reversed';
-        var dbId = cm._dbId || cm.id;
-        if (dbId && isUUID(dbId)) {
-          apiFetch('/commissions/' + dbId, {
-            method: 'PATCH', body: JSON.stringify({ status: 'Reversed' }),
-          }).catch(function(){});
-        }
+        reverseCommission(cm.id, 'Applicant backed out / rejected before release').catch(function(){});
       });
-      autosave('commissions');
-      try { _triggerImmediateSync(); } catch(e) {}
     }
 
-    // Clawback already-Released commissions — debit agent's ledger for the amount already paid out
-    if (_toClawback.length) {
+    // Clawback already-Released commissions — the server debits the agent the exact amount paid out (stored FX)
+    if (_toClawback.length && _isLiveSession() && hasPermission('Release/Reverse Commissions')) {
       _toClawback.forEach(function(cm) {
+        if (cm._clawedBack) return;
         cm._clawedBack = true;
-        var agent = DB.agents.find(function(a){ return a.id === cm.agentId; });
-        var fx = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
-        var phpAmt = cm.currency === 'USD' ? Math.round(cm.amount * fx) : cm.amount;
-        if (agent) {
-          agent.balance = (agent.balance || 0) - phpAmt; // debit agent
-          var ledgerEntry = {
-            id: 'LDG-' + Date.now() + '-' + Math.floor(Math.random()*1000),
-            agentId: agent.id,
-            applicantId: cm.applicantId,
-            applicantName: cm.applicantName,
-            type: 'adjustment',
-            amount: -phpAmt,  // negative = debit — agent owes this back
-            desc: 'Clawback — T' + cm.tranche + ' commission reversed (applicant ' + (cm.applicantName||'') + ' backed out/rejected after release)',
-            date: _ymd(new Date()),
-            ts: new Date().toISOString(),
-          };
-          DB.agentLedger.push(ledgerEntry);
-          apiCreateLedgerEntry && apiCreateLedgerEntry(ledgerEntry).catch(function(){});
-        }
-        var dbId = cm._dbId || cm.id;
-        if (dbId && isUUID(dbId)) {
-          apiFetch('/commissions/' + dbId, {
-            method: 'PATCH', body: JSON.stringify({ status: 'Reversed' }),
-          }).catch(function(){});
-        }
-        cm.status = 'Reversed';
-        toast('⚠️ Commission clawback: ' + (cm.applicantName||'') + ' T' + cm.tranche + ' — agent debited ₱' + phpAmt.toLocaleString(), 'error');
+        var php = cm.phpAmount || cm.amount;
+        reverseCommission(cm.id, 'Clawback — applicant ' + (cm.applicantName || '') + ' backed out/rejected after release').then(function(ok) {
+          if (ok) { toast('⚠️ Commission clawback: ' + (cm.applicantName || '') + ' T' + cm.tranche + ' — agent debited ₱' + php.toLocaleString(), 'error'); renderCommissions(); }
+        }).catch(function(){});
       });
-      autosave('commissions');
-      autosave('agents');
-      autosave('agentLedger');
-      try { _triggerImmediateSync(); } catch(e) {}
     }
     pendEl.innerHTML = pending.length ? pending.map(function(c) {
       var agent = DB.agents.find(function(a){ return a.id===c.agentId; });
@@ -14453,49 +14291,16 @@ function resetCommissions() {
     'Proceed? This will set them to Reversed and remove ledger entries.'
   )) return;
 
-  var today = _ymd(new Date());
-  mismatches.forEach(function(m) {
-    var cm = m.cm;
-    cm.status = 'Reversed';
-
-    // Reverse ledger entry if it exists (commission was released)
-    var dbId = cm._dbId || cm.id;
-    if (dbId && isUUID(dbId)) {
-      apiFetch('/commissions/' + dbId, {
-        method: 'PATCH',
-        body: JSON.stringify({ status: 'Reversed' }),
-      }).catch(function(){});
-
-      // Remove any release ledger entry for this commission
-      var trancheKey = 'T' + cm.tranche;
-      var nameLower  = (cm.applicantName || '').toLowerCase();
-      var had = DB.agentLedger.filter(function(e){
-        return e.agentId === cm.agentId &&
-               e.type === 'commission' &&
-               e.amount > 0 &&
-               (e.desc||'').toLowerCase().includes(nameLower) &&
-               (e.desc||'').toLowerCase().includes('t' + cm.tranche);
-      });
-      if (had.length) {
-        DB.agentLedger = DB.agentLedger.filter(function(e){
-          return !had.some(function(h){ return h.id === e.id; });
-        });
-        // Tell backend to clean up too
-        apiFetch('/agent-ledger/batch-delete', {
-          method: 'POST',
-          body: JSON.stringify({ agentId: cm.agentId, applicantName: cm.applicantName, tranche: cm.tranche, type: 'commission' }),
-        }).catch(function(){});
-      }
+  (async function() {
+    var done = 0, failed = 0;
+    for (var i = 0; i < mismatches.length; i++) {
+      var ok = await reverseCommission(mismatches[i].cm.id, 'Reset: ' + (mismatches[i].reason || 'does not match applicant status'));
+      if (ok) done++; else failed++;
     }
-  });
-
-  autosave('commissions');
-  autosave('agentLedger');
-  try { _triggerImmediateSync(); } catch(e) {}
-  addAudit('UPDATE', 'Commissions',
-    'Reset: ' + mismatches.length + ' mismatched pending commission(s) reversed');
-  toast('✅ Reversed ' + mismatches.length + ' mismatched commission(s)', 'success');
-  renderCommissions();
+    addAudit('UPDATE', 'Commissions', 'Reset: ' + done + ' mismatched pending commission(s) reversed');
+    toast('✅ Reversed ' + done + ' mismatched commission(s)' + (failed ? ' · ' + failed + ' failed' : ''), failed ? 'error' : 'success');
+    renderCommissions();
+  })();
 }
 
 function saveCommissionRates() {
@@ -14542,118 +14347,1126 @@ function saveCommissionRates() {
   });
 }
 
-function releaseCommission(commId) {
-  // Admin, Finance, and Manager only
-  var _role = getCurrentRole();
-  if (_role !== 'Admin' && _role !== 'Finance' && _role !== 'Manager') {
-    toast('Only Admin, Finance, and Manager can release commissions', 'error'); return;
-  }
-  var c = DB.commissions.find(function(x){ return x.id===commId; });
-  if (!c) return;
-
-  if (c.status !== 'Pending Release' && c.status !== 'In Guarantee') {
-    toast('This commission cannot be released (status: '+c.status+')', 'error'); return;
-  }
-
-  // ── Tranche prerequisite check ────────────────────────────────────────
-  if (c.tranche > 1) {
-    var prevTranche = c.tranche - 1;
-    var prevReleased = DB.commissions.find(function(x) {
-      return x.tranche === prevTranche
-          && (x.applicantId === c.applicantId ||
-              (x.applicantName && c.applicantName &&
-               x.applicantName.toLowerCase() === c.applicantName.toLowerCase()))
-          && x.status === 'Released';
-    });
-    if (!prevReleased) {
-      toast('T' + prevTranche + ' must be released first before releasing T' + c.tranche + ' for ' + c.applicantName, 'error');
-      return;
-    }
-  }
-
-  // Block duplicate release for same tranche + applicant
-  var existingReleased = DB.commissions.find(function(x) {
-    return x.id !== c.id && x.tranche === c.tranche
-        && (x.applicantId === c.applicantId ||
-            (x.applicantName && c.applicantName &&
-             x.applicantName.toLowerCase() === c.applicantName.toLowerCase()))
-        && x.status === 'Released';
-  });
-  if (existingReleased) {
-    var fix = confirm(
-      '⚠️ Duplicate: T' + c.tranche + ' commission for ' + c.applicantName + ' was already released.\n\n' +
-      'Released record: ₱' + (existingReleased.phpAmount || existingReleased.amount || 0).toLocaleString() +
-      ' on ' + (existingReleased.releaseDate || '—') + '\n\n' +
-      'Click OK to auto-reverse the old record and release this one.\n' +
-      'Click Cancel to review manually in Commission History.'
-    );
-    if (!fix) return;
-    // Auto-reverse the old duplicate
-    existingReleased.status = 'Reversed';
-    var oldDbId = existingReleased._dbId || existingReleased.id;
-    if (oldDbId && isUUID(oldDbId)) {
-      apiFetch('/commissions/' + oldDbId, {
-        method: 'PATCH', body: JSON.stringify({ status: 'Reversed' }),
-      }).catch(function(){});
-      // Also remove the ledger entry for the old release
-      var oldNameLower = (existingReleased.applicantName || '').toLowerCase();
-      DB.agentLedger = (DB.agentLedger || []).filter(function(e) {
-        return !(e.agentId === existingReleased.agentId &&
-                 e.type === 'commission' && e.amount > 0 &&
-                 (e.desc || '').toLowerCase().includes(oldNameLower) &&
-                 (e.desc || '').toLowerCase().includes('t' + existingReleased.tranche));
-      });
-      apiFetch('/agent-ledger/batch-delete', {
-        method: 'POST',
-        body: JSON.stringify({ agentId: existingReleased.agentId,
-          applicantName: existingReleased.applicantName,
-          tranche: existingReleased.tranche, type: 'commission' }),
-      }).catch(function(){});
-    }
-    autosave('commissions');
-    autosave('agentLedger');
-    addAudit('UPDATE', 'Commission',
-      'Auto-reversed duplicate T' + c.tranche + ' for ' + c.applicantName + ' before re-release');
-    // Fall through to release the current record
-  }
-
-  var currency = c.currency || 'PHP';
-  var sym      = currency === 'USD' ? '$' : '₱';
-  var fx       = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
-  // PHP amount: convert USD → PHP using current rate, or use PHP directly
-  var phpAmt   = currency === 'USD' ? Math.round(c.amount * fx) : c.amount;
-  var usdNote  = currency === 'USD'
-    ? ' ['+sym+c.amount.toLocaleString()+' USD @ ₱'+fx+']'
-    : '';
-
-  if (!confirm('Release '+(c.trancheLabel||'commission')+' of '+sym+c.amount.toLocaleString()+' '+currency+
-    (currency==='USD'?' (≈ ₱'+phpAmt.toLocaleString()+' PHP)':'')+' for '+c.applicantName+'?')) return;
-
-  c.status      = 'Released';
-  c.releaseDate = _ymd(new Date());
-  c.fxRate      = fx;      // ← store FX rate used so reversal mirrors it exactly
-  c.phpAmount   = phpAmt;  // ← store PHP payout amount for accurate reversal
-
-  // addLedgerEntry manages agent.balance internally — do NOT update here too
-  addLedgerEntry(c.agentId, 'commission',
-    'Commission released — '+c.applicantName+' ('+c.country+') T'+c.tranche+usdNote,
-    phpAmt, c.applicantId);
-
-  var agent = DB.agents.find(function(a){ return a.id===c.agentId; });
-  if (agent) agent.totalCommission = (agent.totalCommission||0) + phpAmt;
-
-  autosave('commissions');
-  autosave('agents');
-  apiUpdateCommission(c, {
-    status: 'Released', release_date: c.releaseDate, fx_rate: fx, php_amount: phpAmt,
-  }).catch(function(){});
-  addAudit('UPDATE','Commission',
-    'Released T'+c.tranche+' '+sym+c.amount.toLocaleString()+' '+currency+' for '+c.applicantName);
-  toast('Commission T'+c.tranche+' of '+sym+c.amount.toLocaleString()+' '+currency+
-    ' released to '+(agent?agent.name:'agent'),'success');
-  try{_triggerImmediateSync();}catch(e){}
-  renderCommissions();
+// ══════════════════════════════════════════════════════════════════════
+// ACCOUNTING — the SERVER is the bookkeeper
+// Every money action below is sent to the server first; balances, FX and
+// status changes come back from the server and are copied into DB.*.
+// Nothing here computes a balance and posts it, and nothing is fire-and-forget.
+// ══════════════════════════════════════════════════════════════════════
+var _acctBusy = {};
+function _acctLock(key) { if (_acctBusy[key]) return false; _acctBusy[key] = true; return true; }
+function _acctUnlock(key) { delete _acctBusy[key]; }
+function _isLiveSession() { return !!(window._ramsSessionToken && window._ramsSessionToken !== 'demo'); }
+function _idemKey() { return 'k' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10); }
+function _acctMsg(r, fallback) {
+  var d = r && r.data;
+  if (d && typeof d === 'object' && (d.message || typeof d.error === 'string')) return d.message || d.error;
+  if (r && r.error) return r.error;
+  return fallback || 'Server error';
 }
+function _bustAcctCache() {
+  try {
+    Object.keys(_cache || {}).forEach(function(k) {
+      if (/\/(agent-ledger|commissions|office-ledger|office-funds|expenses|invoices|employer-fees|agents|payments|accounting|fx-history)/.test(k)) delete _cache[k];
+    });
+  } catch (e) {}
+}
+async function _acctCall(path, body, method) {
+  method = method || 'POST';
+  var opts = { method: method };
+  if (method !== 'DELETE' && body !== null) opts.body = JSON.stringify(body || {});
+  var r = await apiFetch(path, opts);
+  _bustAcctCache();
+  return r;
+}
+// Ask for a reason; returns '' when cancelled
+function _askReason(title, min) {
+  var r = window.prompt(title + '\n\nA reason is required (recorded in the audit trail):', '');
+  if (r === null) return '';
+  r = (r || '').trim();
+  if (r.length < (min || 3)) { toast('A reason of at least ' + (min || 3) + ' characters is required', 'error'); return ''; }
+  return r;
+}
+
+function _applyAgentSnapshot(a) {
+  if (!a) return;
+  var ag = (DB.agents || []).find(function(x) { return x.id === a.id || x._dbId === a.id; });
+  if (!ag) return;
+  ag.balance = parseFloat(a.balance) || 0;
+  ag.totalCommission = parseFloat(a.total_commission) || 0;
+  ag.totalExpenses = parseFloat(a.total_expenses) || 0;
+  autosave('agents');
+}
+function _applyCommissionRow(row) {
+  if (!row) return null;
+  var m = mapCommission(row);
+  var i = (DB.commissions || []).findIndex(function(c) { return c.id === m.id || c._dbId === m.id; });
+  if (i >= 0) DB.commissions[i] = Object.assign(DB.commissions[i], m); else DB.commissions.unshift(m);
+  autosave('commissions');
+  return m;
+}
+function _applyLedgerRow(row) {
+  if (!row) return null;
+  var m = mapLedgerRow(row);
+  if (!DB.agentLedger) DB.agentLedger = [];
+  if (!DB.agentLedger.some(function(e) { return e.id === m.id; })) DB.agentLedger.unshift(m);
+  autosave('agentLedger');
+  return m;
+}
+function _applyExpenseRow(row) {
+  if (!row) return null;
+  var m = mapExpense(row);
+  var i = (DB.expenses || []).findIndex(function(e) { return e.id === m.id || e._dbId === m.id; });
+  if (i >= 0) { var keep = DB.expenses[i]; DB.expenses[i] = Object.assign(keep, m); }
+  else DB.expenses.unshift(m);
+  autosave('expenses');
+  return m;
+}
+function _applyOfficeResult(d) {
+  if (!d) return;
+  if (d.id) {
+    var m = mapOfficeLedgerRow(d);
+    if (!DB.officeLedger.some(function(e) { return e.id === m.id; })) DB.officeLedger.push(m);
+  }
+  if (d.funds) {
+    DB.officeFunds.balancePHP = parseFloat(d.funds.balance_php) || 0;
+    DB.officeFunds.balanceUSD = parseFloat(d.funds.balance_usd) || 0;
+    if (d.funds.fx_rate) DB.officeFunds.fxRate = parseFloat(d.funds.fx_rate) || DB.officeFunds.fxRate;
+  }
+  autosave('officeLedger'); autosave('officeFunds');
+}
+
+// ── Commissions ──────────────────────────────────────────────────────────
+async function releaseCommission(commId) {
+  if (!hasPermission('Release/Reverse Commissions')) { toast('Your role cannot release commissions', 'error'); return; }
+  var c = DB.commissions.find(function(x) { return x.id === commId; });
+  if (!c) return;
+  if (c.status !== 'Pending Release' && c.status !== 'In Guarantee') {
+    toast('This commission cannot be released (status: ' + c.status + ')', 'error'); return;
+  }
+  var dbId = c._dbId || c.id;
+  if (!isUUID(dbId)) { toast('This commission is not saved on the server yet — try again in a moment', 'error'); return; }
+  var currency = c.currency || 'PHP';
+  var sym = currency === 'USD' ? '$' : '₱';
+  var fx = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
+  var phpPreview = currency === 'USD' ? Math.round(c.amount * fx) : c.amount;
+  if (!confirm('Release ' + (c.trancheLabel || 'commission') + ' of ' + sym + c.amount.toLocaleString() + ' ' + currency +
+      (currency === 'USD' ? ' (≈ ₱' + phpPreview.toLocaleString() + ' PHP at today\'s rate)' : '') + ' for ' + c.applicantName + '?')) return;
+  if (!_acctLock('rel:' + dbId)) return;
+  try {
+    var r = await _acctCall('/commissions/' + dbId + '/release', {});
+    if (!r.ok && r.httpStatus === 409 && r.data && r.data.error === 'duplicate_released') {
+      if (confirm('⚠️ Duplicate: T' + c.tranche + ' for ' + c.applicantName + ' was already released (₱' +
+          (r.data.existing_amount || 0).toLocaleString() + ').\n\nOK = reverse the old record and release this one.\nCancel = review manually in Commission History.')) {
+        r = await _acctCall('/commissions/' + dbId + '/release', { reverse_duplicate: true });
+      } else return;
+    }
+    if (!r.ok) { toast(_acctMsg(r, 'Could not release this commission'), 'error'); return; }
+    var d = r.data;
+    var cm = _applyCommissionRow(d.commission);
+    if (d.duplicate_reversed) _applyCommissionRow(d.duplicate_reversed);
+    if (d.ledger_entry) _applyLedgerRow(d.ledger_entry);
+    _applyAgentSnapshot(d.agent);
+    var agent = DB.agents.find(function(a) { return a.id === c.agentId || a._dbId === c.agentId; });
+    addAudit('UPDATE', 'Commission', 'Released T' + c.tranche + ' ' + sym + c.amount.toLocaleString() + ' ' + currency + ' for ' + c.applicantName);
+    toast(d.replayed ? 'Already released — nothing posted twice' :
+      'Commission T' + c.tranche + ' of ' + sym + c.amount.toLocaleString() + ' ' + currency + ' released to ' + (agent ? agent.name : 'agent') +
+      (cm && cm.phpAmount ? ' (₱' + cm.phpAmount.toLocaleString() + ')' : ''), 'success');
+    try { _triggerImmediateSync(); } catch (e) {}
+    renderCommissions();
+  } finally { _acctUnlock('rel:' + dbId); }
+}
+
+async function reverseCommission(commId, presetReason) {
+  if (!hasPermission('Release/Reverse Commissions')) { toast('Your role cannot reverse commissions', 'error'); return false; }
+  var c = DB.commissions.find(function(x) { return x.id === commId; });
+  if (!c) return false;
+  var dbId = c._dbId || c.id;
+  if (!isUUID(dbId)) { toast('This commission is not saved on the server yet', 'error'); return false; }
+  var sym = c.currency === 'USD' ? '$' : '₱';
+  var phpAmount = c.phpAmount || (c.currency === 'USD' ? Math.round(c.amount * (c.fxRate || (DB.officeFunds && DB.officeFunds.fxRate) || 57.5)) : c.amount);
+  var reason = presetReason;
+  if (!reason) {
+    if (!confirm('Reverse ' + (c.status === 'Released' ? 'released ' : '') + 'commission for ' + c.applicantName + ' (T' + c.tranche + ', ' + sym + c.amount.toLocaleString() + ' ' + c.currency + ')?' +
+        (c.status === 'Released' ? '\n\nThis debits ₱' + phpAmount.toLocaleString() + ' from the agent ledger (the exact amount paid out).' : ''))) return false;
+    reason = _askReason('Why is this commission being reversed?');
+    if (!reason) return false;
+  }
+  if (!_acctLock('rev:' + dbId)) return false;
+  try {
+    var r = await _acctCall('/commissions/' + dbId + '/reverse', { reason: reason });
+    if (!r.ok) { toast(_acctMsg(r, 'Could not reverse this commission'), 'error'); return false; }
+    var d = r.data;
+    _applyCommissionRow(d.commission);
+    if (d.ledger_entry) _applyLedgerRow(d.ledger_entry);
+    _applyAgentSnapshot(d.agent);
+    addAudit('UPDATE', 'Commission', 'Reversed T' + c.tranche + ' ' + sym + c.amount + ' ' + c.currency + ' for ' + c.applicantName + ' — ' + reason);
+    if (!presetReason) toast('Commission T' + c.tranche + ' reversed' + (d.ledger_entry ? ' — ₱' + Math.abs(parseFloat(d.ledger_entry.amount)).toLocaleString() + ' debited' : ''), 'success');
+    try { _triggerImmediateSync(); } catch (e) {}
+    if (!presetReason) renderCommissions();
+    return true;
+  } finally { _acctUnlock('rev:' + dbId); }
+}
+
+// Reverse every unreversed commission of an applicant (backout / rejection / repatriation)
+async function _reverseApplicantCommissions(app, applicantId, reason) {
+  var list = (DB.commissions || []).filter(function(cm) {
+    return (cm.applicantId === applicantId || cm.applicantId === app._dbId || (cm.applicantName && cm.applicantName.toLowerCase() === (app.name || '').toLowerCase())) &&
+           cm.status !== 'Reversed';
+  });
+  var n = 0, debited = 0;
+  for (var i = 0; i < list.length; i++) {
+    var was = list[i].status, php = list[i].phpAmount || list[i].amount;
+    var ok = await reverseCommission(list[i].id, reason);
+    if (ok) { n++; if (was === 'Released') debited += php; }
+  }
+  return { count: n, debited: debited };
+}
+
+// ── Agent ledger ─────────────────────────────────────────────────────────
+// Manual entry (adjustment / penalty / bonus …). The server derives the balance.
+async function addLedgerEntry(agentId, type, desc, amount, applicantId, opts) {
+  opts = opts || {};
+  if (!isUUID(agentId)) { var _a = DB.agents.find(function(a) { return a.id === agentId; }); if (_a && isUUID(_a._dbId || _a.id)) agentId = _a._dbId || _a.id; }
+  if (!_isLiveSession()) return _addLedgerEntryDemo(agentId, type, desc, amount, applicantId, opts);
+  var r = await _acctCall('/agent-ledger', {
+    agent_id: agentId, applicant_id: isUUID(applicantId) ? applicantId : null, type: type, description: desc,
+    amount: amount, entry_date: opts.date || _ymd(new Date()), notes: opts.notes || null, idempotency_key: opts.key || _idemKey(),
+  });
+  if (!r.ok) { toast(_acctMsg(r, 'Could not post the ledger entry'), 'error'); return null; }
+  _applyLedgerRow(r.data);
+  _applyAgentSnapshot(r.data.agent);
+  return r.data;
+}
+function _addLedgerEntryDemo(agentId, type, desc, amount, applicantId, opts) {
+  var agent = DB.agents.find(function(a) { return a.id === agentId; });
+  if (!agent) return null;
+  var sum = (DB.agentLedger || []).reduce(function(s, e) { return e.agentId === agentId ? s + (e.amount || 0) : s; }, 0) + amount;
+  agent.balance = sum;
+  var entry = { id: 'LDG-' + String((DB.agentLedger || []).length + 1).padStart(3, '0'), agentId: agentId, applicantId: applicantId || null,
+    type: type, desc: desc, amount: amount, date: (opts && opts.date) || _ymd(new Date()), runningBalance: sum };
+  DB.agentLedger.unshift(entry);
+  autosave('agents'); autosave('agentLedger');
+  return entry;
+}
+
+async function deleteLedgerEntry(entryId) {
+  if (!hasPermission('Void Accounting Records')) { toast('Your role cannot void ledger entries', 'error'); return; }
+  var entry = DB.agentLedger.find(function(e) { return e.id === entryId; });
+  if (!entry) { toast('Entry not found', 'error'); return; }
+  if (entry.commissionId) { toast('This entry belongs to a commission — reverse the commission instead', 'error'); return; }
+  if (entry.expenseId) { toast('This entry belongs to a charged expense — reverse the charge instead', 'error'); return; }
+  if (entry.paymentId) { toast('This entry belongs to a payout — void the payment instead', 'error'); return; }
+  if (!confirm('Void this ledger entry?\n\n' + entry.type.toUpperCase() + ' · ' + entry.date + '\n' + entry.desc + '\n' +
+      (entry.amount >= 0 ? '+' : '') + '₱' + Math.abs(entry.amount).toLocaleString() +
+      '\n\nThe entry stays in the audit trail as voided; the agent balance is recalculated.')) return;
+  var reason = _askReason('Why is this entry being voided?');
+  if (!reason) return;
+  if (!_isLiveSession()) {
+    DB.agentLedger = DB.agentLedger.filter(function(e) { return e.id !== entryId; });
+    var ag0 = DB.agents.find(function(a) { return a.id === entry.agentId; }); if (ag0) ag0.balance = (ag0.balance || 0) - entry.amount;
+    autosave('agentLedger'); autosave('agents'); if (currentAccTab === 'ledger') renderLedger(); return;
+  }
+  var dbId = entry._dbId || entry.id;
+  var r = await _acctCall('/agent-ledger/' + dbId + '/void', { reason: reason });
+  if (!r.ok) { toast(_acctMsg(r, 'Could not void the entry'), 'error'); return; }
+  DB.agentLedger = DB.agentLedger.filter(function(e) { return e.id !== entryId; });
+  autosave('agentLedger');
+  _applyAgentSnapshot(r.data.agent);
+  addAudit('DELETE', 'Ledger', 'Voided ' + entry.type + ' entry ₱' + Math.abs(entry.amount).toLocaleString() + ' — ' + reason);
+  toast('Entry voided — balance recalculated', 'success');
+  if (typeof renderLedger === 'function' && currentAccTab === 'ledger') renderLedger();
+  if (typeof renderAccounting === 'function') renderAccounting();
+}
+
+// Admin-only: void the whole ledger of one agent and release their charged expenses
+async function resetAgentBalanceToZero(agentId) {
+  if (!hasPermission('Delete Accounting Records')) { toast('Only Admins can reset agent balances', 'error'); return; }
+  var agent = DB.agents.find(function(a) { return a.id === agentId; });
+  if (!agent) { toast('Agent not found', 'error'); return; }
+  var chargedExpenses = DB.expenses.filter(function(e) { return (e.agentId === agentId || e.agentId === agent._dbId) && e.status === 'Charged'; });
+  var ledgerEntries = DB.agentLedger.filter(function(e) { return e.agentId === agentId; });
+  if (!confirm('Full reset for ' + agent.name + '?\n\n• Void all ' + ledgerEntries.length + ' ledger entries\n• Release ' + chargedExpenses.length +
+      ' charged expense(s) back to Paid\n• Reset balance to ₱0\n\nHistory is kept (voided), but the balance cannot be restored automatically.')) return;
+  var typed = window.prompt('Type RESET to confirm resetting ' + agent.name + ':', '');
+  if (typed !== 'RESET') { toast('Reset cancelled', 'info'); return; }
+  var reason = _askReason('Why is this agent being reset?', 5);
+  if (!reason) return;
+  var dbId = agent._dbId || agent.id;
+  var r = await _acctCall('/agents/' + dbId + '/reset-ledger', { reason: reason });
+  if (!r.ok) { toast(_acctMsg(r, 'Reset failed'), 'error'); return; }
+  DB.agentLedger = DB.agentLedger.filter(function(e) { return e.agentId !== agentId && e.agentId !== dbId; });
+  chargedExpenses.forEach(function(e) { e.status = 'Paid'; e.agentId = ''; e.agentName = ''; });
+  autosave('agentLedger'); autosave('expenses');
+  _applyAgentSnapshot(r.data.agent);
+  addAudit('UPDATE', 'Agent', 'Balance reset for ' + agent.name + ' — ' + reason);
+  toast('Agent ledger reset — ' + r.data.voided_entries + ' entries voided', 'success');
+  if (typeof renderAccounting === 'function') renderAccounting();
+  if (typeof renderAgentGrid === 'function' && currentAccTab === 'agents') renderAgentGrid();
+}
+
+async function submitAdjustment() {
+  if (!hasPermission('Post Ledger Adjustments')) { toast('Your role cannot post adjustments', 'error'); return; }
+  var agentId  = (document.getElementById('adj-agent').value || '').trim();
+  var type     = document.getElementById('adj-type').value;
+  var currency = (document.getElementById('adj-currency') || {}).value || 'PHP';
+  var amount   = parseFloat(document.getElementById('adj-amount').value) || 0;
+  var desc     = (document.getElementById('adj-desc').value || '').trim();
+  var appId    = document.getElementById('adj-applicant').value || null;
+  var adjDate  = (document.getElementById('adj-date') || {}).value || _ymd(new Date());
+  if (!agentId || !desc || amount <= 0) { toast('Agent, description and amount are required', 'error'); return; }
+  if (!adjDate) { toast('Please enter a date for this adjustment', 'error'); return; }
+  var finalAmt = (type === 'credit' || type === 'bonus') ? amount : -amount;
+  var phpEquiv = finalAmt;
+  if (currency === 'USD') { var fx = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5; phpEquiv = Math.round(finalAmt * fx); }
+  var fullDesc = desc + (currency === 'USD' ? ' [USD ' + (finalAmt > 0 ? '+' : '') + finalAmt.toFixed(2) + ' @ ₱' + ((DB.officeFunds && DB.officeFunds.fxRate) || 57.5) + ']' : '');
+  var ledgerType = ['adjustment', 'penalty', 'bonus'].indexOf(type) !== -1 ? type : 'adjustment';
+  var saved = await addLedgerEntry(agentId, ledgerType, fullDesc, phpEquiv, appId, { date: adjDate, notes: desc });
+  if (!saved) return;
+  var sym = currency === 'PHP' ? '₱' : '$';
+  addAudit('CREATE', 'Ledger', 'Manual adjustment: ' + desc + ' (' + sym + amount.toLocaleString() + ' ' + currency + ')');
+  toast('Ledger entry posted (' + sym + amount.toLocaleString() + ' ' + currency + ')', 'success');
+  closeOverlay('overlay-adjustment');
+  if (currentAccTab === 'ledger') renderLedger();
+  if (typeof renderAccounting === 'function') renderAccounting();
+}
+
+// ── Expenses charged to agents ───────────────────────────────────────────
+// Server-side: marks the expense Charged and debits the agent ledger in ONE transaction.
+async function _chargeExpenseServer(exp, agentId, opts) {
+  opts = opts || {};
+  var dbId = exp._dbId || exp.id;
+  if (!isUUID(dbId)) {
+    var cr = await apiCreateExpense(Object.assign({}, exp, { status: exp.status === 'Charged' ? 'Paid' : exp.status }));
+    if (!cr || !cr.ok || !cr.data || !cr.data.id) return { ok: false, error: _acctMsg(cr, 'Could not save the expense on the server') };
+    exp._dbId = cr.data.id; exp.id = cr.data.id; dbId = cr.data.id;
+  }
+  var ag = DB.agents.find(function(a) { return a.id === agentId || a._dbId === agentId; });
+  var aid = ag ? (ag._dbId || ag.id) : agentId;
+  var r = await _acctCall('/expenses/' + dbId + '/charge', { agent_id: aid, description: opts.description || undefined, percent: opts.percent || undefined });
+  if (!r.ok) return { ok: false, status: r.httpStatus, error: _acctMsg(r, 'Could not charge the expense'), already: r.httpStatus === 409 && r.data && r.data.error === 'already_charged' };
+  var d = r.data;
+  _applyExpenseRow(d.expense);
+  if (d.agency_expense) _applyExpenseRow(d.agency_expense);
+  if (d.ledger_entry) _applyLedgerRow(d.ledger_entry);
+  _applyAgentSnapshot(d.agent);
+  return { ok: true, data: d };
+}
+
+async function chargeExpenseToAgent(expenseId, agentId) {
+  if (!hasPermission('Post Ledger Adjustments')) { toast('Your role cannot charge expenses to agents', 'error'); return; }
+  var exp   = DB.expenses.find(function(e) { return e.id === expenseId; });
+  var agent = DB.agents.find(function(a) { return a.id === agentId || a._dbId === agentId; });
+  if (!exp || !agent) return;
+  if (exp.status === 'Charged') { toast('Expense already charged', 'info'); return; }
+  if (!_acctLock('chg:' + expenseId)) return;
+  try {
+    var res = await _chargeExpenseServer(exp, agentId);
+    if (!res.ok) { toast(res.already ? '⚠️ Already charged by another user' : res.error, res.already ? 'info' : 'error'); if (res.already) { try { _triggerImmediateSync(); } catch (e) {} } return; }
+    addAudit('UPDATE', 'Expense', 'Charged ₱' + exp.amount.toLocaleString() + ' to ' + agent.name);
+    toast('₱' + exp.amount.toLocaleString() + ' charged to ' + agent.name, 'success');
+    renderExpensesTab();
+    if (typeof renderAccounting === 'function') renderAccounting();
+  } finally { _acctUnlock('chg:' + expenseId); }
+}
+
+async function unchargeExpenseFromAgent(expenseId) {
+  if (!hasPermission('Void Accounting Records')) { toast('Your role cannot reverse charges', 'error'); return; }
+  var exp = DB.expenses.find(function(e) { return e.id === expenseId; });
+  if (!exp || exp.status !== 'Charged') return;
+  if (!confirm('Reverse the charge for "' + exp.desc + '" (₱' + exp.amount.toLocaleString() + ')?\n\nThe agent is credited back and the expense returns to Paid.')) return;
+  var reason = _askReason('Why is the charge being reversed?');
+  if (!reason) return;
+  var r = await _acctCall('/expenses/' + (exp._dbId || exp.id) + '/uncharge', { reason: reason });
+  if (!r.ok) { toast(_acctMsg(r, 'Could not reverse the charge'), 'error'); return; }
+  _applyExpenseRow(r.data.expense);
+  if (r.data.ledger_entry) _applyLedgerRow(r.data.ledger_entry);
+  _applyAgentSnapshot(r.data.agent);
+  toast('Charge reversed — agent credited', 'success');
+  renderExpensesTab();
+}
+
+// Country expense rule → what to do with ONE uncharged expense when an applicant exits (Backout / Rejected / Repatriated)
+async function _settleExpenseByRule(e, agent, rule, label) {
+  var dbId = e._dbId || e.id;
+  var amt = parseFloat(e.amount) || 0;
+  function toAgency() {
+    if (!isUUID(dbId)) return Promise.resolve({ ok: false });
+    return _acctCall('/expenses/' + dbId, { status: 'Agency' }, 'PATCH').then(function(r) {
+      if (r.ok) _applyExpenseRow(r.data);
+      return { ok: r.ok, mode: 'agency', amount: amt };
+    });
+  }
+  if (rule === 'none' || !agent) return toAgency();
+  if (rule === 'medical' && e.category !== 'Medical Exam') return toAgency();
+  var pct = rule === 'partial' ? 50 : 100;
+  var res = await _chargeExpenseServer(e, agent._dbId || agent.id, {
+    percent: pct,
+    description: label + (rule === 'partial' ? ' 50% (partial rule)' : rule === 'medical' ? ' (medical rule)' : '') + ': ' + (e.category || '') + ' — ' + (e.applicant || '') + (e.desc ? ' · ' + e.desc : ''),
+  });
+  return { ok: res.ok, mode: 'charged', amount: rule === 'partial' ? Math.round(amt * 0.5) : amt, error: res.error, already: res.already };
+}
+
+async function _settleExitExpenses(app, agent, newStatus) {
+  var country = app.job ? app.job.split('·').pop().trim() : '';
+  var cr = DB.countryRules.find(function(r) { return r.country === country && r.active; });
+  var rule = cr ? (cr.expenseRule || 'full') : 'full';
+  var label = { full: 'Full recovery', partial: '50% recovery', medical: 'Medical only', none: 'Agency absorbs' }[rule] || rule;
+  var nameLower = (app.name || '').toLowerCase();
+  var appDbId = app._dbId || app.id || '';
+  var list = (DB.expenses || []).filter(function(e) {
+    var match = (e.applicant && e.applicant.toLowerCase() === nameLower) || (e.applicantId && (e.applicantId === app.id || e.applicantId === appDbId));
+    return match && ['Paid', 'Pending', 'Approved'].indexOf(e.status) !== -1;
+  });
+  if (!list.length) return null;
+  var charged = 0, agencyN = 0, chargedN = 0, failed = 0;
+  for (var i = 0; i < list.length; i++) {
+    var res = await _settleExpenseByRule(list[i], agent, rule, newStatus);
+    if (!res.ok) { if (!res.already) failed++; continue; }
+    if (res.mode === 'charged') { charged += res.amount; chargedN++; } else agencyN++;
+  }
+  addAudit('UPDATE', 'Expenses', newStatus + ' — ' + list.length + ' expense(s) processed under "' + label + '" rule for ' + app.name + (country ? ' (' + country + ')' : ''));
+  toast(newStatus + ': ' + list.length + ' expense(s) processed — ' + label +
+    (chargedN ? ' · ₱' + charged.toLocaleString() + ' charged to ' + (agent ? agent.name : 'agent') : '') +
+    (agencyN ? ' · ' + agencyN + ' absorbed by agency' : '') + (failed ? ' · ' + failed + ' failed (see Expenses tab)' : ''), failed ? 'error' : 'info');
+  autosave('expenses');
+  if (typeof renderExpensesTab === 'function' && currentPage === 'accounting') renderExpensesTab();
+  return { charged: charged, chargedN: chargedN, agencyN: agencyN, failed: failed };
+}
+
+// ── Office funds ─────────────────────────────────────────────────────────
+// Posted by the server, which computes the balance under a row lock. Returns the saved entry or null.
+async function _postOffice(entry) {
+  if (!_isLiveSession()) {
+    DB.officeLedger.push(entry);
+    autosave('officeLedger'); autosave('officeFunds');
+    recalcOfficeLedgerBalances();
+    return entry;
+  }
+  var r = await _acctCall('/office-ledger', {
+    type: entry.type, currency: entry.currency, amount: entry.amount, desc: entry.desc, ref: entry.ref, category: entry.category,
+    date: entry.date, notes: entry.notes, override_reason: entry.overrideReason || undefined, idempotency_key: _idemKey(),
+  });
+  if (!r.ok) { toast(_acctMsg(r, 'Could not post to the office ledger'), 'error'); return null; }
+  _applyOfficeResult(r.data);
+  recalcOfficeLedgerBalances();
+  if (r.data.funds) {
+    DB.officeFunds.balancePHP = parseFloat(r.data.funds.balance_php) || DB.officeFunds.balancePHP;
+    DB.officeFunds.balanceUSD = parseFloat(r.data.funds.balance_usd) || DB.officeFunds.balanceUSD;
+  }
+  return mapOfficeLedgerRow(r.data);
+}
+
+async function apiUpdateOfficeFunds(funds) {
+  // Balances are server-derived. Only the exchange rate can be written, and only when it changed.
+  if (!_isLiveSession()) return { ok: true };
+  if (!funds || window._serverFx === undefined || Math.abs((parseFloat(funds.fxRate) || 0) - window._serverFx) < 0.00005) return { ok: true };
+  if (!hasPermission('Manage FX & Funds')) return { ok: true };
+  var r = await _acctCall('/office-funds', { fx_rate: funds.fxRate }, 'PUT');
+  if (r.ok && r.data) window._serverFx = parseFloat(r.data.fx_rate);
+  return r;
+}
+
+async function updateFxRate() {
+  if (!hasPermission('Manage FX & Funds')) { toast('Your role cannot change the exchange rate', 'error'); return; }
+  var el = document.getElementById('fx-rate');
+  var rate = parseFloat(el ? el.value : 57.5);
+  if (!rate || rate < 10 || rate > 500) { toast('Enter a realistic exchange rate (₱10 – ₱500 per $1)', 'error'); return; }
+  if (_isLiveSession()) {
+    var r = await _acctCall('/office-funds', { fx_rate: rate }, 'PUT');
+    if (!r.ok) { toast(_acctMsg(r, 'Could not update the exchange rate'), 'error'); if (el) el.value = DB.officeFunds.fxRate; return; }
+    window._serverFx = parseFloat(r.data.fx_rate);
+    DB.officeFunds.fxRate = window._serverFx;
+    DB.officeFunds.fxUpdated = r.data.fx_updated ? String(r.data.fx_updated).slice(0, 10) : _ymd(new Date());
+  } else {
+    DB.officeFunds.fxRate = rate; DB.officeFunds.fxUpdated = _ymd(new Date());
+  }
+  autosave('officeFunds');
+  var updEl = document.getElementById('fx-updated');
+  if (updEl) updEl.textContent = 'Updated ' + DB.officeFunds.fxUpdated;
+  addAudit('UPDATE', 'Exchange Rate', 'FX rate updated to 1 USD = ₱' + rate);
+  toast('Exchange rate updated: $1 = ₱' + rate + ' (applies to new transactions only)', 'success');
+  if (typeof renderOfficeFlowRow === 'function') renderOfficeFlowRow();
+  if (typeof renderOfficeTrend === 'function') renderOfficeTrend();
+}
+
+async function submitAddFunds() {
+  if (!hasPermission('Manage Accounting')) { toast('Your role cannot manage accounting', 'error'); return; }
+  var allocTo  = document.querySelector('input[name="funds-allocate-to"]:checked');
+  var dest     = allocTo ? allocTo.value : 'office';
+  var type     = document.getElementById('funds-type').value;
+  var cur      = document.getElementById('funds-currency').value;
+  var amount   = parseFloat(document.getElementById('funds-amount').value) || 0;
+  var source   = (document.getElementById('funds-source').value || '').trim();
+  var date     = document.getElementById('funds-date').value;
+  var notes    = (document.getElementById('funds-notes').value || '').trim();
+  var expCat   = document.getElementById('funds-exp-category') ? document.getElementById('funds-exp-category').value : '';
+  if (!amount || amount <= 0) { toast('Enter a valid amount', 'error'); return; }
+  if (!date) { toast('Date is required', 'error'); return; }
+  var uname = (window._ramsSessionUser && window._ramsSessionUser.name) || 'Admin';
+  if (!_acctLock('addfunds')) return;
+  try {
+    if (dest === 'expenses') {
+      var expFilter = DB.expenses.filter(function(e) { return e.status === 'Pending' && (!expCat || e.category === expCat); });
+      var totalPending = expFilter.reduce(function(s, e) { return s + (e.amount || 0); }, 0);
+      var saved = await _postOffice({
+        id: 'OL-' + String(DB.officeLedger.length + 1).padStart(3, '0'), type: 'expense-allocation', currency: cur, amount: amount,
+        balance: cur === 'PHP' ? DB.officeFunds.balancePHP : DB.officeFunds.balanceUSD,
+        desc: 'Fund allocated to expenses' + (expCat ? ' (' + expCat + ')' : '') + (source ? ' — ' + source : ''),
+        ref: 'EXP-ALLOC-' + String(Date.now()).slice(-5), category: expCat || null, date: date, postedBy: uname, ts: new Date().toISOString(), notes: notes,
+      });
+      if (!saved) return;
+      var ids = expFilter.map(function(e) { return e._dbId || e.id; }).filter(isUUID);
+      var marked = expFilter.length;
+      if (ids.length && _isLiveSession()) {
+        var mr = await _acctCall('/expenses/mark-paid', { ids: ids });
+        if (!mr.ok) toast('Fund recorded, but expenses could not be marked Paid: ' + _acctMsg(mr), 'error');
+        else { var done = {}; mr.data.updated.forEach(function(i) { done[i] = true; }); expFilter.forEach(function(e) { if (done[e._dbId || e.id]) e.status = 'Paid'; }); marked = mr.data.updated.length; }
+      } else expFilter.forEach(function(e) { e.status = 'Paid'; });
+      autosave('expenses');
+      addAudit('UPDATE', 'Expenses', 'Fund ₱' + amount.toLocaleString() + ' allocated — ' + marked + ' expense(s) marked Paid (₱' + totalPending.toLocaleString() + ')');
+      toast(marked + ' expense(s) marked as Paid · ₱' + totalPending.toLocaleString() + ' covered', 'success');
+      closeOverlay('overlay-add-funds');
+      renderAccounting();
+    } else {
+      var entry = await _postOffice({
+        id: 'OL-' + String(DB.officeLedger.length + 1).padStart(3, '0'), type: 'allocation', currency: cur, amount: amount, balance: 0,
+        desc: type.charAt(0).toUpperCase() + type.slice(1) + (source ? ' — ' + source : ''),
+        ref: 'ALLOC-' + String(Date.now()).slice(-5), category: null, date: date, postedBy: uname, ts: new Date().toISOString(), notes: notes,
+      });
+      if (!entry) return;
+      addAudit('CREATE', 'Office Funds', 'Fund allocation: ' + (cur === 'PHP' ? '₱' : '$') + amount.toLocaleString() + ' ' + cur);
+      toast((cur === 'PHP' ? '₱' : '$') + amount.toLocaleString() + ' ' + cur + ' added to office funds', 'success');
+      closeOverlay('overlay-add-funds');
+      recalcOfficeLedgerBalances();
+      renderOffice();
+    }
+  } finally { _acctUnlock('addfunds'); }
+}
+
+async function submitOfficeExpense() {
+  if (!hasPermission('Manage Accounting')) { toast('Your role cannot manage accounting', 'error'); return; }
+  var cur    = document.getElementById('oe-currency').value;
+  var cat    = document.getElementById('oe-category').value;
+  var desc   = (document.getElementById('oe-desc').value || '').trim();
+  var amount = parseFloat(document.getElementById('oe-amount').value) || 0;
+  var date   = document.getElementById('oe-date').value;
+  var ref    = (document.getElementById('oe-ref').value || '').trim();
+  var paidBy = document.getElementById('oe-paidby').value;
+  var override = (document.getElementById('oe-override-reason').value || '').trim();
+  if (!desc) { toast('Description is required', 'error'); return; }
+  if (!amount || amount <= 0) { toast('Enter a valid amount', 'error'); return; }
+  if (!date) { toast('Date is required', 'error'); return; }
+  var bal = cur === 'PHP' ? DB.officeFunds.balancePHP : DB.officeFunds.balanceUSD;
+  var insufficient = amount > bal;
+  if (insufficient && !override) { toast('Override reason required for insufficient balance', 'error'); document.getElementById('oe-override-reason').focus(); return; }
+  var uname = (window._ramsSessionUser && window._ramsSessionUser.name) || 'Admin';
+  if (!_acctLock('officeexp')) return;
+  try {
+    var saved = await _postOffice({
+      id: 'OL-' + String(DB.officeLedger.length + 1).padStart(3, '0'), type: insufficient ? 'override' : 'expense', currency: cur, amount: -amount,
+      balance: bal - amount, desc: cat + ' — ' + desc + (paidBy !== 'Cash' ? ' [' + paidBy + ']' : '') + (override ? ' [OVERRIDE: ' + override + ']' : ''),
+      ref: ref || ('OE-' + String(Date.now()).slice(-5)), category: cat, date: date, postedBy: uname, ts: new Date().toISOString(), overrideReason: override, notes: override || null,
+    });
+    if (!saved) return;
+    if (insufficient) addAudit('OVERRIDE', 'Office Expense', 'Override: ' + (cur === 'PHP' ? '₱' : '$') + amount.toLocaleString() + ' — ' + override);
+    addAudit('CREATE', 'Office Expense', cat + ' — ' + (cur === 'PHP' ? '₱' : '$') + amount.toLocaleString() + ' ' + cur);
+    toast((cur === 'PHP' ? '₱' : '$') + amount.toLocaleString() + ' ' + cat + ' expense posted', 'success');
+    closeOverlay('overlay-office-expense');
+    recalcOfficeLedgerBalances();
+    renderOffice();
+  } finally { _acctUnlock('officeexp'); }
+}
+
+async function submitRefund() {
+  if (!hasPermission('Manage Accounting')) { toast('Your role cannot manage accounting', 'error'); return; }
+  var sourceType = document.getElementById('rf-source-type').value;
+  var sourceName = (document.getElementById('rf-source-name').value || '').trim();
+  var reason     = document.getElementById('rf-reason').value;
+  var cur        = document.getElementById('rf-currency').value;
+  var amount     = parseFloat(document.getElementById('rf-amount').value) || 0;
+  var date       = document.getElementById('rf-date').value;
+  var notes      = (document.getElementById('rf-notes').value || '').trim();
+  if (!sourceName) { toast('Source name is required', 'error'); return; }
+  if (!amount || amount <= 0) { toast('Enter a valid amount', 'error'); return; }
+  if (!date) { toast('Date is required', 'error'); return; }
+  var uname = (window._ramsSessionUser && window._ramsSessionUser.name) || 'Accounting';
+  var refId = 'RF-' + String(DB.officeRefunds.length + 1).padStart(3, '0');
+  if (!_acctLock('refund')) return;
+  try {
+    var saved = await _postOffice({
+      id: 'OL-' + String(DB.officeLedger.length + 1).padStart(3, '0'), type: 'refund', currency: cur, amount: amount, balance: 0,
+      desc: 'Refund from ' + sourceName + ' (' + sourceType + ') — ' + reason, ref: refId, category: null, date: date, postedBy: uname, ts: new Date().toISOString(), notes: notes,
+    });
+    if (!saved) return;
+    DB.officeRefunds.push({ id: refId, sourceType: sourceType, sourceName: sourceName, reason: reason, currency: cur, amount: amount, date: date, notes: notes });
+    autosave('officeRefunds');
+    addAudit('CREATE', 'Office Refund', 'Refund: ' + (cur === 'PHP' ? '₱' : '$') + amount.toLocaleString() + ' from ' + sourceName);
+    toast('Refund of ' + (cur === 'PHP' ? '₱' : '$') + amount.toLocaleString() + ' posted', 'success');
+    closeOverlay('overlay-refund');
+    recalcOfficeLedgerBalances();
+    renderOffice();
+  } finally { _acctUnlock('refund'); }
+}
+
+async function submitOfficeAdjustment() {
+  if (!hasPermission('Manage Accounting')) { toast('Your role cannot manage accounting', 'error'); return; }
+  var cur    = document.getElementById('oa-currency').value;
+  var dir    = parseInt(document.getElementById('oa-direction').value) || 1;
+  var amount = parseFloat(document.getElementById('oa-amount').value) || 0;
+  var reason = (document.getElementById('oa-reason').value || '').trim();
+  if (!amount || amount <= 0) { toast('Enter a valid amount', 'error'); return; }
+  if (reason.length < 3) { toast('Reason is required', 'error'); return; }
+  var uname = (window._ramsSessionUser && window._ramsSessionUser.name) || 'Admin';
+  if (!_acctLock('officeadj')) return;
+  try {
+    var saved = await _postOffice({
+      id: 'OL-' + String(DB.officeLedger.length + 1).padStart(3, '0'), type: 'adjustment', currency: cur, amount: amount * dir, balance: 0,
+      desc: 'Manual adjustment — ' + reason, ref: 'ADJ-' + String(Date.now()).slice(-5), category: null, date: _ymd(new Date()), postedBy: uname, ts: new Date().toISOString(), notes: reason,
+    });
+    if (!saved) return;
+    addAudit('ADJUSTMENT', 'Office Funds', 'Manual adj: ' + (dir > 0 ? '+' : '-') + (cur === 'PHP' ? '₱' : '$') + amount.toLocaleString() + ' — ' + reason);
+    toast('Adjustment posted', 'success');
+    closeOverlay('overlay-office-adjustment');
+    recalcOfficeLedgerBalances();
+    renderOffice();
+  } finally { _acctUnlock('officeadj'); }
+}
+
+function deleteOfficeLedgerEntryById(entryId) { deleteOfficeLedgerEntry(entryId); }
+async function deleteOfficeLedgerEntry(entryId) {
+  if (!hasPermission('Void Accounting Records')) { toast('Your role cannot void office ledger entries', 'error'); return; }
+  var entry = DB.officeLedger.find(function(e) { return e.id === entryId; });
+  if (!entry) return;
+  if (!confirm('Void this entry?\n\n' + entry.desc + '\n' + (entry.currency === 'PHP' ? '₱' : '$') + Math.abs(entry.amount).toLocaleString() + ' ' + entry.currency +
+      '\n\nIt stays in the audit trail as voided; balances are recalculated.')) return;
+  var reason = _askReason('Why is this entry being voided?');
+  if (!reason) return;
+  if (_isLiveSession()) {
+    var dbId = entry._dbId || entry.id;
+    if (!isUUID(dbId)) { toast('This entry is not saved on the server', 'error'); return; }
+    var r = await _acctCall('/office-ledger/' + dbId + '/void', { reason: reason });
+    if (!r.ok) { toast(_acctMsg(r, 'Could not void the entry'), 'error'); return; }
+    if (r.data && r.data.funds) _applyOfficeResult({ funds: r.data.funds });
+  }
+  DB.officeLedger = DB.officeLedger.filter(function(e) { return e.id !== entryId; });
+  autosave('officeLedger');
+  recalcOfficeLedgerBalances();
+  addAudit('DELETE', 'Office Ledger', 'Voided entry: ' + entry.desc + ' (' + (entry.currency === 'PHP' ? '₱' : '$') + Math.abs(entry.amount).toLocaleString() + ') — ' + reason);
+  toast('Entry voided — balances recalculated', 'success');
+  if (typeof renderOffice === 'function') renderOffice();
+}
+
+async function resetOfficeLedger() {
+  if (!hasPermission('Delete Accounting Records')) { toast('Only Admins can reset the office ledger', 'error'); return; }
+  if (!confirm('Void ALL office ledger entries and reset balances to zero?\n\nEntries stay in the audit trail as voided, but this cannot be undone from the app.')) return;
+  var typed = window.prompt('Type RESET to confirm:', '');
+  if (typed !== 'RESET') { toast('Reset cancelled', 'info'); return; }
+  var reason = _askReason('Why is the office ledger being reset?', 5);
+  if (!reason) return;
+  if (_isLiveSession()) {
+    var r = await _acctCall('/office-ledger?confirm=RESET&reason=' + encodeURIComponent(reason), null, 'DELETE');
+    if (!r.ok) { toast(_acctMsg(r, 'Reset failed'), 'error'); return; }
+  }
+  DB.officeLedger = []; DB.officeRefunds = [];
+  DB.officeFunds.balancePHP = 0; DB.officeFunds.balanceUSD = 0;
+  autosave('officeLedger'); autosave('officeFunds');
+  addAudit('DELETE', 'Office Ledger', 'Office ledger reset — ' + reason);
+  if (typeof renderOffice === 'function') renderOffice();
+  toast('Office ledger reset', 'success');
+}
+
+async function resetAllExpenses() {
+  if (!hasPermission('Delete Accounting Records')) { toast('Only Admins can reset expenses', 'error'); return; }
+  var removable = DB.expenses.filter(function(e) { return e.status !== 'Charged'; });
+  var charged = DB.expenses.length - removable.length;
+  if (!confirm('Delete ' + removable.length + ' expense record(s)?' + (charged ? '\n\n' + charged + ' charged expense(s) are kept — reverse their charges first.' : '') + '\n\nThis cannot be undone.')) return;
+  var typed = window.prompt('Type RESET to confirm:', '');
+  if (typed !== 'RESET') { toast('Reset cancelled', 'info'); return; }
+  var reason = _askReason('Why are expenses being cleared?', 5);
+  if (!reason) return;
+  var failed = 0;
+  for (var i = 0; i < removable.length; i++) {
+    var e = removable[i], dbId = e._dbId || e.id;
+    if (_isLiveSession() && isUUID(dbId)) {
+      var r = await _acctCall('/expenses/' + dbId + '?reason=' + encodeURIComponent(reason), null, 'DELETE');
+      if (!r.ok) { failed++; continue; }
+    }
+    DB.expenses = DB.expenses.filter(function(x) { return x !== e; });
+  }
+  autosave('expenses');
+  addAudit('DELETE', 'Expenses', (removable.length - failed) + ' expense records cleared — ' + reason);
+  renderAccounting();
+  if (typeof renderExpensesTab === 'function') renderExpensesTab();
+  toast((removable.length - failed) + ' expense(s) cleared' + (failed ? ' · ' + failed + ' could not be deleted (period closed or locked)' : ''), failed ? 'error' : 'success');
+}
+
+// ── Employer fees ────────────────────────────────────────────────────────
+async function _feeAction(feeId, patch, okMsg, okType, audit) {
+  var fee = DB.employerFees.find(function(f) { return f.id === feeId; });
+  if (!fee) return;
+  var dbId = fee._dbId || fee.id;
+  if (_isLiveSession()) {
+    if (!isUUID(dbId)) { toast('This fee is not saved on the server yet', 'error'); return; }
+    var r = await _acctCall('/employer-fees/' + dbId, patch, 'PATCH');
+    if (!r.ok) { toast(_acctMsg(r, 'Could not update the fee'), 'error'); return; }
+    var u = mapEmployerFee(r.data);
+    Object.assign(fee, u);
+  } else {
+    fee.status = patch.status;
+    fee.settledBy = patch.status === 'Pending' ? '' : _compUser();
+    fee.settledAt = patch.status === 'Pending' ? '' : _ymd(new Date());
+  }
+  autosave('employerFees');
+  _syncEmployerFees();
+  addAudit('UPDATE', 'Employer Fee', audit);
+  toast(okMsg, okType);
+  renderEmployerFees();
+}
+function markFeeSettled(feeId) {
+  if (!hasPermission('Settle Employer Fees')) { toast('Only Admins can mark employer fees as settled', 'error'); return; }
+  var fee = DB.employerFees.find(function(f) { return f.id === feeId; });
+  if (!fee) return;
+  var open = Math.max((parseFloat(fee.feeUSD) || 0) - (parseFloat(fee.amountPaid) || 0), 0);
+  if (!confirm('Mark the employer fee for ' + fee.applicantName + ' as fully settled?\n\nThis records a payment of $' + open.toLocaleString() + ' (use "Record payment" for part payments).')) return;
+  return _feeAction(feeId, { status: 'Settled' }, '✅ Employer fee settled — applicant can now be deployed', 'success',
+    'Fee $' + fee.feeUSD + ' USD settled for ' + fee.applicantName + ' (' + fee.employer + ')');
+}
+function markFeeWaived(feeId) {
+  if (!hasPermission('Settle Employer Fees')) { toast('Only Admins can waive employer fees', 'error'); return; }
+  var fee = DB.employerFees.find(function(f) { return f.id === feeId; });
+  if (!fee) return;
+  if (!confirm('Waive the $' + fee.feeUSD + ' USD employer fee for ' + fee.applicantName + '?\n\nApplicant will be allowed to deploy without fee payment.')) return;
+  var reason = _askReason('Why is this fee being waived?');
+  if (!reason) return;
+  return _feeAction(feeId, { status: 'Waived', reason: reason }, 'Fee waived — applicant can now be deployed', 'info',
+    'Fee $' + fee.feeUSD + ' USD WAIVED for ' + fee.applicantName + ' (' + fee.employer + ') — ' + reason);
+}
+function markFeePending(feeId) {
+  if (!hasPermission('Settle Employer Fees')) { toast('Only Admins can revert employer fees', 'error'); return; }
+  var fee = DB.employerFees.find(function(f) { return f.id === feeId; });
+  if (!fee) return;
+  if (!confirm('Re-open this fee for ' + fee.applicantName + '?\n\nAny payments recorded against it are voided.')) return;
+  var reason = _askReason('Why is the fee being re-opened?');
+  if (!reason) return;
+  return _feeAction(feeId, { status: 'Pending', reason: reason }, 'Fee re-opened as Pending', 'info', 'Fee re-opened for ' + fee.applicantName + ' — ' + reason);
+}
+
+// Re-point/re-price Pending fees when their job order changes — a PATCH (audited), not delete + re-create
+function recalcAllFees() {
+  if (!DB.employerFees || DB.employerFees.length === 0) return;
+  var updated = 0;
+  DB.employerFees.filter(function(f) { return f.status === 'Pending'; }).forEach(function(fee) {
+    var app = DB.applicants.find(function(a) { return a.id === fee.applicantId; });
+    if (!app) return;
+    if (app.status === 'Backout') return;
+    var currentJob = null;
+    if (app._jobOrderId) currentJob = DB.jobs.find(function(j) { return j.id === app._jobOrderId || j._dbId === app._jobOrderId; });
+    if (!currentJob && app.job) {
+      var titleKey = app.job.split('·')[0].trim().toLowerCase();
+      currentJob = DB.jobs.find(function(j) { return j.title.trim().toLowerCase() === titleKey; });
+    }
+    if (!currentJob) return;
+    var newFee = parseFloat(currentJob.employerFeeUSD) > 0 ? parseFloat(currentJob.employerFeeUSD) : fee.feeUSD;
+    var changed = fee.employer !== currentJob.employer || fee.jobTitle !== currentJob.title ||
+                  fee.country !== (currentJob.country || '') || fee.feeUSD !== newFee;
+    if (!changed) return;
+    var patch = { employer: currentJob.employer, job_title: currentJob.title, country: currentJob.country || app.destination || '', fee_usd: newFee };
+    var jid = currentJob._dbId || currentJob.id; if (isUUID(jid)) patch.job_id = jid;
+    var dbId = fee._dbId || fee.id;
+    updated++;
+    if (_isLiveSession() && isUUID(dbId)) {
+      _acctCall('/employer-fees/' + dbId, patch, 'PATCH').then(function(r) {
+        if (r.ok) { Object.assign(fee, mapEmployerFee(r.data)); autosave('employerFees'); _syncEmployerFees(); }
+        else if (r.httpStatus !== 409) console.warn('[fees] re-price failed:', _acctMsg(r));
+      }).catch(function() {});
+    } else {
+      fee.jobId = patch.job_id || fee.jobId; fee.jobTitle = patch.job_title; fee.employer = patch.employer; fee.country = patch.country; fee.feeUSD = newFee;
+    }
+  });
+  if (updated > 0) { autosave('employerFees'); _syncEmployerFees(); }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ACCOUNTING UI — payments, agent payouts/statements, Controls tab
+// ══════════════════════════════════════════════════════════════════════
+var _payCtx = null;
+function _money(n, cur) { var s = cur === 'USD' ? '$' : '₱'; n = parseFloat(n) || 0; return (n < 0 ? '−' : '') + s + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+
+function _invoiceTotal(inv) { return (inv.rows || []).reduce(function(s, r) { return s + (parseFloat(r.usd) || 0); }, 0); }
+
+function openPaymentModal(kind, id) {
+  if (!hasPermission('Record Payments')) { toast('Your role cannot record payments', 'error'); return; }
+  var title = '', balance = 0, cur = 'USD', dbId = '', sub = '';
+  if (kind === 'invoice') {
+    var inv = (DB.invoices || []).find(function(x) { return x.id === id || x._dbId === id; });
+    if (!inv) return;
+    dbId = inv._dbId || inv.id;
+    var total = _invoiceTotal(inv), paid = parseFloat(inv.paid || 0);
+    balance = Math.max(total - paid, 0);
+    title = 'Record payment — Invoice #' + inv.number; sub = inv.employer + ' · total ' + _money(total, 'USD') + ' · received ' + _money(paid, 'USD');
+  } else if (kind === 'fee') {
+    var fee = (DB.employerFees || []).find(function(x) { return x.id === id || x._dbId === id; });
+    if (!fee) return;
+    dbId = fee._dbId || fee.id;
+    balance = Math.max((parseFloat(fee.feeUSD) || 0) - (parseFloat(fee.amountPaid) || 0), 0);
+    title = 'Record payment — ' + fee.applicantName; sub = fee.employer + ' · fee ' + _money(fee.feeUSD, 'USD') + ' · received ' + _money(fee.amountPaid || 0, 'USD');
+  } else if (kind === 'payout') {
+    var ag = (DB.agents || []).find(function(x) { return x.id === id || x._dbId === id; });
+    if (!ag) return;
+    dbId = ag._dbId || ag.id; cur = 'PHP';
+    balance = Math.max(parseFloat(ag.balance) || 0, 0);
+    title = 'Pay out to ' + ag.name; sub = 'Agent balance owed: ' + _money(balance, 'PHP');
+    if (balance <= 0) { toast('This agent has no balance to pay out', 'info'); return; }
+  } else return;
+  if (!isUUID(dbId)) { toast('This record is not saved on the server yet — try again in a moment', 'error'); return; }
+  _payCtx = { kind: kind, id: dbId, currency: cur, balance: balance, key: _idemKey() };
+  document.getElementById('pay-title').textContent = title;
+  document.getElementById('pay-sub').textContent = sub;
+  document.getElementById('pay-amount').value = balance ? balance.toFixed(2) : '';
+  document.getElementById('pay-cur').textContent = cur;
+  document.getElementById('pay-method').value = 'bank';
+  document.getElementById('pay-ref').value = '';
+  document.getElementById('pay-notes').value = '';
+  document.getElementById('pay-date').value = _ymd(new Date());
+  document.getElementById('pay-error').style.display = 'none';
+  document.getElementById('pay-history').innerHTML = '';
+  openOverlay('overlay-payment');
+  _loadPaymentHistory();
+}
+
+async function _loadPaymentHistory() {
+  var c = _payCtx; if (!c || !_isLiveSession()) return;
+  var q = c.kind === 'invoice' ? 'invoice_id=' : c.kind === 'fee' ? 'fee_id=' : 'agent_id=';
+  _bustAcctCache();
+  var r = await apiFetch('/payments?' + q + encodeURIComponent(c.id) + '&limit=50');
+  var el = document.getElementById('pay-history');
+  if (!el || !r.ok || !Array.isArray(r.data)) return;
+  if (!r.data.length) { el.innerHTML = '<div style="font-size:12px;color:var(--muted)">No payments recorded yet.</div>'; return; }
+  var canVoid = hasPermission('Void Accounting Records');
+  el.innerHTML = '<div style="font-size:11px;font-weight:800;color:var(--muted);margin-bottom:6px">PAYMENTS</div>' + r.data.map(function(p) {
+    return '<div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--border);font-size:12px">' +
+      '<div style="flex:1"><b>' + _money(p.amount, p.currency) + '</b> · ' + escapeHtml(p.method || '') + (p.reference ? ' · ' + escapeHtml(p.reference) : '') +
+      '<div style="color:var(--muted);font-size:11px">' + String(p.paid_at).slice(0, 10) + (p.created_by_name ? ' · ' + escapeHtml(p.created_by_name) : '') + '</div></div>' +
+      (canVoid ? '<button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="voidPaymentUi(\'' + p.id + '\')">Void</button>' : '') + '</div>';
+  }).join('');
+}
+
+async function voidPaymentUi(paymentId) {
+  var reason = _askReason('Why is this payment being voided?');
+  if (!reason) return;
+  var r = await _acctCall('/payments/' + paymentId + '/void', { reason: reason });
+  if (!r.ok) { toast(_acctMsg(r, 'Could not void the payment'), 'error'); return; }
+  if (r.data.agent) _applyAgentSnapshot(r.data.agent);
+  await _refreshAfterPayment(_payCtx ? _payCtx.kind : '');
+  toast('Payment voided' + (r.data.reopened_fees && r.data.reopened_fees.length ? ' — ' + r.data.reopened_fees.length + ' employer fee(s) re-opened' : ''), 'success');
+  _loadPaymentHistory();
+}
+
+async function _refreshAfterPayment(kind) {
+  try {
+    await Promise.all([apiFetchInvoices(), apiFetchEmployerFees(), apiFetchAgentLedger(), fetchAgents()]);
+  } catch (e) {}
+  if (typeof renderInvoices === 'function' && currentAccTab === 'invoices') renderInvoices();
+  if (typeof renderEmployerFees === 'function' && currentAccTab === 'employers') renderEmployerFees();
+  if (currentAccTab === 'ledger' && typeof renderLedger === 'function') renderLedger();
+  if (typeof renderAccounting === 'function') renderAccounting();
+}
+
+async function submitPayment() {
+  var c = _payCtx; if (!c) return;
+  var errEl = document.getElementById('pay-error');
+  var amount = parseFloat(document.getElementById('pay-amount').value) || 0;
+  if (!(amount > 0)) { errEl.textContent = 'Enter an amount greater than zero.'; errEl.style.display = 'block'; return; }
+  if (amount > c.balance + 0.005) { errEl.textContent = 'The amount exceeds the outstanding balance of ' + _money(c.balance, c.currency) + '.'; errEl.style.display = 'block'; return; }
+  var body = {
+    amount: amount, method: document.getElementById('pay-method').value, reference: document.getElementById('pay-ref').value.trim(),
+    paid_at: document.getElementById('pay-date').value, notes: document.getElementById('pay-notes').value.trim(), idempotency_key: c.key,
+  };
+  var path = c.kind === 'invoice' ? '/invoices/' + c.id + '/payments' : c.kind === 'fee' ? '/employer-fees/' + c.id + '/payments' : '/agents/' + c.id + '/payouts';
+  var btn = document.getElementById('pay-submit'); if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    var r = await _acctCall(path, body);
+    if (!r.ok) { errEl.textContent = _acctMsg(r, 'Could not record the payment'); errEl.style.display = 'block'; return; }
+    if (c.kind === 'payout') {
+      if (r.data.ledger_entry) _applyLedgerRow(r.data.ledger_entry);
+      _applyAgentSnapshot(r.data.agent);
+    }
+    await _refreshAfterPayment(c.kind);
+    var extra = (r.data.settled_fees && r.data.settled_fees.length) ? ' — ' + r.data.settled_fees.length + ' employer fee(s) settled automatically' : '';
+    addAudit('CREATE', 'Payment', (c.kind === 'payout' ? 'Agent payout ' : c.kind === 'fee' ? 'Employer fee payment ' : 'Invoice payment ') + _money(amount, c.currency));
+    toast('Payment of ' + _money(amount, c.currency) + ' recorded' + extra, 'success');
+    closeOverlay('overlay-payment');
+  } finally { if (btn) { btn.disabled = false; btn.textContent = 'Record payment'; } }
+}
+
+// Invoices: "mark paid" is now "record payment" (partial payments supported)
+function markInvoicePaid(id) { openPaymentModal('invoice', id); }
+function recordFeePayment(id) { openPaymentModal('fee', id); }
+function openAgentPayout(agentId) { openPaymentModal('payout', agentId); }
+
+// ── Agent statement ──────────────────────────────────────────────────────
+var _stmtAgent = null, _stmtData = null;
+function openAgentStatement(agentId) {
+  var ag = (DB.agents || []).find(function(a) { return a.id === agentId || a._dbId === agentId; });
+  if (!ag) return;
+  _stmtAgent = ag;
+  var to = _ymd(new Date()), d = new Date(); d.setMonth(d.getMonth() - 1, 1);
+  document.getElementById('stmt-title').textContent = 'Statement — ' + ag.name;
+  document.getElementById('stmt-from').value = _ymd(d);
+  document.getElementById('stmt-to').value = to;
+  openOverlay('overlay-statement');
+  loadAgentStatement();
+}
+async function loadAgentStatement() {
+  var ag = _stmtAgent; if (!ag) return;
+  var from = document.getElementById('stmt-from').value, to = document.getElementById('stmt-to').value;
+  var body = document.getElementById('stmt-body');
+  body.innerHTML = '<div style="padding:20px;color:var(--muted)">Loading…</div>';
+  _bustAcctCache();
+  var r = await apiFetch('/agents/' + (ag._dbId || ag.id) + '/statement?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to));
+  if (!r.ok) { body.innerHTML = '<div style="padding:20px;color:var(--red)">' + escapeHtml(_acctMsg(r, 'Could not load the statement')) + '</div>'; return; }
+  _stmtData = r.data;
+  var s = r.data;
+  body.innerHTML =
+    '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">' +
+      [['Opening', s.opening], ['Credits', s.credits], ['Debits', s.debits], ['Closing', s.closing]].map(function(x) {
+        return '<div class="ledger-sum-card"><div class="ledger-sum-val">' + _money(x[1], 'PHP') + '</div><div class="ledger-sum-lbl">' + x[0] + '</div></div>';
+      }).join('') + '</div>' +
+    '<table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="border-bottom:2px solid var(--border);color:var(--muted);font-size:11px"><th style="text-align:left;padding:6px">Date</th><th style="text-align:left;padding:6px">Type</th><th style="text-align:left;padding:6px">Description</th><th style="text-align:right;padding:6px">Amount</th><th style="text-align:right;padding:6px">Balance</th></tr></thead><tbody>' +
+    (s.lines.length ? s.lines.map(function(l) {
+      return '<tr style="border-bottom:1px solid var(--border)"><td style="padding:6px;font-family:monospace">' + String(l.entry_date).slice(0, 10) + '</td><td style="padding:6px">' + escapeHtml(l.type) + '</td><td style="padding:6px">' + escapeHtml(l.description || '') + '</td><td style="padding:6px;text-align:right;color:' + (l.amount >= 0 ? 'var(--green)' : 'var(--red)') + '">' + _money(l.amount, 'PHP') + '</td><td style="padding:6px;text-align:right">' + _money(l.balance, 'PHP') + '</td></tr>';
+    }).join('') : '<tr><td colspan="5" style="padding:16px;text-align:center;color:var(--muted)">No entries in this period</td></tr>') + '</tbody></table>';
+}
+function downloadAgentStatement() {
+  if (!_stmtData) return;
+  var s = _stmtData, rows = ['Agent statement,' + JSON.stringify(s.agent.name), 'Period,' + (s.from || 'start') + ' to ' + s.to, 'Opening balance,' + s.opening, 'Date,Type,Description,Amount,Balance'];
+  s.lines.forEach(function(l) { rows.push([String(l.entry_date).slice(0, 10), l.type, JSON.stringify(l.description || ''), l.amount, l.balance].join(',')); });
+  rows.push('Credits,' + s.credits); rows.push('Debits,' + s.debits); rows.push('Closing balance,' + s.closing);
+  rows.push(''); rows.push('Prepared by,' + JSON.stringify((window._ramsSessionUser && window._ramsSessionUser.name) || '') + ',Signature,________________');
+  _downloadCsv(rows, 'agent_statement_' + s.agent.name.replace(/\s+/g, '_') + '_' + s.to + '.csv');
+}
+function printAgentStatement() {
+  var el = document.getElementById('stmt-body'); if (!el) return;
+  var w = window.open('', '_blank'); if (!w) { toast('Allow pop-ups to print', 'error'); return; }
+  w.document.write('<html><head><title>Statement</title><style>body{font-family:Arial,sans-serif;padding:24px;font-size:12px}table{width:100%;border-collapse:collapse}td,th{padding:5px;border-bottom:1px solid #ddd;text-align:left}.ledger-sum-card{display:inline-block;margin-right:16px}</style></head><body><h2>' +
+    escapeHtml(document.getElementById('stmt-title').textContent) + '</h2><p>' + escapeHtml(document.getElementById('stmt-from').value + ' to ' + document.getElementById('stmt-to').value) + '</p>' + el.innerHTML + '<p style="margin-top:40px">Prepared by: ______________________ &nbsp; Approved by: ______________________</p></body></html>');
+  w.document.close(); w.focus(); w.print();
+}
+
+// ── Controls tab ─────────────────────────────────────────────────────────
+function _finishedMonths(n) {
+  var out = [], d = new Date(); d.setDate(1);
+  for (var i = 0; i < n; i++) { d.setMonth(d.getMonth() - 1); out.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')); }
+  return out;
+}
+function _bucketRow(label, b) {
+  b = b || {};
+  return '<tr><td style="padding:6px 8px;font-weight:700">' + label + '</td>' + ['b0_30', 'b31_60', 'b61_90', 'b90_plus', 'total'].map(function(k) {
+    return '<td style="padding:6px 8px;text-align:right;font-family:monospace;' + (k === 'b90_plus' && b[k] > 0 ? 'color:var(--red);font-weight:700' : '') + '">' + _money(b[k] || 0, 'USD') + '</td>';
+  }).join('') + '<td style="padding:6px 8px;text-align:right;color:var(--muted)">' + (b.n || 0) + '</td></tr>';
+}
+
+async function renderAccControls() {
+  var el = document.getElementById('acc-controls'); if (!el) return;
+  if (!_isLiveSession()) { el.innerHTML = '<div class="card" style="padding:24px;color:var(--muted)">Accounting controls need a connection to the server (not available in demo mode).</div>'; return; }
+  el.innerHTML = '<div class="card" style="padding:24px;color:var(--muted)">Loading controls…</div>';
+  _bustAcctCache();
+  var res = await Promise.all([apiFetch('/accounting/alerts'), apiFetch('/accounting/reconcile'), apiFetch('/accounting/periods'), apiFetch('/accounting/controls'), apiFetch('/accounting/ageing'), apiFetch('/fx-history?limit=10')]);
+  var al = res[0].ok ? res[0].data : null, rc = res[1].ok ? res[1].data : null, per = res[2].ok ? res[2].data : [], ctl = res[3].ok ? res[3].data : {}, ag = res[4].ok ? res[4].data : null, fx = res[5].ok ? res[5].data : [];
+  var canClose = hasPermission('Close Periods');
+  var card = function(t, inner, extra) { return '<div class="card" style="padding:16px;margin-bottom:14px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div style="font-size:14px;font-weight:800">' + t + '</div>' + (extra || '') + '</div>' + inner + '</div>'; };
+  var html = '';
+
+  // Alerts
+  if (al) {
+    var items = [];
+    if (al.guarantee_ready) items.push('<b>' + al.guarantee_ready + '</b> commission(s) finished their guarantee period' + (hasPermission('Release/Reverse Commissions') ? ' <button class="btn btn-s btn-xs" onclick="advanceGuaranteeUi()">Mark ready to release</button>' : ''));
+    var soon = (al.guarantee_expiring || []).filter(function(x) { return x.days > 0; });
+    if (soon.length) items.push('<b>' + soon.length + '</b> guarantee period(s) end within 30 days: ' + soon.slice(0, 6).map(function(x) { return escapeHtml(x.applicant_name || '—') + ' T' + x.tranche + ' (' + x.days + 'd)'; }).join(', ') + (soon.length > 6 ? '…' : ''));
+    if (al.stale_pending_expenses && al.stale_pending_expenses.length) items.push('<b>' + al.stale_pending_expenses.length + '</b> expense(s) have been Pending for over 14 days');
+    if (al.negative_agent_balances && al.negative_agent_balances.length) items.push('<b>' + al.negative_agent_balances.length + '</b> agent(s) owe the agency money: ' + al.negative_agent_balances.slice(0, 5).map(function(a) { return escapeHtml(a.name) + ' ' + _money(a.balance, 'PHP'); }).join(', '));
+    if (al.office_negative && (al.office_negative.php || al.office_negative.usd)) items.push('Office fund balance is negative' + (al.office_negative.php ? ' (PHP)' : '') + (al.office_negative.usd ? ' (USD)' : ''));
+    if (al.previous_period_open) items.push('Last month (' + al.previous_period + ') is not closed yet');
+    if (al.reconciliation_issues) items.push('<b>' + al.reconciliation_issues + '</b> reconciliation issue(s) — see below');
+    html += card('🔔 Needs attention', items.length ? '<ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.9">' + items.map(function(i) { return '<li>' + i + '</li>'; }).join('') + '</ul>' : '<div style="color:var(--green);font-size:13px">✅ Nothing needs attention right now.</div>');
+  }
+
+  // Reconciliation
+  if (rc) {
+    var labels = { agent_balance_mismatch: 'Agent balance ≠ ledger', office_balance_mismatch: 'Office fund ≠ ledger', released_without_ledger: 'Released commission without ledger credit', reversed_without_debit: 'Reversed commission without debit', charged_without_ledger: 'Charged expense without ledger debit', invoice_paid_mismatch: 'Invoice paid ≠ payments', duplicate_active_commissions: 'Duplicate active commissions', deployed_with_pending_fee: 'Deployed with an unsettled employer fee' };
+    var rows = Object.keys(rc.issues).map(function(k) { var n = rc.issues[k].length; return '<tr><td style="padding:5px 8px">' + (labels[k] || k) + '</td><td style="padding:5px 8px;text-align:right;font-weight:800;color:' + (n ? 'var(--red)' : 'var(--green)') + '">' + (n ? n : '✓') + '</td></tr>'; }).join('');
+    html += card('🧮 Reconciliation', '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Checked ' + new Date(rc.checked_at).toLocaleString() + ' — ' + (rc.ok ? '<b style="color:var(--green)">books are consistent</b>' : '<b style="color:var(--red)">' + rc.count + ' issue(s)</b>') + '</div><table style="width:100%;font-size:12.5px">' + rows + '</table>',
+      '<div>' + (canClose ? '<button class="btn btn-s btn-sm" onclick="reconcileFixUi()">Recalculate derived totals</button> ' : '') + '<button class="btn btn-ghost btn-sm" onclick="renderAccControls()">↻ Re-run</button></div>');
+  }
+
+  // Periods
+  var closedSet = {}; (per || []).forEach(function(p) { if (p.closed) closedSet[p.period] = p; });
+  var months = _finishedMonths(12);
+  html += card('🔒 Period close', '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">A closed month rejects new postings, edits and voids dated inside it — corrections go in the current period as dated adjustments.</div>' +
+    '<table style="width:100%;font-size:12.5px"><tbody>' + months.map(function(m) {
+      var p = closedSet[m];
+      return '<tr style="border-top:1px solid var(--border)"><td style="padding:6px 8px;font-weight:700;font-family:monospace">' + m + '</td><td style="padding:6px 8px">' + (p ? '🔒 closed ' + String(p.closed_at).slice(0, 10) + (p.closed_by_name ? ' by ' + escapeHtml(p.closed_by_name) : '') + (p.note ? ' — ' + escapeHtml(p.note) : '') : '<span style="color:var(--muted)">open</span>') + '</td><td style="padding:6px 8px;text-align:right">' +
+        (canClose ? (p ? '<button class="btn btn-ghost btn-xs" onclick="reopenPeriodUi(\'' + m + '\')">Reopen</button>' : '<button class="btn btn-s btn-xs" onclick="closePeriodUi(\'' + m + '\')">Close month</button>') : '') + '</td></tr>';
+    }).join('') + '</tbody></table>');
+
+  // Controls
+  html += card('⚙ Approval controls', '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px">' +
+    '<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="ctl-mc" ' + (ctl.makerChecker ? 'checked' : '') + ' ' + (canClose ? '' : 'disabled') + '> Maker-checker: the person who records an expense cannot approve or pay it</label>' +
+    '<label>Applies at or above ₱ <input class="f-inp" id="ctl-limit" type="number" min="0" step="100" value="' + (ctl.approvalLimit || 0) + '" style="width:120px;display:inline-block" ' + (canClose ? '' : 'disabled') + '> (0 = every amount)</label>' +
+    '<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="ctl-auto" ' + (ctl.autoSettleFees !== false ? 'checked' : '') + ' ' + (canClose ? '' : 'disabled') + '> Settle matching employer fees when an invoice is fully paid</label>' +
+    '<label>Ledger adjustments at or above ₱ <input class="f-inp" id="ctl-large" type="number" min="0" step="100" value="' + (ctl.largeAdjustment || 0) + '" style="width:120px;display:inline-block" ' + (canClose ? '' : 'disabled') + '> need a reason (0 = off)</label></div>',
+    canClose ? '<button class="btn btn-p btn-sm" onclick="saveAccControls()">Save</button>' : '');
+
+  // Ageing
+  if (ag) {
+    html += card('⏳ Ageing (USD receivables)', '<table style="width:100%;font-size:12.5px"><thead><tr style="color:var(--muted);font-size:11px"><th style="text-align:left;padding:6px 8px"></th><th style="text-align:right;padding:6px 8px">0–30d</th><th style="text-align:right;padding:6px 8px">31–60d</th><th style="text-align:right;padding:6px 8px">61–90d</th><th style="text-align:right;padding:6px 8px">90d+</th><th style="text-align:right;padding:6px 8px">Total</th><th style="text-align:right;padding:6px 8px">#</th></tr></thead><tbody>' +
+      _bucketRow('Employer fees pending', ag.employer_fees_usd) + _bucketRow('Invoices unpaid', ag.invoices_usd) + '</tbody></table>' +
+      '<div style="font-size:12px;font-weight:800;margin:14px 0 6px">Agent balances</div>' +
+      ((ag.agent_balances || []).length ? '<table style="width:100%;font-size:12.5px">' + ag.agent_balances.map(function(a) {
+        return '<tr style="border-top:1px solid var(--border)"><td style="padding:5px 8px">' + escapeHtml(a.name) + '</td><td style="padding:5px 8px;text-align:right;font-family:monospace;color:' + (a.balance >= 0 ? 'var(--green)' : 'var(--red)') + '">' + _money(a.balance, 'PHP') + '</td><td style="padding:5px 8px;color:var(--muted)">' + (a.last_activity ? 'last activity ' + String(a.last_activity).slice(0, 10) : '') + '</td><td style="padding:5px 8px;text-align:right"><button class="btn btn-ghost btn-xs" onclick="openAgentStatement(\'' + a.id + '\')">Statement</button></td></tr>';
+      }).join('') + '</table>' : '<div style="color:var(--muted);font-size:12px">All agent balances are zero.</div>'));
+  }
+
+  // FX history
+  html += card('💱 Exchange-rate history', (fx || []).length ? '<table style="width:100%;font-size:12.5px">' + fx.map(function(h) {
+    return '<tr style="border-top:1px solid var(--border)"><td style="padding:5px 8px;color:var(--muted)">' + new Date(h.set_at).toLocaleString() + '</td><td style="padding:5px 8px;font-family:monospace;font-weight:700">₱' + parseFloat(h.rate) + '</td><td style="padding:5px 8px;color:var(--muted)">' + (h.previous ? 'was ₱' + parseFloat(h.previous) : '') + '</td><td style="padding:5px 8px">' + escapeHtml(h.set_by_name || '') + (h.note ? ' — ' + escapeHtml(h.note) : '') + '</td></tr>';
+  }).join('') + '</table>' : '<div style="color:var(--muted);font-size:12px">No changes recorded.</div>');
+
+  el.innerHTML = html;
+}
+
+async function saveAccControls() {
+  var r = await _acctCall('/accounting/controls', {
+    makerChecker: document.getElementById('ctl-mc').checked, approvalLimit: parseFloat(document.getElementById('ctl-limit').value) || 0,
+    autoSettleFees: document.getElementById('ctl-auto').checked, largeAdjustment: parseFloat(document.getElementById('ctl-large').value) || 0,
+  }, 'PUT');
+  if (!r.ok) { toast(_acctMsg(r, 'Could not save'), 'error'); return; }
+  toast('Controls saved', 'success'); renderAccControls();
+}
+async function closePeriodUi(period) {
+  if (!confirm('Close ' + period + '?\n\nNew entries, edits and voids dated in that month will be rejected until it is reopened.')) return;
+  var note = window.prompt('Optional note (e.g. "reconciled with bank"):', '') || '';
+  var r = await _acctCall('/accounting/periods/' + period + '/close', { note: note });
+  if (!r.ok) { toast(_acctMsg(r, 'Could not close the period'), 'error'); return; }
+  toast(period + ' closed', 'success'); renderAccControls();
+}
+async function reopenPeriodUi(period) {
+  var reason = _askReason('Why is ' + period + ' being reopened?');
+  if (!reason) return;
+  var r = await _acctCall('/accounting/periods/' + period + '/reopen', { reason: reason });
+  if (!r.ok) { toast(_acctMsg(r, 'Could not reopen the period'), 'error'); return; }
+  toast(period + ' reopened', 'info'); renderAccControls();
+}
+async function reconcileFixUi() {
+  if (!confirm('Recalculate agent balances, office fund balances and invoice paid amounts from their ledgers/payments?')) return;
+  var r = await _acctCall('/accounting/reconcile/fix', {});
+  if (!r.ok) { toast(_acctMsg(r, 'Could not recalculate'), 'error'); return; }
+  toast('Derived totals recalculated', 'success');
+  try { await Promise.all([fetchAgents(), apiFetchOfficeLedger(), apiFetchInvoices()]); } catch (e) {}
+  renderAccControls();
+}
+async function advanceGuaranteeUi() {
+  var r = await _acctCall('/accounting/guarantee/advance', {});
+  if (!r.ok) { toast(_acctMsg(r, 'Could not update'), 'error'); return; }
+  toast(r.data.moved + ' commission(s) moved to Pending Release', 'success');
+  try { await apiFetchCommissions(); } catch (e) {}
+  renderAccControls();
+}
+
+// ── Record an expense ────────────────────────────────────────────────────
+// Saved on the server first. If the applicant has already exited (Backout / Repatriated / Rejected) the
+// country expense rule decides whether the agent is charged (the server posts the debit atomically) or
+// the agency absorbs it.
+async function saveExpense() {
+  if (!hasPermission('Manage Expenses')) { toast('Your role cannot manage expenses', 'error'); return; }
+  var appName = (document.getElementById('e-applicant').value || '').trim();
+  var desc    = (document.getElementById('e-desc').value     || '').trim();
+  var amt     = parseFloat(document.getElementById('e-amount').value) || 0;
+  var errEl   = document.getElementById('e-error');
+  var btn     = document.getElementById('save-expense-btn');
+  if (errEl) errEl.style.display = 'none';
+  function fail(msg) { if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; } else toast(msg, 'error'); }
+
+  if (!appName) return fail('Please select an applicant.');
+  if (!desc)    return fail('Description is required.');
+  if (!amt || amt <= 0) return fail('Amount must be greater than zero.');
+
+  var app = DB.applicants.find(function(a) { return a.name === appName; });
+  var _expAgent = app ? DB.agents.find(function(a) { return a.name === app.agent || a.id === app._agentDbId; }) : null;
+  var exp = {
+    id:          genId('EXP'),
+    date:        document.getElementById('e-date').value || _ymd(new Date()),
+    desc:        desc,
+    applicant:   appName,
+    applicantId: app ? (app._dbId || app.id) : null,
+    agentName:   _expAgent ? _expAgent.name : (app ? app.agent || '' : ''),
+    agentId:     _expAgent ? (_expAgent._dbId || _expAgent.id) : (app ? app._agentDbId || '' : ''),
+    category:    document.getElementById('e-category').value,
+    amount:      amt,
+    status:      document.getElementById('e-status').value || 'Paid',
+    ref:         (document.getElementById('e-ref') ? document.getElementById('e-ref').value.trim() : '') || null,
+    postedBy:    (window._ramsSessionUser && window._ramsSessionUser.name) || 'System',
+  };
+
+  // Decide the automatic outcome from the country expense rule — nothing is saved or posted yet
+  var agent = app ? DB.agents.find(function(a) { return a.name === app.agent || a.id === app._agentDbId; }) : null;
+  var plan = { charge: null, status: null };
+  var _country = app && app.job ? app.job.split('·').pop().trim() : '';
+  if (app && ['Backout', 'Repatriated', 'Rejected'].indexOf(app.status) !== -1) {
+    var _rule = DB.countryRules.find(function(r) { return r.country === _country && r.active; });
+    var _expRule = _rule ? (_rule.expenseRule || 'full') : 'full';
+    if (_expRule === 'none') plan.status = 'Agency';
+    else if (_expRule === 'medical') { if (exp.category === 'Medical Exam' && agent) plan.charge = { percent: 100, label: 'Auto-charged (medical rule)' }; else plan.status = 'Agency'; }
+    else if (_expRule === 'partial') { if (agent) plan.charge = { percent: 50, label: 'Auto-charged 50% (partial rule)' }; else plan.status = 'Agency'; }
+    else { if (agent) plan.charge = { percent: 100, label: 'Auto-charged' }; else plan.status = 'Agency'; }
+  } else if (exp.status === 'Charged' && agent) {
+    plan.charge = { percent: 100, label: 'Charged' };      // chose "Charged" on the form
+  }
+  if (exp.status === 'Charged') exp.status = 'Paid';       // the server only reaches Charged through the charge call
+  if (plan.status) exp.status = plan.status;
+
+  if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
+  DB.expenses.unshift(exp);
+  var r = await apiCreateExpense(exp);
+  if (!r.ok) {
+    DB.expenses = DB.expenses.filter(function(x) { return x !== exp; });
+    if (btn) { btn.textContent = 'Record Expense'; btn.disabled = false; }
+    return fail(_acctMsg(r, 'The expense could not be saved on the server.'));
+  }
+  _bumpExpenseTs();
+  if (r.data && r.data.warning === 'possible_duplicate') toast('⚠️ An expense with the same amount, description, applicant and date already exists — check for a duplicate', 'info');
+
+  var chargedNote = '';
+  if (plan.charge) {
+    var label = plan.charge.label + ': ' + exp.category + ' — ' + appName + ' (' + app.status + ')';
+    if (_isLiveSession()) {
+      var cres = await _chargeExpenseServer(exp, agent._dbId || agent.id, { percent: plan.charge.percent, description: label });
+      if (!cres.ok) toast('Expense saved, but charging the agent failed: ' + cres.error, 'error');
+      else {
+        var chg = cres.data.ledger_entry ? Math.abs(parseFloat(cres.data.ledger_entry.amount)) : amt;
+        chargedNote = ' · ₱' + chg.toLocaleString() + ' charged to ' + agent.name;
+        addAudit('CREATE', 'Expense', 'Auto-charged ₱' + chg.toLocaleString() + ' to ' + agent.name + ' (' + appName + ' is ' + app.status + ')' + (plan.charge.percent < 100 ? ' — partial rule, agency absorbed the rest' : ''));
+      }
+    } else {
+      var share = plan.charge.percent < 100 ? Math.round(amt * plan.charge.percent / 100) : amt;
+      exp.status = 'Charged'; exp.amount = share; agent.totalExpenses = (agent.totalExpenses || 0) + share;
+      _addLedgerEntryDemo(agent.id, 'expense', label, -share, app.id);
+    }
+  } else if (plan.status === 'Agency') {
+    addAudit('CREATE', 'Expense', 'Agency absorbed ₱' + amt.toLocaleString() + ' — ' + exp.category + ' for ' + appName + ' (' + (app ? app.status : '') + ', country rule: ' + (_country || 'default') + ')');
+  }
+  autosave('expenses');
+  addAudit('CREATE', 'Expense', 'Recorded ' + exp.category + ': ₱' + amt.toLocaleString() + ' for ' + appName);
+
+  if (btn) { btn.textContent = 'Record Expense'; btn.disabled = false; }
+  closeOverlay('overlay-expense');
+  if (currentDrawerApplicant && currentDrawerApplicant.name === appName) switchDrawerTab('expenses', null);
+  if (currentPage === 'accounting') renderAccounting();
+  if (typeof renderExpensesTab === 'function' && currentAccTab === 'expenses') renderExpensesTab();
+  toast('Expense recorded — ₱' + amt.toLocaleString() + ' for ' + appName + chargedNote, chargedNote ? 'info' : 'success');
+}
+
 function cleanDuplicateCommissions() {
   if (getCurrentRole() !== 'Admin') { toast('Admin only', 'error'); return; }
 
@@ -14698,65 +15511,6 @@ function cleanDuplicateCommissions() {
   renderCommissions();
 }
 
-function reverseCommission(commId) {
-  var _role2 = getCurrentRole();
-  if (_role2 !== 'Admin' && _role2 !== 'Finance' && _role2 !== 'Manager') {
-    toast('Only Admin, Finance, and Manager can reverse commissions', 'error'); return;
-  }
-  var c = DB.commissions.find(function(x){ return x.id===commId; });
-  if (!c) return;
-
-  // Use the EXACT PHP amount that was paid out (stored at release time)
-  // Falls back to re-computing using stored fxRate, then current rate
-  var fx        = c.fxRate || (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
-  var phpAmount = c.phpAmount
-    || (c.currency === 'USD' ? Math.round(c.amount * fx) : c.amount);
-
-  var sym = c.currency === 'USD' ? '$' : '₱';
-  var usdNote = c.currency === 'USD'
-    ? ' ['+sym+c.amount+' USD @ ₱'+Math.round(fx)+']'
-    : '';
-
-  if (!confirm('Reverse commission of ₱'+phpAmount.toLocaleString()+' for '+c.applicantName+'?\n'+
-    'Original amount: '+sym+c.amount+' '+c.currency+usdNote+'\n\nThis debits the agent ledger.')) return;
-
-  var prev = c.status;
-  c.status = 'Reversed';
-
-  // The original "Commission released" credit is deliberately KEPT. This used
-  // to delete it *and* post the reversal debit below, which removed +X and
-  // added -X — debiting the agent twice and leaving a reversal row with no
-  // matching credit, so Total Credits and Net Balance were both wrong.
-  // Proper double-entry: the credit and the reversal sit side by side and
-  // cancel out, leaving a complete audit trail of what happened.
-
-  // addLedgerEntry manages agent.balance internally — do NOT update agent.balance separately
-  var agent = DB.agents.find(function(a){ return a.id===c.agentId; });
-  if (agent && prev === 'Released') {
-    agent.totalCommission = Math.max(0, (agent.totalCommission||0) - phpAmount);
-  }
-
-  addLedgerEntry(c.agentId, 'reversal',
-    'Commission reversed — '+c.applicantName+' ('+c.country+') T'+c.tranche+usdNote,
-    -phpAmount, c.applicantId);
-
-  autosave('commissions');
-  autosave('agents');
-  autosave('agentLedger');
-
-  apiUpdateCommission(c, { status: 'Reversed' }).then(function(r){
-    if (r&&r.ok) { try{_triggerImmediateSync();}catch(e){} }
-  }).catch(function(){});
-
-  // No batch-delete here — deleting the original credit server-side would undo
-  // the release record on the next sync and re-break the balance.
-
-  addAudit('UPDATE','Commission',
-    'Reversed T'+c.tranche+' '+sym+c.amount+' '+c.currency+
-    ' (₱'+phpAmount.toLocaleString()+') for '+c.applicantName);
-  toast('Commission T'+c.tranche+' reversed — ₱'+phpAmount.toLocaleString()+' debited','success');
-  renderCommissions();
-}
 
 function renderCountryRules() {
   var grid = document.getElementById('rules-grid');
@@ -14858,223 +15612,11 @@ function renderReports() {
 }
 
 // ── BUSINESS LOGIC — TRIGGERS ─────────────────────────────────────────
-function addLedgerEntry(agentId, type, desc, amount, applicantId) {
-  var agent = DB.agents.find(function(a){ return a.id===agentId; });
-  if (!agent) return;
-
-  // Recompute running balance from ALL existing ledger entries for this agent
-  // This ensures balance is always correct regardless of prior state
-  var existingSum = (DB.agentLedger || []).reduce(function(sum, e){
-    return e.agentId === agentId ? sum + (e.amount || 0) : sum;
-  }, 0);
-  var newBalance = existingSum + amount;
-
-  // Update agent.balance to match
-  agent.balance = newBalance;
-
-  var newEntry = {
-    id:             'LDG-' + String((DB.agentLedger||[]).length+1).padStart(3,'0'),
-    agentId:        agentId,
-    applicantId:    applicantId || null,
-    type:           type,
-    desc:           desc,
-    amount:         amount,
-    date:           _ymd(new Date()),
-    runningBalance: newBalance,
-  };
-  if (!DB.agentLedger) DB.agentLedger = [];
-  DB.agentLedger.unshift(newEntry);
-
-  autosave('agents');
-  autosave('agentLedger');
-  apiCreateLedgerEntry(newEntry).catch(function(){});
-  apiUpdateAgent(agent).catch(function(){});
-
-  if (Store) {
-    var _ts = String(Date.now());
-    Store.set('rams:shared:agentLedger',    DB.agentLedger, true).catch(function(){});
-    Store.set('rams:shared:agentLedger:ts', _ts,            true).catch(function(){});
-    Store.set('rams:shared:agents',         DB.agents,      true).catch(function(){});
-    Store.set('rams:shared:agents:ts',      _ts,            true).catch(function(){});
-  }
-}
 
 // ── resetAgentBalanceToZero — Admin-only: clears all ledger entries,
 //    reverts all Charged expenses back to Pending, resets balance to 0 ──────
-function resetAgentBalanceToZero(agentId) {
-  if ((typeof getCurrentRole === 'function') && getCurrentRole() !== 'Admin') {
-    toast('Only Admins can reset agent balances', 'error'); return;
-  }
-  var agent = DB.agents.find(function(a){ return a.id === agentId; });
-  if (!agent) { toast('Agent not found', 'error'); return; }
-
-  var chargedExpenses = DB.expenses.filter(function(e){
-    return (e.agentId === agentId || e.agentId === agent._dbId) && e.status === 'Charged';
-  });
-  var ledgerEntries = DB.agentLedger.filter(function(e){ return e.agentId === agentId; });
-
-  var msg = 'Full reset for ' + agent.name + '?\n\n' +
-    'This will:\n' +
-    '\u2022 Clear all ' + ledgerEntries.length + ' ledger entries\n' +
-    '\u2022 Revert ' + chargedExpenses.length + ' charged expense(s) back to Pending\n' +
-    '\u2022 Reset balance to \u20B10\n\n' +
-    'This cannot be undone.';
-
-  if (!confirm(msg)) return;
-
-  // 1. Revert all Charged expenses back to Pending and clear agent assignment
-  chargedExpenses.forEach(function(exp) {
-    exp.status    = 'Paid';
-    exp.agentId   = '';
-    exp.agentName = '';
-    var dbId = exp._dbId || exp.id;
-    if (dbId && isUUID(dbId)) {
-      apiFetch('/expenses/' + dbId, {
-        method: 'PATCH',
-        body: JSON.stringify({ status: 'Paid' }),
-      }).catch(function(){});
-    }
-    if (window._chargedExpenseIds) {
-      delete window._chargedExpenseIds[exp.id];
-      delete window._chargedExpenseIds[dbId];
-    }
-  });
-  autosave('expenses');
-  _bumpExpenseTs();
-  DB.agentLedger = DB.agentLedger.filter(function(e){ return e.agentId !== agentId; });
-  ledgerEntries.forEach(function(entry) {
-    var dbId = entry._dbId || entry.id;
-    if (isUUID(dbId)) {
-      apiFetch('/agent-ledger/' + dbId, { method: 'DELETE' }).catch(function(){});
-    }
-  });
-  autosave('agentLedger');
-
-  // 3. Reset balance to exactly zero
-  agent.balance       = 0;
-  agent.totalExpenses = 0;
-  autosave('agents');
-
-  if (!window._agentBalanceOverrides) window._agentBalanceOverrides = {};
-  window._agentBalanceOverrides[agentId] = 0;
-  Store.set('rams:agent:balance:overrides', JSON.stringify(window._agentBalanceOverrides));
-
-  apiUpdateAgent(agent).then(function(r) {
-    if (r.ok) {
-      delete window._agentBalanceOverrides[agentId];
-      Store.set('rams:agent:balance:overrides', JSON.stringify(window._agentBalanceOverrides));
-    }
-  }).catch(function(){});
-
-  // 4. Sync shared storage
-  if (Store) {
-    var _ts = String(Date.now());
-    Store.set('rams:shared:agentLedger',    DB.agentLedger, true).catch(function(){});
-    Store.set('rams:shared:agentLedger:ts', _ts,           true).catch(function(){});
-    Store.set('rams:shared:agents',         DB.agents,      true).catch(function(){});
-    Store.set('rams:shared:agents:ts',      _ts,           true).catch(function(){});
-    Store.set('rams:charged:expenses', JSON.stringify(window._chargedExpenseIds || {}), true);
-  }
-
-  addAudit('UPDATE', 'Agent',
-    'Full balance reset for ' + agent.name +
-    ' \u2014 ' + ledgerEntries.length + ' ledger entries cleared, ' +
-    chargedExpenses.length + ' expense(s) reverted to Pending');
-
-  toast('\u2705 ' + agent.name + ' fully reset \u2014 balance \u20B10, ' +
-    chargedExpenses.length + ' expense(s) back to Pending', 'success');
-
-  renderLedger();
-  if (typeof renderExpensesTab === 'function') renderExpensesTab();
-  if (typeof renderAgentsTab   === 'function') renderAgentsTab();
-}
 
 // ── deleteLedgerEntry — Admin-only permanent delete with balance reversal ─────────
-function deleteLedgerEntry(entryId) {
-  if ((typeof getCurrentRole === 'function') && getCurrentRole() !== 'Admin') {
-    toast('Only admins can delete ledger entries', 'error'); return;
-  }
-  if ((typeof getCurrentRole === 'function') && getCurrentRole() !== 'Admin') {
-    toast('Only Admins can delete ledger entries', 'error'); return;
-  }
-  var entry = DB.agentLedger.find(function(e){ return e.id === entryId; });
-  if (!entry) { toast('Entry not found', 'error'); return; }
-
-  var agent = DB.agents.find(function(a){ return a.id === entry.agentId; });
-
-  // Confirm before deleting
-  var msg = 'Delete this ledger entry?\n\n' +
-    entry.type.toUpperCase() + ' · ' + entry.date + '\n' +
-    entry.desc + '\n' +
-    (entry.amount >= 0 ? '+' : '') + '₱' + Math.abs(entry.amount).toLocaleString() +
-    '\n\nThis will reverse the agent balance. This cannot be undone.';
-
-  if (!confirm(msg)) return;
-
-  // Remove the entry
-  DB.agentLedger = DB.agentLedger.filter(function(e){ return e.id !== entryId; });
-
-  // Reverse the agent balance and relevant totals
-  if (agent) {
-    agent.balance = (agent.balance || 0) - entry.amount;
-    if (entry.type === 'commission') {
-      agent.totalCommission = Math.max(0, (agent.totalCommission || 0) - entry.amount);
-    }
-    if (entry.type === 'expense' || entry.type === 'penalty') {
-      // expense amounts are negative, so subtracting reverses the debit
-      agent.totalExpenses = Math.max(0, (agent.totalExpenses || 0) + entry.amount);
-    }
-  }
-
-  // Recalculate running balances for remaining entries of this agent (in chronological order)
-  var agentEntries = DB.agentLedger
-    .filter(function(e){ return e.agentId === entry.agentId; })
-    .sort(function(a, b){ return a.date.localeCompare(b.date) || a.id.localeCompare(b.id); });
-  var runBal = 0;
-  agentEntries.forEach(function(e){ runBal += e.amount; e.runningBalance = runBal; });
-
-  // Persist locally + push to shared + delete from PostgreSQL
-  autosave('agentLedger');
-  autosave('agents');
-  apiDeleteLedgerEntry(entryId).catch(function(){});
-  if (agent) apiUpdateAgent(agent).catch(function(){});
-  if (Store) {
-    var _dts = String(Date.now());
-    Store.set('rams:shared:agentLedger',    DB.agentLedger, true).catch(function(){});
-    Store.set('rams:shared:agentLedger:ts', _dts,           true).catch(function(){});
-    Store.set('rams:shared:agents',         DB.agents,      true).catch(function(){});
-    Store.set('rams:shared:agents:ts',      _dts,           true).catch(function(){});
-  }
-
-  // If the deleted entry was linked to a Charged expense, reset that expense to Pending
-  if (entry.type === 'expense') {
-    var linkedExp = DB.expenses.find(function(ex){
-      return ex.agentId === entry.agentId &&
-             ex.status  === 'Charged' &&
-             (ex.desc === entry.desc || entry.desc.indexOf(ex.desc) !== -1);
-    });
-    if (linkedExp) {
-      linkedExp.status    = 'Paid';
-      linkedExp.agentId   = '';
-      linkedExp.agentName = '';
-      // Persist reversal to PostgreSQL
-      apiUpdateExpense(linkedExp).catch(function(){});
-      // Remove from _chargedExpenseIds
-      if (window._chargedExpenseIds) {
-        delete window._chargedExpenseIds[linkedExp.id];
-        delete window._chargedExpenseIds[linkedExp._dbId];
-        Store.set('rams:charged:expenses', JSON.stringify(window._chargedExpenseIds));
-      }
-      autosave('expenses');
-    }
-  }
-
-  addAudit('DELETE', 'Ledger', 'Admin deleted ledger entry: ' + entry.desc + ' (₱' + Math.abs(entry.amount).toLocaleString() + ') for ' + (agent ? agent.name : entry.agentId));
-  toast('Ledger entry deleted and balance reversed', 'success');
-  renderLedger();
-  // Re-render expenses tab if open so status updates show
-  if (currentAccTab === 'expenses') renderExpensesTab();
-}
 
 // ── Sync status badge — shows in header when unsynced writes exist ────
 function _updateSyncBadge() {
@@ -15125,102 +15667,6 @@ function _retryPendingCharges() {
   });
 }
 
-function chargeExpenseToAgent(expenseId, agentId) {
-  var exp   = DB.expenses.find(function(e){ return e.id===expenseId; });
-  var agent = DB.agents.find(function(a){ return a.id===agentId; });
-  if (!exp || !agent) return;
-  if (exp.status === 'Charged') { toast('Expense already charged','info'); return; }
-
-  // Update locally first for instant UI feedback
-  exp.status    = 'Charged';
-  exp.agentId   = agentId;
-  exp.agentName = agent.name;
-
-  // Add to pending queue immediately — protects against poll overwriting if server unreachable
-  window._pendingCharges[expenseId] = {
-    agentId:     agentId,
-    agentName:   agent.name,
-    expenseDesc: exp.desc,
-    ts:          Date.now(),
-    _retrying:   false,
-  };
-
-  autosave('expenses');
-  renderExpensesTab();
-
-  // Persist to PostgreSQL
-  var dbId = exp._dbId || exp.id;
-
-  function _doChargePatch(id) {
-    if (!id || !isUUID(id)) {
-      toast('⚠️ Expense not yet on server — retrying automatically', 'info');
-      return Promise.resolve();
-    }
-    return apiFetch('/expenses/'+id, {
-      method: 'PATCH',
-      body:   JSON.stringify({ status: 'Charged' }),
-    }).then(function(r) {
-      if (r && r.ok) {
-        delete window._pendingCharges[expenseId];
-        try { _triggerImmediateSync(); } catch(e) {}
-        return;
-      }
-      if (r && r.httpStatus === 409) {
-        delete window._pendingCharges[expenseId];
-        toast('⚠️ Already charged by another user', 'info');
-        return;
-      }
-      if (r && r.httpStatus === 404) {
-        // Expense not in DB — create it then patch
-        return apiCreateExpense(exp).then(function(cr) {
-          if (!cr || !cr.ok || !cr.data || !cr.data.id) {
-            toast('⚠️ Could not save expense to server — charge kept locally, retrying', 'info');
-            return;
-          }
-          exp._dbId = cr.data.id; exp.id = cr.data.id;
-          window._pendingCharges[cr.data.id] = window._pendingCharges[expenseId];
-          delete window._pendingCharges[expenseId];
-          return _doChargePatch(cr.data.id);
-        });
-      }
-      if (r && r.error && r.error.toLowerCase().includes('constraint')) {
-        toast('⚠️ Server rejected charge — run the status constraint SQL fix in Railway', 'error');
-        return;
-      }
-      // httpStatus 0 = network/timeout — don't toast, pending queue handles retry
-      if (!r.httpStatus) {
-        console.warn('[charge] Network error — queued for retry in 8s');
-        return;
-      }
-      toast('⚠️ Server error (' + r.httpStatus + ') — charge saved, retrying automatically', 'info');
-    });
-  }
-
-  if (dbId && isUUID(dbId)) {
-    _doChargePatch(dbId).catch(function(err) {
-      // True JS exception — distinguish offline vs bug
-      if (!navigator.onLine) {
-        // Silent — pending queue will retry
-        console.warn('[charge] Offline, queued for retry');
-      } else {
-        console.error('[charge] Unexpected error:', err);
-        toast('⚠️ Unexpected error charging — charge saved locally and will retry', 'info');
-      }
-    });
-  } else {
-    apiCreateExpense(exp).then(function(cr) {
-      if (cr && cr.ok) return _doChargePatch(cr.data.id);
-      toast('💾 Saved locally — syncing to server in background','info');
-    }).catch(function(){});
-  }
-
-  agent.totalExpenses = (agent.totalExpenses||0) + exp.amount;
-  addLedgerEntry(agentId, 'expense',
-    'Expense charged: '+exp.desc+' ('+exp.applicant+')',
-    -exp.amount, exp.applicantId||null);
-  addAudit('UPDATE','Expense','Charged ₱'+exp.amount.toLocaleString()+' to '+agent.name);
-  toast('₱'+exp.amount.toLocaleString()+' charged to '+agent.name,'success');
-}
 
 // Bust local expense cache so the writing user's next fetch is fresh
 // Force an immediate poll cycle after any write — other users see changes in <1s
@@ -15279,92 +15725,11 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
   var CHARGE_ALL_STATUSES = ['Backout', 'Repatriated', 'Rejected'];
   var shouldChargeAll = CHARGE_ALL_STATUSES.indexOf(newStatus) !== -1;
 
-  // ── 1. AUTO-CHARGE ALL EXPENSES to agent ─────────────────────────
-  if (shouldChargeAll && agent) {
-    // Find every uncharged expense for this applicant
-    var uncharged = DB.expenses.filter(function(e) {
-      return (e.applicant === app.name || e.applicantId === applicantId)
-          && e.status !== 'Charged';
-    });
-
-    if (uncharged.length > 0) {
-      var grandTotal = 0;
-
-      // Mark each expense as Charged and post individual ledger entries
-      uncharged.forEach(function(e) {
-        e.status      = 'Charged';
-        e.chargedDate = _ymd(new Date());
-        e.chargedTo   = agent.id;
-        grandTotal   += e.amount;
-
-        // One ledger entry per expense for full traceability
-        addLedgerEntry(
-          agent.id,
-          'expense',
-          e.category + ' — ' + app.name + ' (' + newStatus + '): ' + e.desc,
-          -e.amount,
-          applicantId
-        );
-      });
-
-      // Update agent totals
-      agent.totalExpenses = (agent.totalExpenses || 0) + grandTotal;
-
-      // Sync all charged expenses to backend — only send status, not agent_id (avoids FK constraint issues)
-      var _chargePromises = uncharged.map(function(e) {
-        var dbId = e._dbId || e.id;
-        if (!dbId || !isUUID(dbId)) return Promise.resolve();
-        return apiFetch('/expenses/' + dbId, {
-          method: 'PATCH',
-          body: JSON.stringify({ status: 'Charged' }),
-        }).then(function(r) {
-          if (r && r.ok && r.data) {
-            e.status = r.data.status || 'Charged';
-          }
-        }).catch(function(){});
-      });
-      // After all PATCHes complete, re-render so UI shows updated statuses
-      Promise.all(_chargePromises).then(function() {
-        autosave('expenses');
-        if (typeof renderExpensesTab === 'function') renderExpensesTab();
-      });
-      autosave('expenses');
-
-      addAudit(
-        'UPDATE', 'Agent',
-        newStatus + ': ₱' + grandTotal.toLocaleString() + ' (' + uncharged.length +
-        ' expense' + (uncharged.length !== 1 ? 's' : '') + ') auto-charged to ' +
-        agent.name + ' for ' + app.name
-      );
-
-      toast(
-        '₱' + grandTotal.toLocaleString() + ' (' + uncharged.length + ' expenses) ' +
-        'auto-charged to ' + agent.name + ' — ' + app.name + ' ' + newStatus,
-        'info'
-      );
-    } else {
-      toast('No uncharged expenses found for ' + app.name + ' — nothing charged to agent', 'info');
-    }
-
-    // Track backouts on agent record
-    if (newStatus === 'Backout') {
-      agent.backouts = (agent.backouts || 0) + 1;
-    }
-    if (newStatus === 'Repatriated') {
-      agent.repatriations = (agent.repatriations || 0) + 1;
-    }
-  } else if (shouldChargeAll && !agent) {
-    // No agent assigned — still mark expenses as Agency-absorbed
-    var unchargedNoAgent = DB.expenses.filter(function(e) {
-      return (e.applicant === app.name || e.applicantId === applicantId)
-          && e.status !== 'Charged';
-    });
-    if (unchargedNoAgent.length > 0) {
-      unchargedNoAgent.forEach(function(e) { e.status = 'Paid'; }); // no agent — stays Paid until manually charged or absorbed
-      addAudit('UPDATE', 'Expense',
-        newStatus + ': expenses absorbed by agency (no agent) — ' + app.name);
-      toast('No agent assigned — ' + unchargedNoAgent.length + ' expense(s) marked as Agency', 'info');
-    }
+  // ── 1. EXIT EXPENSES — apply the country expense rule; the server charges the agent / marks Agency ──
+  if (shouldChargeAll) {
+    _settleExitExpenses(app, agent, newStatus).catch(function(e) { console.warn('[exit expenses]', e); });
+    if (agent && newStatus === 'Backout')     agent.backouts = (agent.backouts || 0) + 1;
+    if (agent && newStatus === 'Repatriated') agent.repatriations = (agent.repatriations || 0) + 1;
   }
 
   // ── AUTO-WAIVE PENDING EMPLOYER FEES on Backout / Repatriated ───────
@@ -15413,6 +15778,7 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
           if (feeDbId && isUUID(feeDbId)) {
             apiPatchEmployerFee(feeDbId, {
               status:     'Waived',
+              reason:     'Auto-waived: ' + newStatus,
               settled_by: 'System (Auto-waived: ' + newStatus + ')',
               settled_at: _today,
             }).catch(function(){});
@@ -15503,43 +15869,21 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
     }
 
 
-    if ((newStatus === 'Repatriated' || newStatus === 'Rejected') && agent) {
+    if (newStatus === 'Repatriated' || newStatus === 'Rejected') {
     // Clear session fired-map so commissions can be re-triggered if applicant is re-processed
     if (window._commissionFired) {
       [1,2,3].forEach(function(n){ delete window._commissionFired[applicantId+':T'+n]; });
       try { Store.set('rams:commission:fired', JSON.stringify(window._commissionFired)); } catch(e){}
     }
-    var openComm = DB.commissions.find(function(c) {
-      return (c.applicantId === applicantId || c.applicantName === app.name)
-          && (c.status === 'Pending Release' || c.status === 'In Guarantee' || c.status === 'Released');
-    });
-    if (openComm) {
-      var prevStatus    = openComm.status;
-      openComm.status   = 'Reversed';
-      openComm.reversedDate = _ymd(new Date());
-      openComm.reversedReason = newStatus;
-
-      // Debit agent balance if commission was already released
-      if (prevStatus === 'Released') {
-        addLedgerEntry(
-          agent.id, 'reversal',
-          'Commission reversed — ' + app.name + ' (' + newStatus + ')',
-          -openComm.amount, applicantId
-        );
-        agent.totalCommission = Math.max(0, (agent.totalCommission || 0) - openComm.amount);
-      } else {
-        // Still in guarantee — just cancel it
-        addLedgerEntry(
-          agent.id, 'reversal',
-          'Commission cancelled — ' + app.name + ' (' + newStatus + ')',
-          0, applicantId
-        );
-      }
-
-      addAudit('UPDATE', 'Commission',
-        'Commission of ₱' + openComm.amount.toLocaleString() + ' reversed for ' +
-        app.name + ' (' + newStatus + ')');
-      toast('Commission of ₱' + openComm.amount.toLocaleString() + ' reversed for ' + agent.name, 'info');
+    // The server cancels unreleased tranches and debits the exact released amount (stored FX) for released ones
+    if (hasPermission('Release/Reverse Commissions') || _isLiveSession()) {
+      _reverseApplicantCommissions(app, applicantId, 'Applicant ' + newStatus).then(function(res) {
+        if (res && res.count) {
+          addAudit('UPDATE', 'Commission', res.count + ' commission(s) reversed for ' + app.name + ' (' + newStatus + ')' + (res.debited ? ' — ₱' + res.debited.toLocaleString() + ' debited' : ''));
+          toast(res.count + ' commission(s) reversed for ' + app.name + (res.debited ? ' — agent debited ₱' + res.debited.toLocaleString() : ''), 'info');
+          if (typeof renderCommissions === 'function' && currentAccTab === 'commissions') renderCommissions();
+        }
+      }).catch(function(){});
     }
   }
 
@@ -15647,97 +15991,7 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
       'Medically unfit applicant ' + app.name + ' — expenses charged to agent ' + agent.name);
   }
 
-  // ── 4b. BACKOUT / REJECTED / REPATRIATED → apply country expense rule ─────
-  if ((newStatus === 'Backout' || newStatus === 'Rejected' || newStatus === 'Repatriated') &&
-      oldStatus !== 'Backout' && oldStatus !== 'Rejected' && oldStatus !== 'Repatriated') {
-
-    // Resolve the expense rule for this applicant's destination country
-    var _eCountry = app.job ? app.job.split('·').pop().trim() : '';
-    var _eRule    = DB.countryRules.find(function(r){ return r.country === _eCountry && r.active; });
-    var _eRuleVal = _eRule ? (_eRule.expenseRule || 'full') : 'full';
-    var _ruleLabel = {full:'Full recovery',partial:'50% recovery',medical:'Medical only',none:'Agency absorbs'}[_eRuleVal] || _eRuleVal;
-
-    // Get all Pending expenses for this applicant
-    // Get all Pending expenses for this applicant — case-insensitive name + all ID variants
-    var _appNameLower = (app.name || '').toLowerCase();
-    var _appDbId      = app._dbId || app.id || '';
-    var _pendingExps = DB.expenses.filter(function(e){
-      var nameMatch = e.applicant && e.applicant.toLowerCase() === _appNameLower;
-      var idMatch   = e.applicantId && (e.applicantId === applicantId || e.applicantId === _appDbId ||
-                      e.applicantId === (app._dbId||'') || e.applicantId === (app.id||''));
-      return (nameMatch || idMatch) && (e.status === 'Paid' || e.status === 'Pending'); // Paid = agency paid upfront
-    });
-
-    if (_pendingExps.length > 0) {
-      _pendingExps.forEach(function(e) {
-        var _amt = parseFloat(e.amount) || 0;
-
-        if (_eRuleVal === 'none') {
-          e.status = 'Agency';
-
-        } else if (_eRuleVal === 'medical') {
-          e.status = (e.category === 'Medical Exam') ? 'Charged' : 'Agency';
-          if (e.status === 'Charged' && agent) {
-            agent.totalExpenses = (agent.totalExpenses||0) + _amt;
-            if (typeof addLedgerEntry === 'function')
-              addLedgerEntry(agent.id, 'expense',
-                newStatus+' (medical rule): '+e.category+' — '+app.name, -_amt, applicantId);
-          }
-
-        } else if (_eRuleVal === 'partial') {
-          var _agentAmt  = Math.round(_amt * 0.5);
-          var _agencyAmt = _amt - _agentAmt;
-          e.status = 'Charged';
-          e.amount = _agentAmt;
-          if (agent) {
-            agent.totalExpenses = (agent.totalExpenses||0) + _agentAmt;
-            if (typeof addLedgerEntry === 'function')
-              addLedgerEntry(agent.id, 'expense',
-                newStatus+' 50% (partial rule): '+e.category+' — '+app.name, -_agentAmt, applicantId);
-          }
-          // Agency half
-          if (_agencyAmt > 0) {
-            DB.expenses.push(Object.assign({}, e, {
-              id: 'EXP-AGY-'+Date.now()+Math.random().toString(36).slice(2,6),
-              amount: _agencyAmt, status: 'Agency',
-              desc: (e.desc||e.category) + ' (agency 50%)',
-            }));
-          }
-
-        } else {
-          // full
-          if (agent) {
-            e.status = 'Charged';
-            agent.totalExpenses = (agent.totalExpenses||0) + _amt;
-            if (typeof addLedgerEntry === 'function')
-              addLedgerEntry(agent.id, 'expense',
-                newStatus+': '+e.category+' — '+app.name, -_amt, applicantId);
-          } else {
-            // No agent assigned — company absorbs
-            e.status = 'Agency';
-          }
-        }
-
-        // Sync updated expense to server
-        var _eDbId = e._dbId || e.id;
-        if (_eDbId && isUUID(_eDbId)) {
-          apiFetch('/expenses/'+_eDbId, {
-            method: 'PATCH',
-            body: JSON.stringify({ status: e.status, amount: e.amount }),
-          }).catch(function(){});
-        }
-      });
-
-      autosave('expenses');
-      autosave('agents');
-      autosave('agentLedger');
-      try { _triggerImmediateSync(); } catch(e) {}
-      addAudit('UPDATE', 'Expenses',
-        newStatus+' — '+_pendingExps.length+' expense(s) processed under "'+_ruleLabel+'" rule for '+app.name+
-        (_eCountry ? ' ('+_eCountry+')' : ''));
-      toast(newStatus+': '+_pendingExps.length+' expense(s) processed — '+_ruleLabel, 'info');
-    }
-  }
+  // ── 4b. (country expense rule is applied in step 1 via _settleExitExpenses) ─────
 
   // ── 5. VISA STATUS → auto-create employer fee record ────────────
   if (newStatus === 'Visa' && oldStatus !== 'Visa') {
@@ -16304,69 +16558,6 @@ function _updateAdjCurrencyLabel() {
   }
 }
 
-function submitAdjustment() {
-  if (!hasPermission('Manage Accounting')) {
-    toast('Your role cannot post adjustments', 'error'); return;
-  }
-  var agentId  = (document.getElementById('adj-agent').value||'').trim();
-  var type     = document.getElementById('adj-type').value;
-  var currency = (document.getElementById('adj-currency') || {}).value || 'PHP';
-  var amount   = parseFloat(document.getElementById('adj-amount').value)||0;
-  var desc     = (document.getElementById('adj-desc').value||'').trim();
-  var appId    = document.getElementById('adj-applicant').value||null;
-  var adjDate  = (document.getElementById('adj-date')||{}).value || _ymd(new Date());
-
-  if (!agentId||!desc||amount<=0) { toast('Agent, description and amount are required','error'); return; }
-  if (!adjDate) { toast('Please enter a date for this adjustment','error'); return; }
-
-  var finalAmt = (type==='credit') ? amount : -amount;
-
-  // For USD entries, convert to PHP for the running balance (agent balances are in PHP)
-  var phpEquiv = finalAmt;
-  if (currency === 'USD') {
-    var fx = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
-    phpEquiv = Math.round(finalAmt * fx);
-  }
-
-  // Pass currency info through desc if USD
-  var fullDesc = desc + (currency === 'USD' ? ' [USD ' + (finalAmt > 0 ? '+' : '') + finalAmt.toFixed(2) + ']' : '');
-
-  // addLedgerEntry with custom date
-  var newEntry = {
-    id:             'LDG-' + String((DB.agentLedger||[]).length+1).padStart(3,'0'),
-    agentId:        agentId,
-    applicantId:    appId || null,
-    type:           type,
-    desc:           fullDesc,
-    amount:         phpEquiv,
-    date:           adjDate,
-    runningBalance: (function(){
-      var existingSum = (DB.agentLedger||[]).reduce(function(s,e){ return e.agentId===agentId ? s+(e.amount||0) : s; }, 0);
-      return existingSum + phpEquiv;
-    })(),
-  };
-  var agent = DB.agents.find(function(a){ return a.id===agentId; });
-  if (agent) agent.balance = newEntry.runningBalance;
-  if (!DB.agentLedger) DB.agentLedger = [];
-  DB.agentLedger.unshift(newEntry);
-
-  autosave('agentLedger');
-  autosave('agents');
-  apiCreateLedgerEntry(newEntry).catch(function(){});
-  if (agent) apiUpdateAgent(agent).catch(function(){});
-  if (Store) {
-    var _ats = String(Date.now());
-    Store.set('rams:shared:agentLedger',    DB.agentLedger, true).catch(function(){});
-    Store.set('rams:shared:agentLedger:ts', _ats,           true).catch(function(){});
-    Store.set('rams:shared:agents',         DB.agents,      true).catch(function(){});
-    Store.set('rams:shared:agents:ts',      _ats,           true).catch(function(){});
-  }
-  var sym = currency === 'PHP' ? '₱' : '$';
-  addAudit('CREATE','Ledger','Manual adjustment: '+desc+' ('+sym+amount.toLocaleString()+' '+currency+')');
-  toast('Ledger entry posted ('+sym+amount.toLocaleString()+' '+currency+')', 'success');
-  closeOverlay('overlay-adjustment');
-  if (currentAccTab==='ledger') renderLedger();
-}
 
 // ╔══════════════════════════════════════════════════════════════════╗
 // ║           EMPLOYER FEES MODULE                                   ║
@@ -16487,7 +16678,8 @@ function renderEmployerFees() {
         '<button class="btn btn-sm" style="background:var(--gbg);color:var(--green);border:1px solid #86efac;font-size:11px" ' +
           'onclick="markFeeSettled(\'' + f.id + '\')" title="Mark employer fee as paid">✓ Settled</button> ' +
         '<button class="btn btn-sm" style="background:var(--s2);color:var(--muted);border:1px solid var(--border);font-size:11px" ' +
-          'onclick="markFeeWaived(\'' + f.id + '\')" title="Waive this fee">Waive</button>';
+          'onclick="markFeeWaived(\'' + f.id + '\')" title="Waive this fee">Waive</button> ' +
+        '<button class="btn btn-sm" style="font-size:11px" onclick="openPaymentModal(\'fee\',\'' + f.id + '\')" title="Record a payment (part or full)">💰 Payment</button>';
     } else if (isAdmin && f.status === 'Settled') {
       actionsHtml = '<button class="btn btn-sm" style="background:var(--rbg);color:var(--red);border:1px solid #fca5a5;font-size:11px" ' +
         'onclick="markFeePending(\'' + f.id + '\')" title="Revert to pending">↩ Revert</button>';
@@ -16504,7 +16696,8 @@ function renderEmployerFees() {
       '<td style="padding:11px 16px;text-align:right;font-family:\'IBM Plex Mono\',monospace;font-weight:700' +
         (_excluded ? ';color:var(--muted);text-decoration:line-through' : '') + '">' +
         '$' + (f.feeUSD||0).toLocaleString() +
-        '<div style="font-size:10px;color:var(--muted);font-weight:400;text-decoration:none">≈ ₱' + phpEquiv.toLocaleString() + '</div></td>' +
+        '<div style="font-size:10px;color:var(--muted);font-weight:400;text-decoration:none">≈ ₱' + phpEquiv.toLocaleString() + '</div>' +
+        ((f.amountPaid||0) > 0 && f.status === 'Pending' ? '<div style="font-size:10px;color:var(--green);font-weight:600">$' + f.amountPaid.toLocaleString() + ' received</div>' : '') + '</td>' +
       '<td style="padding:11px 16px;text-align:center"><span style="display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700;' + statusCss + '">' + (_excluded ? 'Not Due' : (f.status||'Pending')) + '</span>' +
         (_excluded ? '<div style="font-size:10px;color:var(--muted);margin-top:3px">Backout — excluded</div>' : '') + '</td>' +
       '<td style="padding:11px 16px;font-size:12px;color:var(--muted)">' +
@@ -16520,66 +16713,8 @@ function _efKpi(icon, label, val, color) {
     '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + label + '</div></div>';
 }
 
-function markFeeSettled(feeId) {
-  if ((typeof getCurrentRole === 'function') && getCurrentRole() !== 'Admin') {
-    toast('Only Admins can mark employer fees as settled', 'error'); return;
-  }
-  var fee = DB.employerFees.find(function(f){ return f.id === feeId; });
-  if (!fee) return;
-  var currentUser = _compUser();
-  fee.status    = 'Settled';
-  fee.settledBy = currentUser;
-  fee.settledAt = _ymd(new Date());
-  autosave('employerFees');
-  _syncEmployerFees();
-  apiPatchEmployerFee(fee._dbId || fee.id, {
-    status: 'Settled', settled_by: currentUser,
-    settled_at: fee.settledAt,
-  }).catch(function(){});
-  addAudit('UPDATE', 'Employer Fee', 'Fee $' + fee.feeUSD + ' USD settled for ' + fee.applicantName + ' (' + fee.employer + ')');
-  toast('✅ Employer fee marked as settled — applicant can now be deployed', 'success');
-  renderEmployerFees();
-}
 
-function markFeeWaived(feeId) {
-  if ((typeof getCurrentRole === 'function') && getCurrentRole() !== 'Admin') {
-    toast('Only Admins can waive employer fees', 'error'); return;
-  }
-  var fee = DB.employerFees.find(function(f){ return f.id === feeId; });
-  if (!fee) return;
-  if (!confirm('Waive the $' + fee.feeUSD + ' USD employer fee for ' + fee.applicantName + '?\n\nApplicant will be allowed to deploy without fee payment.')) return;
-  var currentUser = _compUser();
-  fee.status    = 'Waived';
-  fee.settledBy = currentUser + ' (waived)';
-  fee.settledAt = _ymd(new Date());
-  autosave('employerFees');
-  _syncEmployerFees();
-  apiPatchEmployerFee(fee._dbId || fee.id, {
-    status: 'Waived', settled_by: fee.settledBy, settled_at: fee.settledAt,
-  }).catch(function(){});
-  addAudit('UPDATE', 'Employer Fee', 'Fee $' + fee.feeUSD + ' USD WAIVED for ' + fee.applicantName + ' (' + fee.employer + ')');
-  toast('Fee waived — applicant can now be deployed', 'info');
-  renderEmployerFees();
-}
 
-function markFeePending(feeId) {
-  if ((typeof getCurrentRole === 'function') && getCurrentRole() !== 'Admin') {
-    toast('Only Admins can revert employer fees', 'error'); return;
-  }
-  var fee = DB.employerFees.find(function(f){ return f.id === feeId; });
-  if (!fee) return;
-  fee.status    = 'Pending';
-  fee.settledBy = '';
-  fee.settledAt = '';
-  autosave('employerFees');
-  _syncEmployerFees();
-  apiPatchEmployerFee(fee._dbId || fee.id, {
-    status: 'Pending', settled_by: null, settled_at: null,
-  }).catch(function(){});
-  addAudit('UPDATE', 'Employer Fee', 'Fee reverted to Pending for ' + fee.applicantName);
-  toast('Fee reverted to Pending', 'info');
-  renderEmployerFees();
-}
 
 function exportEmployerFees() {
   if (isViewerRole()) { toast('Your role has read-only access to Employers','error'); return; }
@@ -16877,6 +17012,7 @@ function autoWaiveBackoutFees() {
     if (dbId && isUUID(dbId)) {
       apiPatchEmployerFee(dbId, {
         status:     'Waived',
+        reason:     'Auto-waived: Backout/Repatriated (batch)',
         settled_by: 'System (Auto-waived: Backout/Repatriated)',
         settled_at: today,
       }).catch(function(){});
@@ -17149,52 +17285,6 @@ function backfillEmployerFees() {
 }
 
 // ── Recalculate All Fees — syncs every Pending fee to current job order ──
-function recalcAllFees() {
-  if (!DB.employerFees || DB.employerFees.length === 0) return;
-
-  var updated = 0;
-
-  DB.employerFees.filter(function(f){ return f.status === 'Pending'; }).forEach(function(fee) {
-    var app = DB.applicants.find(function(a){ return a.id === fee.applicantId; });
-    if (!app) return;
-    if (app.status === 'Backout') return; // backouts are not computed
-
-    var currentJob = null;
-    if (app._jobOrderId) {
-      currentJob = DB.jobs.find(function(j){ return j.id === app._jobOrderId || j._dbId === app._jobOrderId; });
-    }
-    if (!currentJob && app.job) {
-      var titleKey = app.job.split('·')[0].trim().toLowerCase();
-      currentJob = DB.jobs.find(function(j){ return j.title.trim().toLowerCase() === titleKey; });
-    }
-    if (!currentJob) return;
-
-    var changed = fee.employer  !== currentJob.employer ||
-                  fee.jobTitle  !== currentJob.title    ||
-                  fee.country   !== (currentJob.country || '') ||
-                  (parseFloat(currentJob.employerFeeUSD) > 0 && fee.feeUSD !== parseFloat(currentJob.employerFeeUSD));
-    if (!changed) return;
-
-    fee.jobId    = currentJob._dbId || currentJob.id;
-    fee.jobTitle = currentJob.title;
-    fee.employer = currentJob.employer;
-    fee.country  = currentJob.country || app.destination || '';
-    if (parseFloat(currentJob.employerFeeUSD) > 0) fee.feeUSD = parseFloat(currentJob.employerFeeUSD);
-    updated++;
-
-    var _feeDbId = fee._dbId || fee.id;
-    if (isUUID(_feeDbId)) {
-      apiDeleteEmployerFee(_feeDbId).then(function() {
-        return apiCreateEmployerFee(fee);
-      }).catch(function(){});
-    }
-  });
-
-  if (updated > 0) {
-    autosave('employerFees');
-    _syncEmployerFees();
-  }
-}
 
 // ╔══════════════════════════════════════════════════════════════════╗
 // ║  COMPLAINTS MODULE — Refined                                     ║
@@ -18122,83 +18212,56 @@ function renderInvoices() {
   el.innerHTML=header+'<div class="card" style="padding:0;overflow:hidden"><table style="width:100%;border-collapse:collapse"><thead><tr style="border-bottom:2px solid var(--border)"><th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--muted)">INV NO.</th><th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--muted)">DATE</th><th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--muted)">EMPLOYER</th><th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:700;color:var(--muted)">TOTAL USD</th><th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:700;color:var(--muted)">BALANCE</th><th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:700;color:var(--muted)">ACTIONS</th></tr></thead><tbody>'+
     invs.map(function(inv) {
       var total=(inv.rows||[]).reduce(function(s,r){return s+(parseFloat(r.usd)||0);},0);
-      var paid=parseFloat(inv.paid||0); var bal=total-paid;
-      return '<tr style="border-bottom:1px solid var(--border)"><td style="padding:11px 14px;font-family:monospace;font-size:12px;font-weight:700;color:var(--brand)">#'+inv.number+'</td><td style="padding:11px 14px;font-size:12px;color:var(--muted)">'+inv.date+'</td><td style="padding:11px 14px;font-size:13px;font-weight:600">'+inv.employer+'</td><td style="padding:11px 14px;text-align:right;font-family:monospace;font-weight:700">$'+fmt(total)+'</td><td style="padding:11px 14px;text-align:right;font-family:monospace;font-weight:700;color:'+(bal>0?'var(--red)':'var(--green)')+'">$'+fmt(Math.abs(bal))+(bal>0?' due':' paid')+'</td><td style="padding:11px 14px;text-align:right;white-space:nowrap"><button class="btn btn-p btn-sm" style="font-size:11px;margin-right:4px" onclick="viewInvoice(\''+inv.id+'\')">View</button><button class="btn btn-s btn-sm" style="font-size:11px;margin-right:4px" onclick="editInvoice(\''+inv.id+'\')">Edit</button><button class="btn btn-s btn-sm" style="font-size:11px;margin-right:4px" onclick="downloadInvoice(\''+inv.id+'\')" title="Download invoice">⬇ Download</button>'+(bal>0?'<button class="btn btn-s btn-sm" style="font-size:11px;margin-right:4px;background:var(--gbg);color:var(--green);border:1px solid #86efac" onclick="markInvoicePaid(\''+inv.id+'\')" title="Mark as fully paid">💰 Mark Paid</button>':'')+'<button class="btn btn-ghost btn-sm" style="font-size:11px;color:var(--red)" onclick="deleteInvoice(\''+inv.id+'\')">🗑</button></td></tr>';
+      var paid=parseFloat(inv.paid||0); var bal=total-paid; var ps=(inv.payStatus||(bal<=0.005&&total>0?'Paid':paid>0?'Partial':'Unpaid'));
+      return '<tr style="border-bottom:1px solid var(--border)"><td style="padding:11px 14px;font-family:monospace;font-size:12px;font-weight:700;color:var(--brand)">#'+inv.number+'</td><td style="padding:11px 14px;font-size:12px;color:var(--muted)">'+inv.date+'</td><td style="padding:11px 14px;font-size:13px;font-weight:600">'+inv.employer+'</td><td style="padding:11px 14px;text-align:right;font-family:monospace;font-weight:700">$'+fmt(total)+'</td><td style="padding:11px 14px;text-align:right;font-family:monospace;font-weight:700;color:'+(bal>0?'var(--red)':'var(--green)')+'">$'+fmt(Math.abs(bal))+(bal>0.005?' due':' paid')+(paid>0&&bal>0.005?'<div style="font-size:10.5px;color:var(--muted);font-weight:400">$'+fmt(paid)+' received · Partial</div>':'')+'</td><td style="padding:11px 14px;text-align:right;white-space:nowrap"><button class="btn btn-p btn-sm" style="font-size:11px;margin-right:4px" onclick="viewInvoice(\''+inv.id+'\')">View</button><button class="btn btn-s btn-sm" style="font-size:11px;margin-right:4px" onclick="editInvoice(\''+inv.id+'\')">Edit</button><button class="btn btn-s btn-sm" style="font-size:11px;margin-right:4px" onclick="downloadInvoice(\''+inv.id+'\')" title="Download invoice">⬇ Download</button>'+(bal>0.005?'<button class="btn btn-s btn-sm" style="font-size:11px;margin-right:4px;background:var(--gbg);color:var(--green);border:1px solid #86efac" onclick="openPaymentModal(\'invoice\',\''+inv.id+'\')" title="Record a payment (partial or full)">💰 Record payment</button>':'<button class="btn btn-ghost btn-sm" style="font-size:11px;margin-right:4px" onclick="openPaymentModal(\'invoice\',\''+inv.id+'\')" title="Payment history">🧾 Payments</button>')+'<button class="btn btn-ghost btn-sm" style="font-size:11px;color:var(--red)" onclick="deleteInvoice(\''+inv.id+'\')">🗑</button></td></tr>';
     }).join('')+'</tbody></table></div>';
 }
 function openNewInvoice() {
-  var _invRole = getCurrentRole();
-  if (_invRole !== 'Admin' && _invRole !== 'Finance') {
-    toast('Only Admin and Finance can create invoices', 'error'); return;
+  if (!hasPermission('Manage Invoices')) {
+    toast('Your role cannot create invoices', 'error'); return;
   }
   _editingInvoiceId=null;
   var modal_title=document.getElementById('inv-modal-title'); if(modal_title) modal_title.textContent='🧾 New Invoice';
   ['inv-number','inv-date','inv-counterpart','inv-charges-for','inv-employer-address','inv-notes'].forEach(function(id){ var el=document.getElementById(id); if(el){ if(id==='inv-number') el.value=_nextInvoiceNo(); else if(id==='inv-date') el.value=_ymd(new Date()); else if(id==='inv-charges-for') el.value='APPLICANTS DEPLOYMENT'; else el.value=''; } });
-  var pd=document.getElementById('inv-paid'); if(pd) pd.value='0';
+  var pd=document.getElementById('inv-paid'); if(pd){ pd.value='0'; pd.readOnly=false; pd.title='Amount already received (recorded as a payment)'; }
   var empSel=document.getElementById('inv-employer');
   if(empSel){ var employers=[...new Set((DB.jobs||[]).map(function(j){return j.employer;}).filter(Boolean))].sort(); empSel.innerHTML='<option value="">— Select employer —</option>'+employers.map(function(e){return '<option value="'+e+'">'+e+'</option>';}).join(''); }
   var rows=document.getElementById('inv-rows'); if(rows) rows.innerHTML='';
   var dl=document.getElementById('inv-due-applicants'); if(dl) dl.innerHTML='';
   openOverlay('overlay-invoice');
 }
-function saveInvoice() {
-  var _invRole2 = getCurrentRole();
-  if (_invRole2 !== 'Admin' && _invRole2 !== 'Finance') {
-    toast('Only Admin and Finance can save invoices', 'error'); return;
-  }
+async function saveInvoice() {
+  if (!hasPermission('Manage Invoices')) { toast('Your role cannot save invoices', 'error'); return; }
   var inv=_collectInvoiceData();
   if (!inv.employer) { toast('Please select an employer','error'); return; }
   if (!inv.rows.length) { toast('Add at least one row','error'); return; }
   if (!DB.invoices) DB.invoices=[];
-  if (_editingInvoiceId) {
-    var idx = DB.invoices.findIndex(function(x){ return x.id === _editingInvoiceId || x._dbId === _editingInvoiceId; });
-    if (idx !== -1) {
-      inv._dbId = DB.invoices[idx]._dbId || DB.invoices[idx].id;
-      inv.id    = DB.invoices[idx].id;
-      DB.invoices[idx] = inv;
-      apiUpdateInvoice(inv).then(function(r){ if(r&&r.ok){try{_triggerImmediateSync();}catch(e){}} }).catch(function(){});
+  if (!_acctLock('saveinv')) return;
+  try {
+    var isEdit = !!_editingInvoiceId;
+    if (isEdit) {
+      var cur = DB.invoices.find(function(x){ return x.id === _editingInvoiceId || x._dbId === _editingInvoiceId; });
+      inv._dbId = cur ? (cur._dbId || cur.id) : _editingInvoiceId;
+      inv.id    = cur ? cur.id : _editingInvoiceId;
+      var ru = await apiUpdateInvoice(inv);
+      if (!ru || !ru.ok) { toast(_acctMsg(ru, 'Could not save the invoice'), 'error'); return; }
     } else {
-      // Fallback: _editingInvoiceId is the DB UUID itself
-      inv._dbId = _editingInvoiceId;
-      inv.id    = _editingInvoiceId;
-      DB.invoices.unshift(inv);
-      apiUpdateInvoice(inv).then(function(r){ if(r&&r.ok){try{_triggerImmediateSync();}catch(e){}} }).catch(function(){});
+      var rc = await apiCreateInvoice(inv);
+      if (!rc || !rc.ok) { toast(_acctMsg(rc, 'Could not save the invoice'), 'error'); return; }
+      if (rc.data && rc.data.number) inv.number = rc.data.number;   // the server numbers invoices (no duplicates)
     }
-  } else {
-    DB.invoices.unshift(inv);
-    apiCreateInvoice(inv).then(function(r){
-      if (r && r.ok) {
-        autosave('invoices');
-        apiFetchInvoices().then(function(){ renderInvoices(); }).catch(function(){});
-        try { _triggerImmediateSync(); } catch(e) {}
-      }
-    }).catch(function(){});
-  }
-  autosave('invoices'); addAudit('CREATE','Invoice','Invoice #'+inv.number+' — '+inv.employer+' $'+inv.totalUSD.toLocaleString());
-  toast('Invoice #'+inv.number+' saved','success'); closeOverlay('overlay-invoice'); renderInvoices();
+    if (_isLiveSession()) { try { await apiFetchInvoices(); } catch(e) {} }
+    else if (isEdit) { var i2 = DB.invoices.findIndex(function(x){ return x.id === inv.id; }); if (i2 !== -1) DB.invoices[i2] = inv; else DB.invoices.unshift(inv); }
+    else DB.invoices.unshift(inv);
+    autosave('invoices');
+    addAudit(isEdit ? 'UPDATE' : 'CREATE','Invoice','Invoice #'+inv.number+' — '+inv.employer+' $'+inv.totalUSD.toLocaleString());
+    toast('Invoice #'+inv.number+' saved','success'); closeOverlay('overlay-invoice'); renderInvoices();
+    try { _triggerImmediateSync(); } catch(e) {}
+  } finally { _acctUnlock('saveinv'); }
 }
 function viewInvoice(id) { var inv=(DB.invoices||[]).find(function(x){return x.id===id;}); if(!inv) return; _renderInvoicePrint(inv); openOverlay('overlay-invoice-print'); }
-function editInvoice(id) { var _invRole3 = getCurrentRole(); if (_invRole3 !== 'Admin' && _invRole3 !== 'Finance') { toast('Only Admin and Finance can edit invoices', 'error'); return; } var inv=(DB.invoices||[]).find(function(x){return x.id===id||x._dbId===id;}); if(!inv) return; _editingInvoiceId = inv._dbId || inv.id; openNewInvoice(); setTimeout(function(){ var t=document.getElementById('inv-modal-title'); if(t) t.textContent='🧾 Edit Invoice #'+inv.number; ['inv-number','inv-date','inv-counterpart','inv-charges-for','inv-employer-address','inv-notes'].forEach(function(id2){ var el=document.getElementById(id2),key=id2.replace('inv-','').replace(/-([a-z])/g,function(m,l){return l.toUpperCase();}); if(el&&inv[key]!=null) el.value=inv[key]; }); var pd=document.getElementById('inv-paid'); if(pd) pd.value=inv.paid||0; var es=document.getElementById('inv-employer'); if(es) es.value=inv.employer; _populateInvoiceDueList(inv.employer); var rb=document.getElementById('inv-rows'); if(rb){ rb.innerHTML=''; (inv.rows||[]).forEach(function(r){ _addInvoiceRowData(r.applicant,r.particular,r.company,r.usd); }); } recalcInvoice(); }, 100); }
-function markInvoicePaid(id) {
-  var _invRole4 = getCurrentRole();
-  if (_invRole4 !== 'Admin' && _invRole4 !== 'Finance') {
-    toast('Only Admin and Finance can mark invoices as paid', 'error'); return;
-  }
-  var inv = (DB.invoices||[]).find(function(x){ return x.id===id || x._dbId===id; });
-  if (!inv) return;
-  var total = parseFloat(inv.totalUSD) || 0;
-  if (!confirm('Mark Invoice #'+inv.number+' as fully paid ($'+total.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+')?')) return;
-
-  inv.paid    = total;
-  inv.balance = 0;
-
-  autosave('invoices');
-  apiUpdateInvoice(inv).then(function(r){ if (r && r.ok) { try{_triggerImmediateSync();}catch(e){} } }).catch(function(){});
-  addAudit('UPDATE','Invoice','Invoice #'+inv.number+' marked paid — $'+total.toLocaleString());
-  toast('Invoice #'+inv.number+' marked as paid','success');
-  renderInvoices();
-}
-function deleteInvoice(id) { if ((typeof getCurrentRole === 'function') && getCurrentRole() !== 'Admin') { toast('Only admins can delete invoices', 'error'); return; } var inv=(DB.invoices||[]).find(function(x){return x.id===id;}); if(!inv||!confirm('Delete Invoice #'+inv.number+'?')) return; DB.invoices=(DB.invoices||[]).filter(function(x){return x.id!==id;}); autosave('invoices'); var dbId=inv._dbId||inv.id; if(dbId&&isUUID(dbId)) apiDeleteInvoice(dbId).then(function(r){if(r&&r.ok){try{_triggerImmediateSync();}catch(e){}}}).catch(function(){}); addAudit('DELETE','Invoice','Invoice #'+inv.number+' deleted'); toast('Invoice deleted','success'); renderInvoices(); }
+function editInvoice(id) { if (!hasPermission('Manage Invoices')) { toast('Your role cannot edit invoices', 'error'); return; } var inv=(DB.invoices||[]).find(function(x){return x.id===id||x._dbId===id;}); if(!inv) return; _editingInvoiceId = inv._dbId || inv.id; openNewInvoice(); setTimeout(function(){ var t=document.getElementById('inv-modal-title'); if(t) t.textContent='🧾 Edit Invoice #'+inv.number; ['inv-number','inv-date','inv-counterpart','inv-charges-for','inv-employer-address','inv-notes'].forEach(function(id2){ var el=document.getElementById(id2),key=id2.replace('inv-','').replace(/-([a-z])/g,function(m,l){return l.toUpperCase();}); if(el&&inv[key]!=null) el.value=inv[key]; }); var pd=document.getElementById('inv-paid'); if(pd){ pd.value=inv.paid||0; pd.readOnly=true; pd.title='Payments are recorded with "Record payment" on the invoice list'; } var es=document.getElementById('inv-employer'); if(es) es.value=inv.employer; _populateInvoiceDueList(inv.employer); var rb=document.getElementById('inv-rows'); if(rb){ rb.innerHTML=''; (inv.rows||[]).forEach(function(r){ _addInvoiceRowData(r.applicant,r.particular,r.company,r.usd); }); } recalcInvoice(); }, 100); }
+function deleteInvoice(id) { if (!hasPermission('Delete Invoices')) { toast('Your role cannot delete invoices', 'error'); return; } var inv=(DB.invoices||[]).find(function(x){return x.id===id;}); if(!inv||!confirm('Delete Invoice #'+inv.number+'?')) return; var _rsn=_askReason('Why is invoice #'+inv.number+' being deleted?'); if(!_rsn) return; var dbId=inv._dbId||inv.id; if(dbId&&isUUID(dbId)) { _acctCall('/invoices/'+dbId+'?reason='+encodeURIComponent(_rsn), null, 'DELETE').then(function(r){ if(!r.ok){ toast(_acctMsg(r,'Could not delete the invoice'),'error'); return; } DB.invoices=(DB.invoices||[]).filter(function(x){return x.id!==id;}); autosave('invoices'); renderInvoices(); try{_triggerImmediateSync();}catch(e){} }); return; } DB.invoices=(DB.invoices||[]).filter(function(x){return x.id!==id;}); autosave('invoices'); addAudit('DELETE','Invoice','Invoice #'+inv.number+' deleted'); toast('Invoice deleted','success'); renderInvoices(); }
 function previewInvoice() { var inv=_collectInvoiceData(); _renderInvoicePrint(inv); openOverlay('overlay-invoice-print'); }
 function _collectInvoiceData() {
   var rows=[]; document.querySelectorAll('#inv-rows .inv-row').forEach(function(row){ var usd=parseFloat((row.querySelector('.inv-usd')||{}).value||0)||0; rows.push({applicant:(row.querySelector('.inv-applicant')||{}).value||'',particular:(row.querySelector('.inv-particular')||{}).value||'PROCESSING FEES',company:(row.querySelector('.inv-company')||{}).value||'',usd:usd}); });
@@ -19129,38 +19192,6 @@ function _renderLedgerPager(key, totalCount, totalPages) {
     '<div style="display:flex;gap:4px">'+pageBtns.join('')+'</div>';
 }
 // ── CATEGORY BREAKDOWN ────────────────────────────────────────────────
-function deleteOfficeLedgerEntryById(entryId) { deleteOfficeLedgerEntry(entryId); }
-function deleteOfficeLedgerEntry(entryId) {
-  if ((typeof getCurrentRole === 'function') && getCurrentRole() !== 'Admin') {
-    toast('Only Admins can delete office ledger entries', 'error'); return;
-  }
-  var entry = DB.officeLedger.find(function(e){ return e.id === entryId; });
-  if (!entry) return;
-  if (!confirm('Delete this entry?\n\n' + entry.desc + '\n' + (entry.currency === 'PHP' ? '₱' : '$') + Math.abs(entry.amount).toLocaleString() + ' ' + entry.currency + '\n\nBalances will be recalculated.')) return;
-
-  // Remove locally
-  DB.officeLedger = DB.officeLedger.filter(function(e){ return e.id !== entryId; });
-  autosave('officeLedger');
-
-  // Delete from PostgreSQL
-  var dbId = entry._dbId || entry.id;
-  if (dbId && isUUID(dbId)) {
-    apiDeleteOfficeLedgerEntry(dbId).then(function(r) {
-      if (!r || !r.ok) toast('💾 Deleted locally — server will update when reconnected','info');
-    }).catch(function(){
-      toast('💾 Deleted — server unreachable, will retry soon','info');
-    });
-  }
-
-  // Recalculate balances and sync funds to server
-  recalcOfficeLedgerBalances();
-  apiUpdateOfficeFunds(DB.officeFunds).catch(function(){});
-  autosave('officeFunds');
-
-  addAudit('DELETE', 'Office Ledger', 'Deleted entry: ' + entry.desc + ' (' + (entry.currency === 'PHP' ? '₱' : '$') + Math.abs(entry.amount).toLocaleString() + ')');
-  toast('Entry deleted and balances recalculated', 'success');
-  renderOffice();
-}
 
 function renderOfficeCatBreakdown() {
   // Combine office ledger expenses + agency-absorbed applicant expenses (not charged to agent)
@@ -19304,22 +19335,6 @@ function checkOfficeLowBalance() {
 }
 
 // ── EXCHANGE RATE ─────────────────────────────────────────────────────
-function updateFxRate() {
-  var el = document.getElementById('fx-rate');
-  var rate = parseFloat(el ? el.value : 57.5);
-  if (!rate || rate < 1) { toast('Invalid exchange rate','error'); return; }
-  DB.officeFunds.fxRate = rate;
-  DB.officeFunds.fxUpdated = _ymd(new Date());
-  autosave('officeFunds');
-  apiUpdateOfficeFunds(DB.officeFunds).catch(function(){});
-  var updEl = document.getElementById('fx-updated');
-  if (updEl) updEl.textContent = 'Updated '+DB.officeFunds.fxUpdated;
-  addAudit('UPDATE','Exchange Rate','FX rate updated to 1 USD = ₱'+rate);
-  toast('Exchange rate updated: $1 = ₱'+rate,'success');
-  renderOfficeFlowRow();
-  renderOfficeTrend();
-  renderOfficeTopCats();
-}
 
 // ── ADD FUNDS ─────────────────────────────────────────────────────────
 function openAddFunds(currency) {
@@ -19367,81 +19382,6 @@ function updateFundsBalance() {
   }
 }
 
-function submitAddFunds() {
-  var allocTo  = document.querySelector('input[name="funds-allocate-to"]:checked');
-  var dest     = allocTo ? allocTo.value : 'office';
-  var type     = document.getElementById('funds-type').value;
-  var cur      = document.getElementById('funds-currency').value;
-  var amount   = parseFloat(document.getElementById('funds-amount').value) || 0;
-  var source   = (document.getElementById('funds-source').value || '').trim();
-  var date     = document.getElementById('funds-date').value;
-  var notes    = (document.getElementById('funds-notes').value || '').trim();
-  var expCat   = document.getElementById('funds-exp-category') ? document.getElementById('funds-exp-category').value : '';
-  if (!amount || amount <= 0) { toast('Enter a valid amount', 'error'); return; }
-  if (!date) { toast('Date is required', 'error'); return; }
-
-  var uname = (window._ramsSessionUser && window._ramsSessionUser.name) || 'Admin';
-
-  if (dest === 'expenses') {
-    // Allocate fund to ALL pending expenses — mark them all as Paid
-    var expFilter = DB.expenses.filter(function(e){
-      return e.status === 'Pending' && (!expCat || e.category === expCat);
-    });
-    var totalPending = expFilter.reduce(function(s,e){ return s + (e.amount||0); }, 0);
-    expFilter.forEach(function(e){ e.status = 'Paid'; });
-    autosave('expenses');
-    // Record in office ledger
-    DB.officeLedger.push({
-      id:       'OL-' + String(DB.officeLedger.length + 1).padStart(3, '0'),
-      type:     'expense-allocation',
-      currency: cur,
-      amount:   amount,
-      balance:  cur === 'PHP' ? DB.officeFunds.balancePHP : DB.officeFunds.balanceUSD,
-      desc:     'Fund allocated to expenses' + (expCat ? ' (' + expCat + ')' : '') + (source ? ' — ' + source : ''),
-      ref:      'EXP-ALLOC-' + String(Date.now()).slice(-5),
-      category: expCat || null,
-      date:     date,
-      postedBy: uname,
-      ts:       new Date().toISOString(),
-      notes:    notes,
-    });
-    autosave('officeLedger');
-    apiCreateOfficeLedgerEntry(DB.officeLedger[DB.officeLedger.length - 1]).catch(function(){});
-    addAudit('UPDATE', 'Expenses', 'Fund ₱' + amount.toLocaleString() + ' allocated — ' + expFilter.length + ' expense(s) marked Paid (₱' + totalPending.toLocaleString() + ')');
-    toast(expFilter.length + ' expense(s) marked as Paid · ₱' + totalPending.toLocaleString() + ' covered', 'success');
-    closeOverlay('overlay-add-funds');
-    renderAccounting();
-  } else {
-    // Allocate to office funds
-    var newBal = (cur === 'PHP' ? DB.officeFunds.balancePHP : DB.officeFunds.balanceUSD) + amount;
-    if (cur === 'PHP') DB.officeFunds.balancePHP = newBal;
-    else               DB.officeFunds.balanceUSD = newBal;
-    DB.officeLedger.push({
-      id:       'OL-' + String(DB.officeLedger.length + 1).padStart(3, '0'),
-      type:     'allocation',
-      currency: cur,
-      amount:   amount,
-      balance:  newBal,
-      desc:     type.charAt(0).toUpperCase() + type.slice(1) + (source ? ' — ' + source : ''),
-      ref:      'ALLOC-' + String(Date.now()).slice(-5),
-      category: null,
-      date:     date,
-      postedBy: uname,
-      ts:       new Date().toISOString(),
-      notes:    notes,
-    });
-    autosave('officeLedger');
-    autosave('officeFunds');
-    var _lastEntry = DB.officeLedger[DB.officeLedger.length - 1];
-    apiCreateOfficeLedgerEntry(_lastEntry).catch(function(){});
-    apiUpdateOfficeFunds(DB.officeFunds).catch(function(){});
-    addAudit('CREATE', 'Office Funds', 'Fund allocation: ' + (cur === 'PHP' ? '₱' : '$') + amount.toLocaleString() + ' ' + cur);
-    toast((cur === 'PHP' ? '₱' : '$') + amount.toLocaleString() + ' ' + cur + ' added to office funds', 'success');
-    closeOverlay('overlay-add-funds');
-    recalcOfficeLedgerBalances();
-    renderOffice();
-  }
-}
 
 // ── OFFICE EXPENSE ────────────────────────────────────────────────────
 function openOfficeExpense(currency) {
@@ -19477,54 +19417,6 @@ function checkOfficeBalance() {
   if (btnEl) { btnEl.textContent = insufficient ? 'Override & Post' : 'Post Expense'; btnEl.className = insufficient ? 'btn btn-danger' : 'btn btn-p'; }
 }
 
-function submitOfficeExpense() {
-  var cur    = document.getElementById('oe-currency').value;
-  var cat    = document.getElementById('oe-category').value;
-  var desc   = (document.getElementById('oe-desc').value||'').trim();
-  var amount = parseFloat(document.getElementById('oe-amount').value)||0;
-  var date   = document.getElementById('oe-date').value;
-  var ref    = (document.getElementById('oe-ref').value||'').trim();
-  var paidBy = document.getElementById('oe-paidby').value;
-  var override = (document.getElementById('oe-override-reason').value||'').trim();
-  if (!desc)   { toast('Description is required','error'); return; }
-  if (!amount||amount<=0) { toast('Enter a valid amount','error'); return; }
-  if (!date)   { toast('Date is required','error'); return; }
-
-  var bal = cur==='PHP' ? DB.officeFunds.balancePHP : DB.officeFunds.balanceUSD;
-  var insufficient = amount > bal;
-  if (insufficient && !override) { toast('Override reason required for insufficient balance','error'); document.getElementById('oe-override-reason').focus(); return; }
-
-  var user  = null /* user via Store */;
-  var uname = user ? (JSON.parse(user).name||'Admin') : 'Admin';
-  var newBal= bal - amount;
-  var entryType = insufficient ? 'override' : 'expense';
-
-  DB.officeLedger.push({
-    id:       'OL-'+String(DB.officeLedger.length+1).padStart(3,'0'),
-    type:     entryType,
-    currency: cur,
-    amount:   -amount,
-    balance:  newBal,
-    desc:     cat+' — '+desc+(paidBy!=='Cash'?' ['+paidBy+']':'')+(override?' [OVERRIDE: '+override+']':''),
-    ref:      ref || ('OE-'+String(Date.now()).slice(-5)),
-    category: cat,
-    date:     date,
-    postedBy: uname,
-    ts:       new Date().toISOString(),
-  });
-
-  if (insufficient) addAudit('OVERRIDE','Office Expense','Override: '+(cur==='PHP'?'₱':'$')+amount.toLocaleString()+' — '+override);
-  autosave('officeLedger');
-  autosave('officeFunds');
-  var _oeEntry = DB.officeLedger[DB.officeLedger.length-1];
-  apiCreateOfficeLedgerEntry(_oeEntry).catch(function(){});
-  apiUpdateOfficeFunds(DB.officeFunds).catch(function(){});
-  addAudit('CREATE','Office Expense',cat+' — '+(cur==='PHP'?'₱':'$')+amount.toLocaleString()+' '+cur);
-  toast((cur==='PHP'?'₱':'$')+amount.toLocaleString()+' '+cat+' expense posted','success');
-  closeOverlay('overlay-office-expense');
-  recalcOfficeLedgerBalances();
-  renderOffice();
-}
 
 // ── REFUND ────────────────────────────────────────────────────────────
 function openRefund() {
@@ -19535,47 +19427,6 @@ function openRefund() {
   setTimeout(function(){ var el=document.getElementById('rf-source-name'); if(el) el.focus(); },100);
 }
 
-function submitRefund() {
-  var sourceType = document.getElementById('rf-source-type').value;
-  var sourceName = (document.getElementById('rf-source-name').value||'').trim();
-  var reason     = document.getElementById('rf-reason').value;
-  var cur        = document.getElementById('rf-currency').value;
-  var amount     = parseFloat(document.getElementById('rf-amount').value)||0;
-  var date       = document.getElementById('rf-date').value;
-  var notes      = (document.getElementById('rf-notes').value||'').trim();
-  if (!sourceName) { toast('Source name is required','error'); return; }
-  if (!amount||amount<=0) { toast('Enter a valid amount','error'); return; }
-  if (!date) { toast('Date is required','error'); return; }
-
-  var user  = null /* user via Store */;
-  var uname = user ? (JSON.parse(user).name||'Accounting') : 'Accounting';
-  var newBal= (cur==='PHP'?DB.officeFunds.balancePHP:DB.officeFunds.balanceUSD) + amount;
-
-  var refId = 'RF-'+String(DB.officeRefunds.length+1).padStart(3,'0');
-  DB.officeRefunds.push({ id:refId, sourceType:sourceType, sourceName:sourceName, reason:reason, currency:cur, amount:amount, date:date, notes:notes });
-  DB.officeLedger.push({
-    id:       'OL-'+String(DB.officeLedger.length+1).padStart(3,'0'),
-    type:     'refund',
-    currency: cur,
-    amount:   amount,
-    balance:  newBal,
-    desc:     'Refund from '+sourceName+' ('+sourceType+') — '+reason,
-    ref:      refId,
-    category: null,
-    date:     date,
-    postedBy: uname,
-    ts:       new Date().toISOString(),
-    notes:    notes,
-  });
-
-  autosave('officeLedger');
-  autosave('officeRefunds');
-  addAudit('CREATE','Office Refund','Refund: '+(cur==='PHP'?'₱':'$')+amount.toLocaleString()+' from '+sourceName);
-  toast('Refund of '+(cur==='PHP'?'₱':'$')+amount.toLocaleString()+' posted','success');
-  closeOverlay('overlay-refund');
-  recalcOfficeLedgerBalances();
-  renderOffice();
-}
 
 // ── ADMIN ADJUSTMENT ──────────────────────────────────────────────────
 function openOfficeAdjustment() {
@@ -19583,40 +19434,6 @@ function openOfficeAdjustment() {
   openOverlay('overlay-office-adjustment');
 }
 
-function submitOfficeAdjustment() {
-  var cur    = document.getElementById('oa-currency').value;
-  var dir    = parseInt(document.getElementById('oa-direction').value)||1;
-  var amount = parseFloat(document.getElementById('oa-amount').value)||0;
-  var reason = (document.getElementById('oa-reason').value||'').trim();
-  if (!amount||amount<=0) { toast('Enter a valid amount','error'); return; }
-  if (!reason) { toast('Reason is required','error'); return; }
-
-  var bal    = cur==='PHP' ? DB.officeFunds.balancePHP : DB.officeFunds.balanceUSD;
-  var newBal = bal + (amount * dir);
-  var user   = null /* user via Store */;
-  var uname  = user ? (JSON.parse(user).name||'Admin') : 'Admin';
-
-  DB.officeLedger.push({
-    id:       'OL-'+String(DB.officeLedger.length+1).padStart(3,'0'),
-    type:     'adjustment',
-    currency: cur,
-    amount:   amount * dir,
-    balance:  newBal,
-    desc:     'Manual adjustment — '+reason,
-    ref:      'ADJ-'+String(Date.now()).slice(-5),
-    category: null,
-    date:     _ymd(new Date()),
-    postedBy: uname,
-    ts:       new Date().toISOString(),
-  });
-
-  addAudit('ADJUSTMENT','Office Funds','Manual adj: '+(dir>0?'+':'-')+(cur==='PHP'?'₱':'$')+amount.toLocaleString()+' — '+reason);
-  autosave('officeLedger');
-  toast('Adjustment posted','success');
-  closeOverlay('overlay-office-adjustment');
-  recalcOfficeLedgerBalances();
-  renderOffice();
-}
 
 // ── EXPORT ────────────────────────────────────────────────────────────
 function exportOfficeLedger() {
@@ -20536,14 +20353,17 @@ function _gateButtons() {
     ['[onclick*="openAddAgent"]',         'Manage Agents',        'Your role cannot manage agents'],
     ['[onclick*="openEditAgent"]',        'Manage Agents',        'Your role cannot manage agents'],
     ['[onclick*="deleteAgent"]',          'Delete Agents',        'Your role cannot delete agents'],
-    ['[onclick*="chargeExpenseToAgent"]', 'Manage Accounting',    'Your role cannot charge expenses'],
-    ['[onclick*="addLedgerEntry"]',       'Manage Accounting',    'Your role cannot edit ledger'],
-    ['[onclick*="submitAdjustment"]',     'Manage Accounting',    'Your role cannot post adjustments'],
+    ['[onclick*="chargeExpenseToAgent"]', 'Post Ledger Adjustments', 'Your role cannot charge expenses'],
+    ['[onclick*="unchargeExpenseFromAgent"]', 'Void Accounting Records', 'Your role cannot reverse charges'],
+    ['[onclick*="addLedgerEntry"]',       'Post Ledger Adjustments', 'Your role cannot edit ledger'],
+    ['[onclick*="submitAdjustment"]',     'Post Ledger Adjustments', 'Your role cannot post adjustments'],
+    ['[onclick*="openPaymentModal"]',     'Record Payments',      'Your role cannot record payments'],
+    ['[onclick*="openAgentPayout"]',      'Record Payments',      'Your role cannot record payments'],
     // Invoices
     ['[onclick*="openNewInvoice"]',       'Manage Invoices',      'Only Admin and Finance can create invoices'],
     ['[onclick*="saveInvoice"]',          'Manage Invoices',      'Only Admin and Finance can create invoices'],
     ['[onclick*="editInvoice"]',          'Manage Invoices',      'Only Admin and Finance can edit invoices'],
-    ['[onclick*="markInvoicePaid"]',      'Manage Invoices',      'Only Admin and Finance can mark invoices as paid'],
+    ['[onclick*="markInvoicePaid"]',      'Record Payments',      'Your role cannot record payments'],
     ['[onclick*="deleteInvoice"]',        'Delete Invoices',      'Your role cannot delete invoices'],
   ];
 
@@ -20706,7 +20526,8 @@ function _showReadOnlyBanner() {
   // do and makes a working grant look broken.
   var _writePerms = ['Manage Complaints','Create Applicants','Edit Applicants','Delete Applicants',
     'Manage Job Orders','Upload Documents','Approve Documents','Manage Accounting','Manage Expenses',
-    'Manage Invoices','Release/Reverse Commissions','Manage Users','Manage Roles'];
+    'Manage Invoices','Release/Reverse Commissions','Manage Users','Manage Roles',
+    'Approve Expenses','Post Ledger Adjustments','Manage FX & Funds','Record Payments','Void Accounting Records','Close Periods'];
   var _hasAnyWrite = _writePerms.some(function(p){ return hasPermission(p); });
   if (role === 'Viewer' && !_hasAnyWrite) {
     if (!banner) {
@@ -21006,34 +20827,8 @@ function saveViewerScope() {
 
 
 // ── Reset all expenses ────────────────────────────────────────────────
-function resetAllExpenses() {
-  if ((typeof getCurrentRole === 'function') && getCurrentRole() !== 'Admin') {
-    toast('Only admins can reset expenses', 'error'); return;
-  }
-  if (!confirm('Clear ALL expense records? This cannot be undone.')) return;
-  DB.expenses = [];
-  filteredApps = [...getScopedApplicants()];
-  autosave('expenses');
-  addAudit('DELETE', 'Expenses', 'All expense records cleared by admin');
-  renderAccounting();
-  if (typeof renderExpensesTab === 'function') renderExpensesTab();
-  toast('All expenses cleared', 'success');
-}
 
 // ── Reset office ledger ───────────────────────────────────────────────
-function resetOfficeLedger() {
-  if (!confirm('Clear ALL office ledger entries? This cannot be undone.')) return;
-  DB.officeLedger = [];
-  DB.officeRefunds = [];
-  DB.officeFunds.balancePHP = 0;
-  DB.officeFunds.balanceUSD = 0;
-  autosave('officeLedger');
-  autosave('officeFunds');
-  apiResetOfficeLedger().catch(function(){});
-  addAudit('DELETE', 'Office Ledger', 'Office ledger cleared by admin');
-  if (typeof renderOffice === 'function') renderOffice();
-  toast('Office ledger cleared', 'success');
-}
 
 
 // ── Clear local cache + re-sync from PostgreSQL ───────────────────────
@@ -21849,6 +21644,10 @@ function mapLedgerRow(row) {
     amount:         parseFloat(row.amount) || 0,
     date:           (row.entry_date || row.created_at || '').slice(0, 10),
     runningBalance: parseFloat(row.running_balance) || 0,
+    commissionId:   row.commission_id || null,
+    expenseId:      row.expense_id || null,
+    paymentId:      row.payment_id || null,
+    voided:         !!row.voided_at,
   };
 }
 
@@ -22682,6 +22481,74 @@ async function loadSharedPermissions() {
 </div>
 
 <!-- Manual Adjustment Modal (office) -->
+<div class="overlay" id="overlay-payment" onclick="closeOverlayIfBg(event,'overlay-payment')" role="dialog" aria-modal="true">
+  <div class="modal modal-sm">
+    <div class="modal-hdr">
+      <div><h2 id="pay-title">Record payment</h2><p id="pay-sub"></p></div>
+      <button class="close-btn" onclick="closeOverlay('overlay-payment')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="f-row">
+        <div class="f-grp">
+          <label class="f-lbl">Amount <span class="req">*</span> <span id="pay-cur" style="color:var(--muted);font-weight:600"></span></label>
+          <input class="f-inp" id="pay-amount" type="number" min="0" step="0.01" placeholder="0.00">
+        </div>
+        <div class="f-grp">
+          <label class="f-lbl">Date <span class="req">*</span></label>
+          <input class="f-inp" id="pay-date" type="date">
+        </div>
+      </div>
+      <div class="f-row">
+        <div class="f-grp">
+          <label class="f-lbl">Method</label>
+          <select class="f-inp" id="pay-method">
+            <option value="bank">Bank transfer</option>
+            <option value="cash">Cash</option>
+            <option value="gcash">GCash / e-wallet</option>
+            <option value="cheque">Cheque</option>
+            <option value="wire">Wire / remittance</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="f-grp">
+          <label class="f-lbl">Reference no.</label>
+          <input class="f-inp" id="pay-ref" type="text" placeholder="Bank ref / receipt no.">
+        </div>
+      </div>
+      <div class="f-grp">
+        <label class="f-lbl">Notes</label>
+        <input class="f-inp" id="pay-notes" type="text" placeholder="Optional">
+      </div>
+      <div id="pay-error" class="f-error" style="display:none;color:var(--red);font-size:12.5px;margin-top:6px"></div>
+      <div id="pay-history" style="margin-top:14px"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-s" onclick="closeOverlay('overlay-payment')">Cancel</button>
+      <button class="btn btn-p" id="pay-submit" onclick="submitPayment()">Record payment</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="overlay-statement" onclick="closeOverlayIfBg(event,'overlay-statement')" role="dialog" aria-modal="true">
+  <div class="modal" style="max-width:760px;width:94%">
+    <div class="modal-hdr">
+      <div><h2 id="stmt-title">Agent statement</h2><p>Opening balance, every posting in the period, closing balance</p></div>
+      <button class="close-btn" onclick="closeOverlay('overlay-statement')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;flex-wrap:wrap">
+        <div class="f-grp" style="margin:0"><label class="f-lbl">From</label><input class="f-inp" id="stmt-from" type="date"></div>
+        <div class="f-grp" style="margin:0"><label class="f-lbl">To</label><input class="f-inp" id="stmt-to" type="date"></div>
+        <button class="btn btn-p btn-sm" onclick="loadAgentStatement()">Show</button>
+        <button class="btn btn-s btn-sm" onclick="downloadAgentStatement()">⬇ CSV</button>
+        <button class="btn btn-s btn-sm" onclick="printAgentStatement()">🖨 Print</button>
+      </div>
+      <div id="stmt-body"></div>
+    </div>
+  </div>
+</div>
+
+
 <div class="overlay" id="overlay-office-adjustment" onclick="closeOverlayIfBg(event,'overlay-office-adjustment')" role="dialog" aria-modal="true">
   <div class="modal modal-sm">
     <div class="modal-hdr">
