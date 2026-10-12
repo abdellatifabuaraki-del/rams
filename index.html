@@ -1445,65 +1445,111 @@ button[disabled][data-rbac-locked] {
       <div class="pg-hdr">
         <div class="pg-hdr-l"><h1>Analytics</h1><p id="analytics-subtitle">Performance metrics and recruitment insights.</p></div>
         <div class="pg-hdr-r">
-          <select class="filter-select" id="analytics-range" aria-label="Date range" onchange="renderAnalytics()">
+          <select class="filter-select" id="analytics-range" aria-label="Date range" onchange="_anRangeChanged()">
             <option value="30">Last 30 days</option><option value="90" selected>Last 90 days</option><option value="year">This Year</option><option value="all">All Time</option>
           </select>
-          <button class="btn btn-p btn-sm" onclick="exportAnalyticsPDF()">⬇ Export PDF</button>
+          <button class="btn btn-s btn-sm" id="an-target-btn" onclick="setAnalyticsTarget()" style="display:none">🎯 Target</button>
+          <button class="btn btn-s btn-sm" onclick="exportAnalyticsCSV()">⬇ CSV</button>
+          <button class="btn btn-p btn-sm" onclick="exportAnalyticsPDF()">⬇ PDF</button>
         </div>
       </div>
+      <div id="an-banner" role="status" aria-live="polite"></div>
       <div class="stat-grid" id="analytics-stats"></div>
       <div class="analytics-grid">
-        <div class="card cp">
+        <div class="card cp an-sec" data-title="Deployment Volume">
           <div style="font-size:14px;font-weight:800;margin-bottom:4px">Deployment Volume</div>
-          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Monthly deployments this year</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Deployments per month, trailing 12 months (by deployment date — not affected by the range)</div>
           <div class="chart-placeholder" style="height:180px">
-            <div style="width:100%;display:flex;align-items:flex-end;justify-content:space-around;height:100%;padding-bottom:10px" id="analytics-chart-bars"></div>
+            <div style="width:100%;display:flex;align-items:flex-end;justify-content:space-around;height:100%;padding-bottom:10px" id="analytics-chart-bars" role="group" aria-label="Monthly deployments"></div>
           </div>
           <div style="display:flex;justify-content:space-around;font-size:10px;font-family:'IBM Plex Mono',monospace;color:var(--muted);margin-top:4px" id="analytics-chart-labels"></div>
+          <div id="analytics-chart-note" style="font-size:11px;color:var(--muted);margin-top:8px"></div>
         </div>
-        <div class="card cp">
-          <div style="font-size:14px;font-weight:800;margin-bottom:14px">Status Breakdown</div>
+        <div class="card cp an-sec" data-title="Status Breakdown">
+          <div style="font-size:14px;font-weight:800;margin-bottom:2px">Status Breakdown</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:12px">Applicants who applied in the range · click a row to open them</div>
           <div id="analytics-breakdown"></div>
         </div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
-        <div class="card cp">
-          <div style="font-size:14px;font-weight:800;margin-bottom:14px">Top Destinations</div>
+        <div class="card cp an-sec" data-title="Top Destinations">
+          <div style="font-size:14px;font-weight:800;margin-bottom:2px">Top Destinations</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:12px">By application date · click to filter applicants</div>
           <div id="analytics-destinations"></div>
         </div>
-        <div class="card cp">
-          <div style="font-size:14px;font-weight:800;margin-bottom:14px">Agent Performance</div>
+        <div class="card cp an-sec" data-title="Skilled vs Household">
+          <div style="font-size:14px;font-weight:800;margin-bottom:2px">Skilled vs Household</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:12px">By application date</div>
+          <div id="analytics-categories"></div>
+        </div>
+        <div class="card cp an-sec" data-title="Agent Performance">
+          <div style="font-size:14px;font-weight:800;margin-bottom:2px">Agent Performance</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:12px">By application date · rates need 5+ applicants to be ranked</div>
           <div id="analytics-agents"></div>
         </div>
-        <div class="card cp">
-          <div style="font-size:14px;font-weight:800;margin-bottom:14px">Job Order Fill Rate</div>
+        <div class="card cp an-sec" data-title="Backouts by Country">
+          <div style="font-size:14px;font-weight:800;margin-bottom:2px">Backouts &amp; Repatriations by Country</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:12px">By application date</div>
+          <div id="analytics-backouts"></div>
+        </div>
+        <div class="card cp an-sec" data-title="Job Order Fill Rate">
+          <div style="font-size:14px;font-weight:800;margin-bottom:2px">Job Order Fill Rate</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:12px">Open job orders today · at-risk = deadline within 14 days and under 50% filled</div>
           <div id="analytics-jobs"></div>
         </div>
-        <div class="card cp">
-          <div style="font-size:14px;font-weight:800;margin-bottom:14px">Medical Pass Rate</div>
+        <div class="card cp an-sec" data-title="Medical Pass Rate">
+          <div style="font-size:14px;font-weight:800;margin-bottom:2px">Medical Status</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:12px">By application date</div>
           <div id="analytics-medical"></div>
         </div>
       </div>
 
-      <div class="card cp" style="margin-top:18px">
+      <div class="card cp an-sec" data-title="Time to Deploy" style="margin-top:18px">
         <div style="font-size:14px;font-weight:800;margin-bottom:4px">⏱ Time to Deploy</div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Days from application to deployment, for applicants deployed in the selected range</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Days from application to deployment, for applicants whose deployment date falls in the selected range</div>
         <div id="analytics-ttd"></div>
       </div>
 
       <div style="display:grid;grid-template-columns:1.3fr 1fr;gap:18px;margin-top:18px">
-        <div class="card cp">
+        <div class="card cp an-sec" data-title="Pipeline Funnel & Drop-off">
           <div style="font-size:14px;font-weight:800;margin-bottom:4px">🔻 Pipeline Funnel &amp; Drop-off</div>
-          <div style="font-size:12px;color:var(--muted);margin-bottom:14px">How far applicants who joined in this range have gotten, how long today's pipeline has been sitting per stage, and where backouts/rejections tend to originate</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:14px">From the server-side stage history: how far applicants who applied in this range got, how long today's pipeline has sat in each stage, and the last stage reached before a backout or rejection</div>
           <div id="analytics-funnel"></div>
         </div>
-        <div class="card cp">
+        <div class="card cp an-sec" data-title="Profitability" id="an-profit-card">
           <div style="font-size:14px;font-weight:800;margin-bottom:4px">💰 Profitability</div>
-          <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Employer fees settled minus commissions released minus expenses, in the selected range</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Employer fees settled − commissions released (+ reversals) − expenses, in the range. All in USD at each record's own rate.</div>
           <div id="analytics-profit"></div>
         </div>
       </div>
+
+      <div id="an-money-wrap" style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:18px">
+        <div class="card cp an-sec" data-title="Commission Liability & Guarantee Expiries">
+          <div style="font-size:14px;font-weight:800;margin-bottom:4px">🧾 Commission Liability</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Owed but not yet paid out (today, not range-limited)</div>
+          <div id="analytics-liability"></div>
+        </div>
+        <div class="card cp an-sec" data-title="Employer Fee Receivables">
+          <div style="font-size:14px;font-weight:800;margin-bottom:4px">📬 Employer Fees Receivable</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Pending fees by age since they were raised (today, not range-limited)</div>
+          <div id="analytics-receivables"></div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:18px">
+        <div class="card cp an-sec" data-title="Data Quality">
+          <div style="font-size:14px;font-weight:800;margin-bottom:4px">🩺 Data Quality</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Missing information that weakens the numbers above · click to review</div>
+          <div id="analytics-dq"></div>
+        </div>
+        <div class="card cp an-sec" data-title="Document Completeness">
+          <div style="font-size:14px;font-weight:800;margin-bottom:4px">📎 Document Completeness</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Active applicants and their approved documents</div>
+          <div id="analytics-docs"></div>
+        </div>
+      </div>
     </div>
+
 
     <!-- ══════════════════════════════════════
          ACCOUNTING
@@ -7638,8 +7684,10 @@ function filterApplicants() {
     }
     if (c && (x.destination || '') !== c) return false;
     if (cat && (x.category || '') !== cat) return false;
+    if (window._appExtraFilter && !window._appExtraFilter.fn(x)) return false;   // drill-down from Analytics (e.g. "no agent")
     return true;
   });
+  if (typeof _syncExtraFilterChip === 'function') _syncExtraFilterChip();
   if (!window._keepAppPage) appPage = 1;
   renderApplicants();
 }
@@ -7675,6 +7723,7 @@ function clearFilters() {
   var catf = document.getElementById('app-category-filter');
   if (catf) catf.value = '';
   _activeFilters.jo = ''; _activeFilters.c = '';
+  window._appExtraFilter = null;
   try { localStorage.removeItem('rams:filters:applicants'); } catch(e){}
   filterApplicants();
 }
@@ -9676,7 +9725,7 @@ function _inRange(dateStr, start) {
   return !isNaN(d) && d >= start;
 }
 
-function renderAnalytics() {
+function renderAnalyticsLegacy() {
   var _range     = _analyticsRange();
   // Respect the same viewer job-order scope used everywhere else in the app —
   // a Viewer should only ever see analytics for applicants in their scope.
@@ -9726,7 +9775,7 @@ function renderAnalytics() {
     { label:'Employer Fees (USD)',val: '$' + totalExpUSD.toLocaleString() + ' · $' + settledFees.toLocaleString() + ' settled', icon:'🏢', bg:'var(--gbg)', c:'var(--green)' },
     { label:'Active Job Slots',  val: totalFilled + ' / ' + totalSlots + ' filled', icon:'💼', bg:'var(--brand-l)', c:'var(--brand)' },
     { label:'Attrition',         val: (backouts + repatriated) + ' · ' + rejected + ' rejected', icon:'⚠️', bg:'var(--abg)', c:'var(--amber)' },
-  ].map(function(s) {
+  ].filter(function(s){ return _anCanMoney() || (s.label.indexOf('Expenses') === -1 && s.label.indexOf('Employer Fees') === -1); }).map(function(s) {
     return '<div class="stat-card"><div class="stat-top"><div class="stat-icon" style="background:' + s.bg + ';color:' + s.c + '">' + s.icon + '</div></div><div class="stat-val">' + s.val + '</div><div class="stat-lbl">' + s.label + '</div></div>';
   }).join('');
 
@@ -9780,7 +9829,7 @@ function renderAnalytics() {
       var pct = total ? Math.round(v / total * 100) : 0;
       return '<div style="margin-bottom:10px">' +
         '<div style="display:flex;justify-content:space-between;margin-bottom:5px">' +
-        '<span style="font-size:12.5px;font-weight:700">' + k + '</span>' +
+        '<span style="font-size:12.5px;font-weight:700">' + escapeHtml(String(k)) + '</span>' +
         '<span style="font-size:12px;font-family:monospace;color:var(--muted)">' + v + ' (' + pct + '%)</span>' +
         '</div>' +
         '<div class="prog-bar"><div class="prog-fill" style="background:' + (colors[k]||'var(--brand)') + ';width:' + pct + '%"></div></div>' +
@@ -9803,7 +9852,7 @@ function renderAnalytics() {
         '<div style="font-size:11px;font-weight:800;color:var(--muted);width:16px;text-align:right">' + (i+1) + '</div>' +
         '<div style="flex:1;min-width:0">' +
           '<div style="display:flex;justify-content:space-between;margin-bottom:3px">' +
-            '<span style="font-size:12.5px;font-weight:700">🌍 ' + e[0] + '</span>' +
+            '<span style="font-size:12.5px;font-weight:700">🌍 ' + escapeHtml(String(e[0])) + '</span>' +
             '<span style="font-size:12px;font-family:monospace;font-weight:700">' + e[1] + ' <span style="color:var(--muted);font-weight:400">(' + pct + '%)</span></span>' +
           '</div>' +
           '<div class="prog-bar" style="height:4px"><div class="prog-fill" style="background:var(--brand);width:' + pct + '%"></div></div>' +
@@ -9831,7 +9880,7 @@ function renderAnalytics() {
       return '<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)">' +
         '<div style="width:34px;height:34px;border-radius:9px;background:var(--brand-l);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:var(--brand);flex-shrink:0">' + initials + '</div>' +
         '<div style="flex:1;min-width:0">' +
-          '<div style="font-size:12.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + a.name + '</div>' +
+          '<div style="font-size:12.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(String(a.name)) + '</div>' +
           '<div style="font-size:11px;color:var(--muted);margin-top:2px">' +
             a.total + ' total · ' +
             '<span style="color:var(--green)">' + a.deployed + ' deployed</span> · ' +
@@ -9863,7 +9912,7 @@ function renderAnalytics() {
       var color = pct >= 100 ? 'var(--green)' : pct >= 60 ? 'var(--brand)' : pct >= 30 ? 'var(--amber)' : 'var(--red)';
       return '<div style="margin-bottom:10px">' +
         '<div style="display:flex;justify-content:space-between;margin-bottom:4px">' +
-          '<span style="font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60%">' + j.employer + '</span>' +
+          '<span style="font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60%">' + escapeHtml(String(j.employer||'')) + '</span>' +
           '<span style="font-size:11.5px;font-family:monospace;color:var(--muted)">' + j.filled + '/' + j.slots + ' <span style="color:' + color + ';font-weight:700">(' + pct + '%)</span></span>' +
         '</div>' +
         '<div class="prog-bar" style="height:6px"><div class="prog-fill" style="background:' + color + ';width:' + pct + '%"></div></div>' +
@@ -10016,7 +10065,7 @@ function renderAnalytics() {
     var dwellHtml = dwellRows.length ? dwellRows.map(function(r) {
       var warn = r.avg >= 7;
       return '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:11.5px">' +
-        '<span style="font-weight:600">' + r.status + '</span>' +
+        '<span style="font-weight:600">' + escapeHtml(String(r.status)) + '</span>' +
         '<span style="font-family:monospace;color:' + (warn ? 'var(--red)' : 'var(--muted)') + ';font-weight:' + (warn?'700':'400') + '">' + r.avg + 'd avg <span style="color:var(--dim)">(' + r.count + ')</span></span>' +
       '</div>';
     }).join('') : '<div style="color:var(--muted);font-size:12px">No active pipeline right now</div>';
@@ -10036,7 +10085,7 @@ function renderAnalytics() {
     var originHtml = originTotal ? (originEntries.map(function(e) {
       var pct = Math.round(e[1]/originTotal*100);
       return '<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11.5px">' +
-        '<span>' + e[0] + '</span><span style="font-family:monospace;color:var(--muted)">' + e[1] + ' (' + pct + '%)</span></div>';
+        '<span>' + escapeHtml(String(e[0])) + '</span><span style="font-family:monospace;color:var(--muted)">' + e[1] + ' (' + pct + '%)</span></div>';
     }).join('') + (originUnknown ? '<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11.5px;color:var(--dim)"><span>Unknown (older record, no stage history)</span><span style="font-family:monospace">' + originUnknown + '</span></div>' : ''))
       : '<div style="color:var(--muted);font-size:12px">No backouts/rejections in this range</div>';
 
@@ -10052,6 +10101,7 @@ function renderAnalytics() {
 
   // ── Profitability ─────────────────────────────────────────────────────
   var profitEl = document.getElementById('analytics-profit');
+  if (profitEl && !_anCanMoney()) { profitEl.innerHTML = '<div style="color:var(--muted);font-size:12px">Accounting figures are not available for your role.</div>'; profitEl = null; }
   if (profitEl) {
     var _fx = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
     var _toUSD = function(phpAmt) { return phpAmt / _fx; };
@@ -10126,53 +10176,375 @@ function renderAnalytics() {
   }
 }
 
-// ── Export PDF — same technique as printInvoice(): open a print-ready
-// window with the currently-rendered analytics content and hand off to the
-// browser's native Print-to-PDF, rather than faking it with a toast or
-// pulling in an external PDF library. Reads straight from the live DOM so
-// the export always matches exactly what's on screen, including whatever
-// date range is currently selected.
+// ════════════════════════════════════════════════════════
+// ANALYTICS (server-aggregated)
+// ════════════════════════════════════════════════════════
+// All figures come from GET /api/analytics/overview — computed in SQL, scoped
+// to the viewer's job orders, with money sections only for roles holding
+// "View Accounting". The previous client-side calculation is kept as
+// renderAnalyticsLegacy() and only used offline / in demo mode.
+var _anData = null;
+var _anTimer = null;
+var _anSeq = 0;
+
+function _anCanMoney() { return typeof hasPermission === 'function' ? hasPermission('View Accounting') : false; }
+function _anFmtUSD(n) { n = Number(n) || 0; return (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString(); }
+function _anFmtN(n) { return (Number(n) || 0).toLocaleString(); }
+function _anE(s) { return escapeHtml(String(s == null ? '' : s)); }
+
+function _anRangeChanged() {
+  try { localStorage.setItem('rams:analytics:range', document.getElementById('analytics-range').value); } catch (e) {}
+  clearTimeout(_anTimer);
+  _anTimer = setTimeout(renderAnalytics, 150);      // debounce quick changes
+}
+
+// Clickable row helper — a real button for keyboard + screen readers
+function _anRow(inner, drill, label) {
+  if (!drill) return '<div style="padding:6px 0;border-bottom:1px solid var(--border)">' + inner + '</div>';
+  return '<button type="button" class="an-row" data-drill="' + _anE(JSON.stringify(drill)) + '" onclick="analyticsDrill(JSON.parse(this.getAttribute(\'data-drill\')))" ' +
+    'aria-label="' + _anE(label || 'Open applicants') + '" ' +
+    'style="display:block;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--border);padding:6px 0;cursor:pointer;color:inherit;font:inherit">' + inner + '</button>';
+}
+function _anBar(pct, color) {
+  return '<div class="prog-bar" style="height:8px" aria-hidden="true"><div class="prog-fill" style="background:' + color + ';width:' + Math.max(0, Math.min(100, pct)) + '%"></div></div>';
+}
+function _anEmpty(msg) { return '<div style="color:var(--muted);font-size:12px;padding:8px 0">' + _anE(msg) + '</div>'; }
+function _anRate(rate, low, red) {
+  return low ? '<span style="color:var(--muted)" title="Fewer than 5 applicants — too few to rank">' + rate + '%*</span>'
+             : '<span style="font-weight:800;color:' + (red ? 'var(--red)' : rate >= 60 ? 'var(--green)' : rate >= 30 ? 'var(--amber)' : 'var(--red)') + '">' + rate + '%</span>';
+}
+
+function _anKpi(label, val, icon, bg, c, sub) {
+  return '<div class="stat-card"><div class="stat-top"><div class="stat-icon" style="background:' + bg + ';color:' + c + '" aria-hidden="true">' + icon + '</div></div>' +
+    '<div class="stat-val">' + val + '</div><div class="stat-lbl">' + _anE(label) + '</div>' +
+    (sub ? '<div style="font-size:10.5px;color:var(--muted);margin-top:3px">' + sub + '</div>' : '') + '</div>';
+}
+function _anDelta(cur, prev) {
+  if (prev === null || prev === undefined) return '';
+  if (!prev) return cur ? '<span style="color:var(--green)">▲ up from 0 in the previous period</span>' : '';
+  var pct = Math.round((cur - prev) / prev * 100);
+  if (!pct) return '<span style="color:var(--muted)">■ flat vs previous period</span>';
+  return '<span style="color:' + (pct > 0 ? 'var(--green)' : 'var(--red)') + '">' + (pct > 0 ? '▲ +' : '▼ ') + pct + '% vs previous period (' + prev + ')</span>';
+}
+
+function renderAnalytics() {
+  var sel = document.getElementById('analytics-range');
+  if (sel && !sel.dataset.restored) {
+    sel.dataset.restored = '1';
+    try { var saved = localStorage.getItem('rams:analytics:range'); if (saved && sel.querySelector('option[value="' + saved + '"]')) sel.value = saved; } catch (e) {}
+  }
+  var tb = document.getElementById('an-target-btn');
+  if (tb) tb.style.display = (typeof hasPermission === 'function' && hasPermission('System Settings')) ? '' : 'none';
+
+  var live = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
+  if (!live) { renderAnalyticsLegacy(); return; }
+
+  var mySeq = ++_anSeq;
+  var banner = document.getElementById('an-banner');
+  if (banner && !_anData) banner.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:6px 0">Loading analytics…</div>';
+  apiFetch('/analytics/overview?range=' + encodeURIComponent(sel ? sel.value : '90')).then(function(r) {
+    if (mySeq !== _anSeq) return;                       // a newer request superseded this one
+    if (!r || !r.ok || !r.data) {
+      if (r && r.httpStatus === 403) { if (banner) banner.innerHTML = '<div class="card cp" style="color:var(--muted)">Your role does not have access to Analytics.</div>'; return; }
+      if (banner) banner.innerHTML = '<div style="color:var(--amber);font-size:12px;padding:6px 0">Live analytics unavailable — showing locally calculated figures.</div>';
+      renderAnalyticsLegacy(); return;
+    }
+    _anData = r.data;
+    if (banner) banner.innerHTML = '';
+    _anRender(_anData);
+  }).catch(function() { if (mySeq === _anSeq) renderAnalyticsLegacy(); });
+}
+
+function _anRender(d) {
+  var k = d.kpis, money = d.money;
+  var sub = document.getElementById('analytics-subtitle');
+  if (sub) sub.textContent = 'Performance metrics and recruitment insights — ' + d.range.label + ' (' + k.total + ' applicant' + (k.total !== 1 ? 's' : '') + ')' +
+    (d.viewerScoped ? ' · limited to your assigned job orders' : '');
+
+  // ── KPI strip ──────────────────────────────────────────────────────────
+  var slots = 0, filled = 0; d.jobs.rows.forEach(function(j) { slots += j.slots; filled += j.filled; });
+  var cards = [
+    _anKpi('Total Applicants', _anFmtN(k.total), '👥', 'var(--brand-l)', 'var(--brand)', _anDelta(k.total, k.prevTotal)),
+    _anKpi('Deployed', _anFmtN(k.deployed), '✈️', 'var(--gbg)', 'var(--green)', _anDelta(k.deployed, k.prevDeployed)),
+    _anKpi('In Pipeline', _anFmtN(k.pipeline), '🔄', 'var(--pbg)', 'var(--purple)'),
+    _anKpi('Conversion', k.conversion + '%', '📈', 'var(--abg)', 'var(--amber)',
+      k.matureConversion === null ? 'No applicants older than 90 days yet' :
+      'Mature (applied 90+ days ago): <strong>' + k.matureConversion + '%</strong> of ' + k.matureTotal),
+    _anKpi('Attrition', _anFmtN(k.backouts + k.repatriated), '⚠️', 'var(--abg)', 'var(--amber)',
+      k.backouts + ' backout · ' + k.repatriated + ' repatriated · ' + k.rejected + ' rejected'),
+    _anKpi('Active Job Slots', filled + ' / ' + slots, '💼', 'var(--brand-l)', 'var(--brand)', 'open job orders, filled / total'),
+  ];
+  var t = d.targets && d.targets.deploymentsPerMonth;
+  if (t) {
+    var pct = Math.round(k.deployedThisMonth / t * 100);
+    cards.push(_anKpi('This Month vs Target', k.deployedThisMonth + ' / ' + t, '🎯', 'var(--gbg)', 'var(--green)',
+      '<div class="prog-bar" style="height:6px;margin-top:4px" aria-hidden="true"><div class="prog-fill" style="background:' + (pct >= 100 ? 'var(--green)' : 'var(--brand)') + ';width:' + Math.min(100, pct) + '%"></div></div>' + pct + '% of monthly target'));
+  } else {
+    cards.push(_anKpi('Deployed This Month', _anFmtN(k.deployedThisMonth), '🎯', 'var(--gbg)', 'var(--green)', 'no monthly target set'));
+  }
+  if (money) {
+    cards.push(_anKpi('Fees Collected', _anFmtUSD(money.feesCollected), '🏢', 'var(--gbg)', 'var(--green)', money.feesCount + ' settled in range'));
+    cards.push(_anKpi('Net Margin', _anFmtUSD(money.net) + (money.marginPct !== null ? ' (' + money.marginPct + '%)' : ''), '💰', 'var(--gbg)', money.net >= 0 ? 'var(--green)' : 'var(--red)', 'in range, USD'));
+    cards.push(_anKpi('Commission Liability', _anFmtUSD(money.liability.total), '🧾', 'var(--abg)', 'var(--amber)', 'pending + in guarantee, today'));
+    cards.push(_anKpi('Fees Receivable', _anFmtUSD(money.receivables.total), '📬', 'var(--abg)', 'var(--amber)', 'pending employer fees, today'));
+  }
+  document.getElementById('analytics-stats').innerHTML = cards.join('');
+
+  // ── Monthly deployments ─────────────────────────────────────────────
+  var rows = d.monthly.rows, maxV = Math.max.apply(null, rows.map(function(r) { return r.count; }).concat([1]));
+  document.getElementById('analytics-chart-bars').innerHTML = rows.map(function(r) {
+    var pctH = Math.max(r.count ? 4 : 0, Math.round(r.count / maxV * 100));
+    return '<div role="img" aria-label="' + _anE(r.label + ': ' + r.count + ' deployments') + '" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%">' +
+      '<span style="font-size:10px;font-family:monospace;color:var(--text);font-weight:700">' + (r.count || '') + '</span>' +
+      '<div style="width:100%;flex:1;display:flex;align-items:flex-end"><div style="width:100%;border-radius:4px 4px 0 0;background:var(--brand);height:' + pctH + '%;min-height:' + (r.count ? 4 : 0) + 'px"></div></div></div>';
+  }).join('');
+  document.getElementById('analytics-chart-labels').innerHTML = rows.map(function(r) { return '<span>' + _anE(r.label) + '</span>'; }).join('');
+  document.getElementById('analytics-chart-note').innerHTML = d.monthly.missingDates
+    ? '⚠ ' + d.monthly.missingDates + ' deployed applicant' + (d.monthly.missingDates !== 1 ? 's have' : ' has') + ' no deployment date and are missing from this chart. <a href="#" onclick="analyticsDrillDQ(\'deployed_no_date\');return false">Review</a>' : '';
+
+  // ── Status breakdown ────────────────────────────────────────────────
+  var colors = { 'Deployed':'var(--green)','Applied':'var(--brand)','Screening':'var(--purple)','Interview':'var(--amber)','Medical':'var(--teal)','Rejected':'var(--red)','Backout':'var(--amber)','Repatriated':'var(--red)','OWWA':'var(--green)','Visa':'var(--teal)','Processing':'var(--brand)','For Selection':'var(--muted)' };
+  document.getElementById('analytics-breakdown').innerHTML = d.statusBreakdown.length ? d.statusBreakdown.map(function(s) {
+    var pctS = k.total ? Math.round(s.count / k.total * 100) : 0;
+    return _anRow('<div style="display:flex;align-items:center;gap:8px"><span style="width:92px;font-size:12px;font-weight:600;flex-shrink:0">' + _anE(s.status) + '</span>' +
+      '<div style="flex:1">' + _anBar(pctS, colors[s.status] || 'var(--brand)') + '</div><span style="font-size:11px;font-family:monospace;color:var(--muted);width:70px;text-align:right">' + s.count + ' (' + pctS + '%)</span></div>',
+      { status: s.status }, 'Open ' + s.status + ' applicants');
+  }).join('') : _anEmpty('No applicants in this range');
+
+  // ── Destinations / categories ──────────────────────────────────────
+  var maxD = Math.max.apply(null, d.destinations.map(function(x) { return x.count; }).concat([1]));
+  document.getElementById('analytics-destinations').innerHTML = d.destinations.length ? d.destinations.map(function(x) {
+    return _anRow('<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="font-weight:600">' + _anE(x.name) + '</span><span style="font-family:monospace;color:var(--muted)">' + x.count + ' · ' + x.deployed + ' deployed</span></div>' + _anBar(Math.round(x.count / maxD * 100), 'var(--brand)'),
+      x.name.indexOf('—') === 0 ? null : { country: x.name }, 'Open applicants for ' + x.name);
+  }).join('') : _anEmpty('No destination data');
+  document.getElementById('analytics-categories').innerHTML = d.categories.length ? d.categories.map(function(x) {
+    var rate = x.count ? Math.round(x.deployed / x.count * 100) : 0;
+    return _anRow('<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="font-weight:600">' + _anE(x.name) + '</span><span style="font-family:monospace;color:var(--muted)">' + x.count + ' · ' + x.deployed + ' deployed (' + rate + '%) · ' + x.lost + ' lost</span></div>' + _anBar(k.total ? Math.round(x.count / k.total * 100) : 0, x.name === 'Skilled' ? 'var(--purple)' : x.name === 'Household' ? 'var(--teal)' : 'var(--muted)'),
+      (x.name === 'Skilled' || x.name === 'Household') ? { category: x.name } : null, 'Open ' + x.name + ' applicants');
+  }).join('') : _anEmpty('No applicants in this range');
+
+  // ── Agents ─────────────────────────────────────────────────────────
+  var ag = d.agents.rows;
+  document.getElementById('analytics-agents').innerHTML = (ag.length ? ag.slice(0, 10).map(function(a) {
+    return _anRow('<div style="display:flex;align-items:center;gap:10px"><div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _anE(a.name) + '</div>' +
+      '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + a.total + ' total · <span style="color:var(--green)">' + a.deployed + ' deployed</span> · <span style="color:var(--brand)">' + a.active + ' active</span>' + (a.lost ? ' · <span style="color:var(--red)">' + a.lost + ' lost</span>' : '') + '</div></div>' +
+      '<div style="text-align:right;font-family:monospace;font-size:15px">' + _anRate(a.rate, a.lowSample) + '<div style="font-size:10px;color:var(--muted);font-family:inherit">deploy rate</div></div></div>',
+      { agent: a.name }, 'Open applicants of ' + a.name);
+  }).join('') : _anEmpty('No agent data')) +
+    (d.agents.unassigned ? '<div style="font-size:11px;color:var(--muted);margin-top:8px">' + d.agents.unassigned + ' applicant' + (d.agents.unassigned !== 1 ? 's' : '') + ' have no agent assigned.</div>' : '') +
+    (ag.some(function(a) { return a.lowSample; }) ? '<div style="font-size:10.5px;color:var(--dim);margin-top:6px">* fewer than ' + d.minSample + ' applicants — shown but not ranked.</div>' : '');
+
+  document.getElementById('analytics-backouts').innerHTML = d.backoutsByCountry.length ? d.backoutsByCountry.map(function(c) {
+    return _anRow('<div style="display:flex;justify-content:space-between;font-size:12px"><span style="font-weight:600">' + _anE(c.name) + '</span><span style="font-family:monospace;color:var(--muted)">' + c.backouts + ' of ' + c.total + ' · ' + _anRate(c.rate, c.lowSample, true) + '</span></div>',
+      c.name.indexOf('—') === 0 ? null : { country: c.name }, 'Open applicants for ' + c.name);
+  }).join('') : _anEmpty('No backouts or repatriations in this range');
+
+  // ── Jobs ───────────────────────────────────────────────────────────
+  var riskTxt = { overdue: 'deadline passed', at_risk: 'at risk' };
+  document.getElementById('analytics-jobs').innerHTML = d.jobs.rows.length ? d.jobs.rows.slice(0, 8).map(function(j) {
+    var pctJ = j.slots ? Math.round(j.filled / j.slots * 100) : 0;
+    return '<div style="padding:6px 0;border-bottom:1px solid var(--border)"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:62%">' + _anE(j.title) + ' · ' + _anE(j.employer || '') + '</span>' +
+      '<span style="font-family:monospace;color:var(--muted)">' + j.filled + '/' + j.slots + (j.risk !== 'ok' ? ' · <span style="color:var(--red);font-weight:700">⚠ ' + riskTxt[j.risk] + '</span>' : '') + '</span></div>' + _anBar(pctJ, j.risk !== 'ok' ? 'var(--red)' : 'var(--brand)') + '</div>';
+  }).join('') + (d.jobs.rows.length > 8 ? '<div style="font-size:11px;color:var(--muted);margin-top:6px">+ ' + (d.jobs.rows.length - 8) + ' more open job orders</div>' : '') : _anEmpty('No open job orders');
+
+  // ── Medical ────────────────────────────────────────────────────────
+  var medTotal = d.medical.reduce(function(s, m) { return s + m.count; }, 0);
+  document.getElementById('analytics-medical').innerHTML = medTotal ? d.medical.map(function(m) {
+    var pctM = Math.round(m.count / medTotal * 100);
+    var c = m.name === 'Passed' || m.name === 'Exempted' ? 'var(--green)' : m.name === 'Failed' ? 'var(--red)' : 'var(--amber)';
+    return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="width:80px;font-size:12px;font-weight:600">' + _anE(m.name) + '</span><div style="flex:1">' + _anBar(pctM, c) + '</div><span style="font-size:11px;font-family:monospace;color:var(--muted);width:70px;text-align:right">' + m.count + ' (' + pctM + '%)</span></div>';
+  }).join('') : _anEmpty('No medical data');
+
+  // ── Time to deploy ─────────────────────────────────────────────────
+  var tt = d.ttd, ttEl = document.getElementById('analytics-ttd');
+  if (!tt.count) ttEl.innerHTML = _anEmpty('No deployments with a recorded deployment date in this range.');
+  else {
+    var kp = function(l, v) { return '<div style="background:var(--s2);border-radius:8px;padding:10px;text-align:center"><div style="font-size:18px;font-weight:800;font-family:\'IBM Plex Mono\',monospace;color:var(--brand)">' + v + '</div><div style="font-size:10.5px;color:var(--muted);margin-top:2px">' + l + '</div></div>'; };
+    var tbl = function(title, list) {
+      return '<div style="flex:1;min-width:180px"><div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.05em;margin-bottom:8px">' + title + '</div>' +
+        (list.length ? list.map(function(r) { return '<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px"><span style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60%">' + _anE(r.name) + '</span><span style="font-family:monospace;color:var(--muted)">' + r.avg + 'd <span style="color:var(--dim)">(' + r.count + (r.lowSample ? ', few' : '') + ')</span></span></div>'; }).join('') : _anEmpty('No data')) + '</div>';
+    };
+    ttEl.innerHTML = '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">' + kp('Average', tt.avg + 'd') + kp('Median', tt.median + 'd') + kp('Fastest', tt.fastest + 'd') + kp('Slowest', tt.slowest + 'd') + '</div>' +
+      '<div style="display:flex;gap:24px;flex-wrap:wrap">' + tbl('FASTEST BY AGENT', tt.byAgent) + tbl('FASTEST BY COUNTRY', tt.byCountry) + '</div>' +
+      '<div style="font-size:10.5px;color:var(--muted);margin-top:10px">Based on ' + tt.count + ' deployment' + (tt.count !== 1 ? 's' : '') + ' with a deployment date.</div>';
+  }
+
+  // ── Funnel / dwell / drop-off ──────────────────────────────────────
+  var f = d.funnel, placed = f.placed;
+  var funnelHtml = f.stages.map(function(s) {
+    var p = placed ? Math.round(s.count / placed * 100) : 0;
+    return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="font-size:11px;font-weight:700;width:82px;flex-shrink:0;white-space:nowrap">' + _anE(s.stage) + '</span><div style="flex:1">' + _anBar(p, 'var(--brand)') + '</div><span style="font-size:11px;font-family:monospace;color:var(--muted);width:66px;text-align:right">' + s.count + ' (' + p + '%)</span></div>';
+  }).join('');
+  var dwellHtml = d.dwell.length ? d.dwell.map(function(r) {
+    return '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:11.5px"><span style="font-weight:600">' + _anE(r.status) + '</span><span style="font-family:monospace;color:' + (r.avgDays >= 7 ? 'var(--red)' : 'var(--muted)') + ';font-weight:' + (r.avgDays >= 7 ? 700 : 400) + '">' + r.avgDays + 'd avg <span style="color:var(--dim)">(' + r.count + ')</span>' + (r.avgDays >= 7 ? ' ⚠' : '') + '</span></div>';
+  }).join('') : _anEmpty('No active pipeline right now');
+  var origTotal = f.dropoff.reduce(function(s, o) { return s + o.count; }, 0) + f.dropoffUnknown;
+  var dropHtml = origTotal ? f.dropoff.map(function(o) {
+    return '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:11.5px"><span style="font-weight:600">' + _anE(o.stage) + '</span><span style="font-family:monospace;color:var(--muted)">' + o.count + ' (' + Math.round(o.count / origTotal * 100) + '%)</span></div>';
+  }).join('') + (f.dropoffUnknown ? '<div style="font-size:10.5px;color:var(--dim);margin-top:4px">' + f.dropoffUnknown + ' with no recorded history</div>' : '') : _anEmpty('No backouts or rejections in this range');
+  var lbl = 'font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.05em;margin:14px 0 6px';
+  document.getElementById('analytics-funnel').innerHTML = funnelHtml +
+    (f.unplaced ? '<div style="font-size:10.5px;color:var(--dim)">' + f.unplaced + ' applicant' + (f.unplaced !== 1 ? 's' : '') + ' not at a funnel stage (e.g. cancelled)</div>' : '') +
+    '<div style="' + lbl + '">AVG TIME IN CURRENT STAGE (active pipeline today)</div>' + dwellHtml +
+    '<div style="' + lbl + '">LAST STAGE BEFORE BACKOUT / REJECTION</div>' + dropHtml;
+
+  // ── Money ──────────────────────────────────────────────────────────
+  var mw = document.getElementById('an-money-wrap');
+  if (!money) {
+    document.getElementById('analytics-profit').innerHTML = _anEmpty('Accounting figures are not available for your role.');
+    if (mw) mw.style.display = 'none';
+  } else {
+    if (mw) mw.style.display = 'grid';
+    var pk = function(l, v, c) { return '<div style="background:var(--s2);border-radius:8px;padding:10px;text-align:center"><div style="font-size:15px;font-weight:800;font-family:\'IBM Plex Mono\',monospace;color:' + c + '">' + v + '</div><div style="font-size:10.5px;color:var(--muted);margin-top:2px">' + l + '</div></div>'; };
+    var emp = money.byEmployer.length ? money.byEmployer.map(function(r) {
+      return '<div style="padding:6px 0;border-bottom:1px solid var(--border)"><div style="display:flex;justify-content:space-between;font-size:12px;font-weight:700;margin-bottom:2px"><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60%">' + _anE(r.name) + '</span><span style="font-family:monospace;color:' + (r.net >= 0 ? 'var(--green)' : 'var(--red)') + '">' + _anFmtUSD(r.net) + '</span></div>' +
+        '<div style="font-size:10.5px;color:var(--muted)">fees ' + _anFmtUSD(r.fees) + ' · commissions ' + _anFmtUSD(r.comm) + ' · expenses ' + _anFmtUSD(r.exp) + '</div></div>';
+    }).join('') : _anEmpty('No settled fees, released commissions or expenses in this range');
+    document.getElementById('analytics-profit').innerHTML =
+      '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px">' +
+        pk('Fees Collected', _anFmtUSD(money.feesCollected), 'var(--green)') +
+        pk('Commissions Released', _anFmtUSD(money.commissionsReleased), 'var(--red)') +
+        pk('Expenses (₱' + _anFmtN(money.expensesPHP) + ')', _anFmtUSD(money.expenses), 'var(--red)') +
+        pk('Net Margin', _anFmtUSD(money.net) + (money.marginPct !== null ? ' (' + money.marginPct + '%)' : ''), money.net >= 0 ? 'var(--green)' : 'var(--red)') + '</div>' +
+      (money.commissionsReversed ? '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Includes ' + _anFmtUSD(money.commissionsReversed) + ' of commissions reversed in range (credited back).</div>' : '') +
+      (money.feesWaived ? '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">' + _anFmtUSD(money.feesWaived) + ' of employer fees waived in range (not counted as income).</div>' : '') +
+      '<div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.05em;margin-bottom:6px">BY EMPLOYER</div>' + emp +
+      '<div style="font-size:10px;color:var(--dim);margin-top:10px">' + _anE(money.fxNote) + ' Expenses are assumed to be recorded in PHP; rejected expenses are excluded.</div>';
+
+    var L = money.liability, G = money.guaranteeExpiries;
+    document.getElementById('analytics-liability').innerHTML =
+      '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px">' +
+        pk('Pending release (' + L.pending.count + ')', _anFmtUSD(L.pending.usd), 'var(--amber)') +
+        pk('In guarantee (' + L.inGuarantee.count + ')', _anFmtUSD(L.inGuarantee.usd), 'var(--amber)') + '</div>' +
+      '<div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.05em;margin-bottom:6px">GUARANTEE PERIODS ENDING</div>' +
+      '<div style="display:flex;justify-content:space-between;font-size:12px;padding:5px 0;border-bottom:1px solid var(--border)"><span>Next 30 days</span><span style="font-family:monospace">' + G.next30.count + ' · ' + _anFmtUSD(G.next30.usd) + '</span></div>' +
+      '<div style="display:flex;justify-content:space-between;font-size:12px;padding:5px 0"><span>31–60 days</span><span style="font-family:monospace">' + G.next60.count + ' · ' + _anFmtUSD(G.next60.usd) + '</span></div>';
+    var maxR = Math.max.apply(null, money.receivables.buckets.map(function(b) { return b.usd; }).concat([1]));
+    document.getElementById('analytics-receivables').innerHTML = money.receivables.buckets.map(function(b, i) {
+      return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="width:62px;font-size:12px;font-weight:600">' + b.bucket + ' d</span><div style="flex:1">' + _anBar(Math.round(b.usd / maxR * 100), i >= 2 ? 'var(--red)' : i === 1 ? 'var(--amber)' : 'var(--brand)') + '</div><span style="font-size:11px;font-family:monospace;color:var(--muted);width:96px;text-align:right">' + b.count + ' · ' + _anFmtUSD(b.usd) + '</span></div>';
+    }).join('') + '<div style="font-size:11px;color:var(--muted);margin-top:6px">Total receivable: <strong>' + _anFmtUSD(money.receivables.total) + '</strong></div>';
+  }
+
+  // ── Data quality + documents ───────────────────────────────────────
+  var dq = d.dataQuality, bad = dq.items.filter(function(i) { return i.count > 0; });
+  document.getElementById('analytics-dq').innerHTML = bad.length ? bad.map(function(i) {
+    return '<button type="button" onclick="analyticsDrillDQ(\'' + i.key + '\')" style="display:flex;justify-content:space-between;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--border);padding:7px 0;cursor:pointer;color:inherit;font:inherit;font-size:12px"><span>' + _anE(i.label) + '</span><span style="font-family:monospace;color:var(--red);font-weight:700">' + i.count + ' of ' + dq.total + '</span></button>';
+  }).join('') : '<div style="color:var(--green);font-size:12px;padding:8px 0">✓ No data-quality issues found across ' + dq.total + ' applicants.</div>';
+  var dc = d.documents, withDoc = dc.active - dc.withoutApproved;
+  document.getElementById('analytics-docs').innerHTML = dc.active ?
+    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span style="font-size:12px;font-weight:600;width:150px">With an approved document</span><div style="flex:1">' + _anBar(Math.round(withDoc / dc.active * 100), 'var(--green)') + '</div><span style="font-size:11px;font-family:monospace;color:var(--muted);width:76px;text-align:right">' + withDoc + ' / ' + dc.active + '</span></div>' +
+    (dc.byStatus.length ? '<div style="font-size:11px;color:var(--muted)">' + dc.byStatus.map(function(s) { return _anE(s.name) + ': <strong>' + s.count + '</strong>'; }).join(' · ') + '</div>' : '') +
+    (dc.withoutApproved ? '<div style="font-size:11px;color:var(--amber);margin-top:8px">⚠ ' + dc.withoutApproved + ' active applicant' + (dc.withoutApproved !== 1 ? 's have' : ' has') + ' no approved document yet.</div>' : '') : _anEmpty('No active applicants');
+}
+
+// ── Drill-down into the Applicants page ───────────────────────────────
+var _AN_DQ_PREDICATES = {
+  deployed_no_date:    { label: 'Deployed with no deployment date', fn: function(x) { return x.status === 'Deployed' && !x.deploymentDate; } },
+  no_agent:            { label: 'No agent assigned',                fn: function(x) { return !x.agent; } },
+  no_destination:      { label: 'No destination country',           fn: function(x) { return !(x.destination || (x.job && x.job.indexOf('·') !== -1)); } },
+  no_category:         { label: 'No category',                      fn: function(x) { return !x.category; } },
+  no_job_order:        { label: 'Not linked to a job order',        fn: function(x) { return !x._jobOrderId; } },
+  advanced_no_medical: { label: 'Past Medical with medical Pending', fn: function(x) { return ['Processing','Visa','OWWA','Deployed'].indexOf(x.status) !== -1 && (!x.medical || x.medical === 'Pending'); } },
+};
+function analyticsDrill(f) {
+  f = f || {};
+  window._appExtraFilter = null;
+  nav('applicants');
+  setTimeout(function() {
+    var set = function(id, v) { var el = document.getElementById(id); if (el) el.value = v || ''; };
+    set('app-search', ''); set('app-medical-filter', ''); set('app-joborder-filter', '');
+    set('app-status-filter', f.status || ''); if (typeof syncStatusFilterUI === 'function') syncStatusFilterUI();
+    set('app-agent-filter', f.agent || ''); set('app-country-filter', f.country || ''); set('app-category-filter', f.category || '');
+    filterApplicants();
+  }, 80);
+}
+function analyticsDrillDQ(key) {
+  var p = _AN_DQ_PREDICATES[key]; if (!p) return;
+  nav('applicants');
+  setTimeout(function() {
+    ['app-search','app-medical-filter','app-joborder-filter','app-status-filter','app-agent-filter','app-country-filter','app-category-filter'].forEach(function(id) { var el = document.getElementById(id); if (el) el.value = ''; });
+    if (typeof syncStatusFilterUI === 'function') syncStatusFilterUI();
+    window._appExtraFilter = p;
+    filterApplicants();
+  }, 80);
+}
+function _syncExtraFilterChip() {
+  var chip = document.getElementById('app-extra-chip');
+  var p = window._appExtraFilter;
+  if (!p) { if (chip) chip.remove(); return; }
+  if (!chip) {
+    var anchor = document.getElementById('app-search');
+    if (!anchor || !anchor.parentNode) return;
+    chip = document.createElement('button');
+    chip.id = 'app-extra-chip'; chip.type = 'button'; chip.className = 'btn btn-s btn-sm';
+    chip.style.cssText = 'margin-left:8px;white-space:nowrap';
+    chip.onclick = function() { window._appExtraFilter = null; filterApplicants(); };
+    anchor.parentNode.insertBefore(chip, anchor.nextSibling);
+  }
+  chip.textContent = 'Showing: ' + p.label + ' ✕';
+}
+
+// ── Target ───────────────────────────────────────────────────────────
+function setAnalyticsTarget() {
+  var cur = _anData && _anData.targets && _anData.targets.deploymentsPerMonth;
+  var v = prompt('Monthly deployment target (number of deployments per month). Leave empty to clear.', cur || '');
+  if (v === null) return;
+  apiFetch('/analytics/targets', { method: 'POST', body: JSON.stringify({ deploymentsPerMonth: v === '' ? null : Number(v) }) }).then(function(r) {
+    if (r && r.ok) { toast('Monthly target saved', 'success'); renderAnalytics(); }
+    else toast('Could not save the target', 'error');
+  });
+}
+
+// ── CSV export — the numbers behind every widget ─────────────────────
+function exportAnalyticsCSV() {
+  var d = _anData;
+  if (!d) { toast('Open Analytics first — nothing to export yet', 'error'); return; }
+  // quote every cell and neutralise spreadsheet formulas (=, +, -, @)
+  var q = function(v) { v = String(v == null ? '' : v); if (/^[=+\-@\t\r]/.test(v)) v = "'" + v; return '"' + v.replace(/"/g, '""') + '"'; };
+  var out = [], row = function() { out.push(Array.prototype.map.call(arguments, q).join(',')); }, gap = function() { out.push(''); };
+  row('RAMS Analytics', d.range.label, d.range.from || 'all time', d.range.to); gap();
+  row('KPI', 'Value'); Object.keys(d.kpis).forEach(function(k) { row(k, d.kpis[k]); }); gap();
+  row('Status', 'Applicants'); d.statusBreakdown.forEach(function(s) { row(s.status, s.count); }); gap();
+  row('Destination', 'Applicants', 'Deployed'); d.destinations.forEach(function(s) { row(s.name, s.count, s.deployed); }); gap();
+  row('Category', 'Applicants', 'Deployed', 'Lost'); d.categories.forEach(function(s) { row(s.name, s.count, s.deployed, s.lost); }); gap();
+  row('Agent', 'Total', 'Deployed', 'Active', 'Lost', 'Deploy rate %', 'Low sample'); d.agents.rows.forEach(function(a) { row(a.name, a.total, a.deployed, a.active, a.lost, a.rate, a.lowSample ? 'yes' : ''); }); gap();
+  row('Month', 'Deployments'); d.monthly.rows.forEach(function(m) { row(m.key, m.count); }); gap();
+  row('Funnel stage', 'Applicants'); d.funnel.stages.forEach(function(s) { row(s.stage, s.count); }); gap();
+  row('Stage', 'Avg days in stage', 'Applicants'); d.dwell.forEach(function(s) { row(s.status, s.avgDays, s.count); }); gap();
+  row('Data quality issue', 'Count'); d.dataQuality.items.forEach(function(i) { row(i.label, i.count); }); gap();
+  if (d.money) {
+    var m = d.money;
+    row('Money (USD)', 'Amount');
+    [['Fees collected', m.feesCollected], ['Fees waived', m.feesWaived], ['Commissions released', m.commissionsReleased], ['Commissions reversed (credit)', m.commissionsReversed], ['Expenses', m.expenses], ['Net margin', m.net], ['Commission liability', m.liability.total], ['Fees receivable', m.receivables.total]].forEach(function(r) { row(r[0], r[1]); });
+    gap(); row('Employer', 'Fees', 'Commissions', 'Expenses', 'Net'); m.byEmployer.forEach(function(e) { row(e.name, e.fees, e.comm, e.exp, e.net); });
+    gap(); row('Receivable age', 'Count', 'USD'); m.receivables.buckets.forEach(function(b) { row(b.bucket + ' days', b.count, b.usd); });
+  }
+  out[0] = '﻿' + out[0];
+  _downloadCsv(out, 'rams_analytics_' + _ymd(new Date()) + '.csv');
+}
+
+// ── PDF — prints exactly what is on screen, section by section ───────
 function exportAnalyticsPDF() {
-  var grab = function(id) { var el = document.getElementById(id); return el ? el.innerHTML : ''; };
   var subtitle = (document.getElementById('analytics-subtitle') || {}).textContent || '';
-  var section = function(title, html, empty) {
-    return '<div style="margin-bottom:26px;page-break-inside:avoid">' +
-      '<div style="font-size:13px;font-weight:800;margin-bottom:8px;border-bottom:2px solid #111;padding-bottom:4px">' + title + '</div>' +
-      (html && html.trim() ? html : '<div style="color:#888;font-size:11px">' + (empty||'No data') + '</div>') +
-      '</div>';
-  };
-  var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>RAMS Analytics Report</title>' +
-    '<style>' +
-      'body{font-family:Arial,Helvetica,sans-serif;margin:32px;color:#111;font-size:12px}' +
-      'h1{font-size:20px;margin:0 0 2px}' +
-      '.sub{color:#555;font-size:12px;margin-bottom:24px}' +
-      '.prog-bar{background:#e5e7eb;border-radius:4px;overflow:hidden}' +
-      '.prog-fill{height:100%}' +
-      '.stat-grid,[style*="grid-template-columns"]{display:block !important}' + // flatten card grids for print
-      '.stat-card{display:inline-block;width:22%;margin:0 1.5% 12px 0;vertical-align:top;border:1px solid #ddd;border-radius:8px;padding:10px}' +
-      '.stat-icon{display:none}' +
-      'a{color:inherit;text-decoration:none}' +
-      '@media print{ body{margin:14mm} }' +
-    '</style></head><body>' +
-    '<h1>RAMS Analytics Report</h1>' +
-    '<div class="sub">' + escapeHtml(subtitle) + ' · Generated ' + new Date().toLocaleString() + '</div>' +
-    section('Key Metrics', grab('analytics-stats')) +
-    section('Status Breakdown', grab('analytics-breakdown')) +
-    section('Top Destinations', grab('analytics-destinations')) +
-    section('Agent Performance', grab('analytics-agents')) +
-    section('Job Order Fill Rate', grab('analytics-jobs')) +
-    section('Medical Pass Rate', grab('analytics-medical')) +
-    section('Time to Deploy', grab('analytics-ttd')) +
-    section('Pipeline Funnel & Drop-off', grab('analytics-funnel')) +
-    section('Profitability', grab('analytics-profit')) +
-    '</body></html>';
+  var secs = '<div style="margin-bottom:22px"><div style="font-size:13px;font-weight:800;margin-bottom:8px;border-bottom:2px solid #111;padding-bottom:4px">Key Metrics</div>' + ((document.getElementById('analytics-stats') || {}).innerHTML || '') + '</div>';
+  document.querySelectorAll('#page-analytics .an-sec').forEach(function(card) {
+    if (card.offsetParent === null) return;              // skip hidden sections (e.g. money for roles without access)
+    var clone = card.cloneNode(true);
+    clone.querySelectorAll('button').forEach(function(b) { var s = document.createElement('div'); s.innerHTML = b.innerHTML; b.replaceWith(s); });
+    secs += '<div style="margin-bottom:22px;page-break-inside:avoid"><div style="font-size:13px;font-weight:800;margin-bottom:8px;border-bottom:2px solid #111;padding-bottom:4px">' + _anE(card.getAttribute('data-title') || '') + '</div>' + clone.innerHTML + '</div>';
+  });
+  var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>RAMS Analytics Report</title><style>' +
+    'body{font-family:Arial,Helvetica,sans-serif;margin:32px;color:#111;font-size:12px}h1{font-size:20px;margin:0 0 2px}.sub{color:#555;font-size:12px;margin-bottom:24px}' +
+    '.prog-bar{background:#e5e7eb;border-radius:4px;overflow:hidden}.prog-fill{height:100%}' +
+    '[style*="grid-template-columns"]{display:block !important}.stat-card{display:inline-block;width:22%;margin:0 1.5% 12px 0;vertical-align:top;border:1px solid #ddd;border-radius:8px;padding:10px}' +
+    '.stat-icon{display:none}a{color:inherit;text-decoration:none}@media print{body{margin:14mm}}</style></head><body>' +
+    '<h1>RAMS Analytics Report</h1><div class="sub">' + _anE(subtitle) + ' · Generated ' + _anE(new Date().toLocaleString()) + '</div>' + secs + '</body></html>';
   var w = window.open('', '_blank');
   if (!w) { toast('Pop-up blocked — allow pop-ups to export the PDF', 'error'); return; }
-  w.document.write(html);
-  w.document.close();
-  w.focus();
-  setTimeout(function(){ w.print(); }, 400);
+  w.document.write(html); w.document.close(); w.focus();
+  setTimeout(function() { w.print(); }, 400);
 }
+
 
 function filterExpenses(q) {
   const rows = document.querySelectorAll('#expense-tbody tr');
