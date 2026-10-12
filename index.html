@@ -1892,6 +1892,8 @@ button[disabled][data-rbac-locked] {
       <span style="font-size:11px;color:var(--dim);margin-left:4px" id="fx-updated">Updated today</span>
     </div>
 
+    <div id="office-extras" style="margin-bottom:12px"></div>
+
     <!-- Cash-on-Hand Balance Cards -->
     <div class="cash-cards">
       <div class="cash-card cash-card-php">
@@ -1998,6 +2000,9 @@ button[disabled][data-rbac-locked] {
                 <option value="allocation">Allocation</option>
                 <option value="refund">Refund</option>
                 <option value="adjustment">Adjustment</option>
+                <option value="receipt">Receipt (payment in)</option>
+                <option value="payout">Payout</option>
+                <option value="transfer">Transfer</option>
               </select>
               <select class="f-inp" id="office-ledger-category" onchange="_ledgerFilterChanged('office-fund')" style="width:150px" aria-label="Filter by category">
                 <option value="all">All Categories</option>
@@ -3903,16 +3908,32 @@ async function apiDeleteEmployerFee(feeId) {
 
 // ── OFFICE FUNDS API ──────────────────────────────────────────────────
 function mapOfficeFunds(row) {
-  return { balancePHP: parseFloat(row.balance_php)||0, balanceUSD: parseFloat(row.balance_usd)||0, fxRate: parseFloat(row.fx_rate)||57.5, fxUpdated: row.fx_updated||'' };
+  return { balancePHP: parseFloat(row.balance_php)||0, balanceUSD: parseFloat(row.balance_usd)||0, fxRate: parseFloat(row.fx_rate)||57.5, fxUpdated: row.fx_updated||'',
+    accounts: Array.isArray(row.accounts) ? row.accounts.map(function(a) { return { id: a.id, name: a.name, kind: a.kind, currency: a.currency, active: a.active !== false, isDefault: !!a.is_default, balance: parseFloat(a.balance) || 0 }; }) : undefined };
 }
 function mapOfficeLedgerRow(row) {
-  return { id: row.id, _dbId: row.id, type: row.type||'allocation', currency: row.currency||'PHP', amount: parseFloat(row.amount)||0, balance: parseFloat(row.balance)||0, desc: row.description||'', ref: row.ref||'', category: row.category||null, date: row.entry_date ? String(row.entry_date).slice(0,10) : '', postedBy: row.posted_by||'', notes: row.notes||'', ts: row.ts||row.created_at||new Date().toISOString() };
+  return { id: row.id, _dbId: row.id, type: row.type||'allocation', currency: row.currency||'PHP', amount: parseFloat(row.amount)||0, balance: parseFloat(row.balance)||0, desc: row.description||'', ref: row.ref||'', category: row.category||null, date: row.entry_date ? String(row.entry_date).slice(0,10) : '', postedBy: row.posted_by||'', notes: row.notes||'', ts: row.ts||row.created_at||new Date().toISOString(),
+    accountId: row.account_id||null, movesCash: !!row.moves_cash, sourceType: row.source_type||null, sourceId: row.source_id||null, transferId: row.transfer_id||null,
+    counterpartyType: row.counterparty_type||'', counterparty: row.counterparty||'', reason: row.reason||'', fxGainLoss: row.fx_gain_loss != null ? parseFloat(row.fx_gain_loss) : null,
+    voided: !!row.voided_at, voidReason: row.void_reason||'' };
 }
 async function apiFetchOfficeLedger() {
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
   if (!isLive) return;
-  var r = await apiFetch('/office-ledger?limit=5000');
-  if (r.ok && Array.isArray(r.data)) { DB.officeLedger = r.data.map(mapOfficeLedgerRow); recalcOfficeLedgerBalances(); autosave('officeLedger'); }
+  var all = [], page = 1, r, ok = false;
+  do {
+    r = await apiFetch('/office-ledger?limit=2000&page=' + page);
+    if (r.ok && Array.isArray(r.data)) { ok = true; all = all.concat(r.data); }
+    page++;
+  } while (r.ok && Array.isArray(r.data) && r.data.length >= 2000 && page < 50);
+  if (ok) {
+    DB.officeLedger = all.map(mapOfficeLedgerRow);
+    // refunds live in the ledger (shared by every user and device)
+    DB.officeRefunds = DB.officeLedger.filter(function(e) { return e.type === 'refund'; }).map(function(e) {
+      return { id: e.ref || e.id, sourceType: e.counterpartyType, sourceName: e.counterparty, reason: e.reason, currency: e.currency, amount: e.amount, date: e.date, notes: e.notes };
+    });
+    autosave('officeLedger'); autosave('officeRefunds');
+  }
   var rf = await apiFetch('/office-funds');
   if (rf.ok && rf.data) { Object.assign(DB.officeFunds, mapOfficeFunds(rf.data)); window._serverFx = DB.officeFunds.fxRate; autosave('officeFunds'); }
 }
@@ -14141,7 +14162,7 @@ function _acctMsg(r, fallback) {
 function _bustAcctCache() {
   try {
     Object.keys(_cache || {}).forEach(function(k) {
-      if (/\/(agent-ledger|commissions|office-ledger|office-funds|expenses|invoices|employer-fees|agents|payments|accounting|fx-history)/.test(k)) delete _cache[k];
+      if (/\/(agent-ledger|commissions|office-ledger|office-funds|cash-accounts|expenses|invoices|employer-fees|agents|payments|accounting|fx-history)/.test(k)) delete _cache[k];
     });
   } catch (e) {}
 }
@@ -14550,17 +14571,20 @@ async function _postOffice(entry) {
     recalcOfficeLedgerBalances();
     return entry;
   }
-  var r = await _acctCall('/office-ledger', {
-    type: entry.type, currency: entry.currency, amount: entry.amount, desc: entry.desc, ref: entry.ref, category: entry.category,
-    date: entry.date, notes: entry.notes, override_reason: entry.overrideReason || undefined, idempotency_key: _idemKey(),
-  });
-  if (!r.ok) { toast(_acctMsg(r, 'Could not post to the office ledger'), 'error'); return null; }
-  _applyOfficeResult(r.data);
-  recalcOfficeLedgerBalances();
-  if (r.data.funds) {
-    DB.officeFunds.balancePHP = parseFloat(r.data.funds.balance_php) || DB.officeFunds.balancePHP;
-    DB.officeFunds.balanceUSD = parseFloat(r.data.funds.balance_usd) || DB.officeFunds.balanceUSD;
+  var body = {
+    type: entry.type === 'override' ? 'expense' : entry.type, currency: entry.currency, amount: entry.amount, desc: entry.desc, ref: entry.ref, category: entry.category,
+    date: entry.date, notes: entry.notes, override_reason: entry.overrideReason || undefined, account_id: entry.accountId || undefined, source: entry.source || undefined,
+    counterparty_type: entry.counterpartyType || undefined, counterparty: entry.counterparty || undefined, reason: entry.reason || undefined,
+    idempotency_key: _offKeyFor(entry),
+  };
+  var r = await _acctCall('/office-ledger', body);
+  if (!r.ok && r.httpStatus === 409 && r.data && r.data.error === 'insufficient_funds' && !body.override_reason && r.data.can_override) {
+    var why = _askReason(_acctMsg(r, 'Insufficient balance.') + '\n\nReason to override?');
+    if (why) { body.override_reason = why; r = await _acctCall('/office-ledger', body); }
   }
+  if (!r.ok) { toast(_acctMsg(r, 'Could not post to the office ledger'), 'error'); return null; }
+  _offKeyDone(entry);
+  await apiFetchOfficeLedger();
   return mapOfficeLedgerRow(r.data);
 }
 
@@ -14579,8 +14603,11 @@ async function updateFxRate() {
   var el = document.getElementById('fx-rate');
   var rate = parseFloat(el ? el.value : 57.5);
   if (!rate || rate < 10 || rate > 500) { toast('Enter a realistic exchange rate (₱10 – ₱500 per $1)', 'error'); return; }
+  var fxNote;
   if (_isLiveSession()) {
-    var r = await _acctCall('/office-funds', { fx_rate: rate }, 'PUT');
+    fxNote = window.prompt('Where does this rate come from? (e.g. bank quote — optional)', '');
+    if (fxNote === null) return;
+    var r = await _acctCall('/office-funds', { fx_rate: rate, note: fxNote || undefined }, 'PUT');
     if (!r.ok) { toast(_acctMsg(r, 'Could not update the exchange rate'), 'error'); if (el) el.value = DB.officeFunds.fxRate; return; }
     window._serverFx = parseFloat(r.data.fx_rate);
     DB.officeFunds.fxRate = window._serverFx;
@@ -14610,6 +14637,7 @@ async function submitAddFunds() {
   var expCat   = document.getElementById('funds-exp-category') ? document.getElementById('funds-exp-category').value : '';
   if (!amount || amount <= 0) { toast('Enter a valid amount', 'error'); return; }
   if (!date) { toast('Date is required', 'error'); return; }
+  if (dest !== 'expenses' && source.length < 2) { toast('Say where the money came from (source)', 'error'); var _sf = document.getElementById('funds-source'); if (_sf) _sf.focus(); return; }
   var uname = (window._ramsSessionUser && window._ramsSessionUser.name) || 'Admin';
   if (!_acctLock('addfunds')) return;
   try {
@@ -14621,7 +14649,7 @@ async function submitAddFunds() {
       var totalPending = expFilter.reduce(function(s, e) { return s + (e.amount || 0); }, 0);
       var allocRef = 'EXP-ALLOC-' + String(Date.now()).slice(-5);
       var saved = await _postOffice({
-        id: 'OL-' + String(DB.officeLedger.length + 1).padStart(3, '0'), type: 'expense-allocation', currency: cur, amount: amount,
+        id: 'OL-' + String(DB.officeLedger.length + 1).padStart(3, '0'), type: 'expense-allocation', accountId: _acctSel('funds-account'), currency: cur, amount: amount,
         balance: cur === 'PHP' ? DB.officeFunds.balancePHP : DB.officeFunds.balanceUSD,
         desc: 'Fund allocated to expenses' + (expCat ? ' (' + expCat + ')' : '') + (source ? ' — ' + source : ''),
         ref: allocRef, category: expCat || null, date: date, postedBy: uname, ts: new Date().toISOString(), notes: notes,
@@ -14642,7 +14670,7 @@ async function submitAddFunds() {
       renderAccounting();
     } else {
       var entry = await _postOffice({
-        id: 'OL-' + String(DB.officeLedger.length + 1).padStart(3, '0'), type: 'allocation', currency: cur, amount: amount, balance: 0,
+        id: 'OL-' + String(DB.officeLedger.length + 1).padStart(3, '0'), type: 'allocation', accountId: _acctSel('funds-account'), source: source, currency: cur, amount: amount, balance: 0,
         desc: type.charAt(0).toUpperCase() + type.slice(1) + (source ? ' — ' + source : ''),
         ref: 'ALLOC-' + String(Date.now()).slice(-5), category: null, date: date, postedBy: uname, ts: new Date().toISOString(), notes: notes,
       });
@@ -14676,7 +14704,7 @@ async function submitOfficeExpense() {
   if (!_acctLock('officeexp')) return;
   try {
     var saved = await _postOffice({
-      id: 'OL-' + String(DB.officeLedger.length + 1).padStart(3, '0'), type: insufficient ? 'override' : 'expense', currency: cur, amount: -amount,
+      id: 'OL-' + String(DB.officeLedger.length + 1).padStart(3, '0'), type: 'expense', accountId: _acctSel('oe-account'), currency: cur, amount: -amount,
       balance: bal - amount, desc: cat + ' — ' + desc + (paidBy !== 'Cash' ? ' [' + paidBy + ']' : '') + (override ? ' [OVERRIDE: ' + override + ']' : ''),
       ref: ref || ('OE-' + String(Date.now()).slice(-5)), category: cat, date: date, postedBy: uname, ts: new Date().toISOString(), overrideReason: override, notes: override || null,
     });
@@ -14707,12 +14735,11 @@ async function submitRefund() {
   if (!_acctLock('refund')) return;
   try {
     var saved = await _postOffice({
-      id: 'OL-' + String(DB.officeLedger.length + 1).padStart(3, '0'), type: 'refund', currency: cur, amount: amount, balance: 0,
+      id: 'OL-' + String(DB.officeLedger.length + 1).padStart(3, '0'), type: 'refund', accountId: _acctSel('rf-account'), counterpartyType: sourceType, counterparty: sourceName, reason: reason, currency: cur, amount: amount, balance: 0,
       desc: 'Refund from ' + sourceName + ' (' + sourceType + ') — ' + reason, ref: refId, category: null, date: date, postedBy: uname, ts: new Date().toISOString(), notes: notes,
     });
     if (!saved) return;
-    DB.officeRefunds.push({ id: refId, sourceType: sourceType, sourceName: sourceName, reason: reason, currency: cur, amount: amount, date: date, notes: notes });
-    autosave('officeRefunds');
+    if (!_isLiveSession()) { DB.officeRefunds.push({ id: refId, sourceType: sourceType, sourceName: sourceName, reason: reason, currency: cur, amount: amount, date: date, notes: notes }); autosave('officeRefunds'); }
     addAudit('CREATE', 'Office Refund', 'Refund: ' + (cur === 'PHP' ? '₱' : '$') + amount.toLocaleString() + ' from ' + sourceName);
     toast('Refund of ' + (cur === 'PHP' ? '₱' : '$') + amount.toLocaleString() + ' posted', 'success');
     closeOverlay('overlay-refund');
@@ -14733,7 +14760,7 @@ async function submitOfficeAdjustment() {
   if (!_acctLock('officeadj')) return;
   try {
     var saved = await _postOffice({
-      id: 'OL-' + String(DB.officeLedger.length + 1).padStart(3, '0'), type: 'adjustment', currency: cur, amount: amount * dir, balance: 0,
+      id: 'OL-' + String(DB.officeLedger.length + 1).padStart(3, '0'), type: 'adjustment', accountId: _acctSel('oa-account'), currency: cur, amount: amount * dir, balance: 0,
       desc: 'Manual adjustment — ' + reason, ref: 'ADJ-' + String(Date.now()).slice(-5), category: null, date: _ymd(new Date()), postedBy: uname, ts: new Date().toISOString(), notes: reason,
     });
     if (!saved) return;
@@ -14750,20 +14777,27 @@ async function deleteOfficeLedgerEntry(entryId) {
   if (!hasPermission('Void Accounting Records')) { toast('Your role cannot void office ledger entries', 'error'); return; }
   var entry = DB.officeLedger.find(function(e) { return e.id === entryId; });
   if (!entry) return;
+  if (entry.sourceType === 'payment') { toast('This entry was created by a payment — void the payment and it is removed automatically', 'info'); return; }
   if (!confirm('Void this entry?\n\n' + entry.desc + '\n' + (entry.currency === 'PHP' ? '₱' : '$') + Math.abs(entry.amount).toLocaleString() + ' ' + entry.currency +
-      '\n\nIt stays in the audit trail as voided; balances are recalculated.')) return;
+      (entry.transferId ? '\n\nBoth sides of the transfer are voided together.' : '') + '\n\nIt stays in the audit trail as voided; balances are recalculated.')) return;
   var reason = _askReason('Why is this entry being voided?');
   if (!reason) return;
   if (_isLiveSession()) {
     var dbId = entry._dbId || entry.id;
     if (!isUUID(dbId)) { toast('This entry is not saved on the server', 'error'); return; }
     var r = await _acctCall('/office-ledger/' + dbId + '/void', { reason: reason });
+    if (!r.ok && r.httpStatus === 409 && r.data && r.data.error === 'would_overdraw' && r.data.can_override) {
+      var why = _askReason(_acctMsg(r) + '\n\nReason to override?');
+      if (!why) return;
+      r = await _acctCall('/office-ledger/' + dbId + '/void', { reason: reason, override_reason: why });
+    }
     if (!r.ok) { toast(_acctMsg(r, 'Could not void the entry'), 'error'); return; }
-    if (r.data && r.data.funds) _applyOfficeResult({ funds: r.data.funds });
+    await apiFetchOfficeLedger();
+  } else {
+    DB.officeLedger = DB.officeLedger.filter(function(e) { return e.id !== entryId; });
+    autosave('officeLedger');
+    recalcOfficeLedgerBalances();
   }
-  DB.officeLedger = DB.officeLedger.filter(function(e) { return e.id !== entryId; });
-  autosave('officeLedger');
-  recalcOfficeLedgerBalances();
   addAudit('DELETE', 'Office Ledger', 'Voided entry: ' + entry.desc + ' (' + (entry.currency === 'PHP' ? '₱' : '$') + Math.abs(entry.amount).toLocaleString() + ') — ' + reason);
   toast('Entry voided — balances recalculated', 'success');
   if (typeof renderOffice === 'function') renderOffice();
@@ -14779,10 +14813,12 @@ async function resetOfficeLedger() {
   if (_isLiveSession()) {
     var r = await _acctCall('/office-ledger?confirm=RESET&reason=' + encodeURIComponent(reason), null, 'DELETE');
     if (!r.ok) { toast(_acctMsg(r, 'Reset failed'), 'error'); return; }
+    await apiFetchOfficeLedger();      // payments, transfers and the opening balance stay — the server says what is left
+  } else {
+    DB.officeLedger = []; DB.officeRefunds = [];
+    DB.officeFunds.balancePHP = 0; DB.officeFunds.balanceUSD = 0;
+    autosave('officeLedger'); autosave('officeFunds');
   }
-  DB.officeLedger = []; DB.officeRefunds = [];
-  DB.officeFunds.balancePHP = 0; DB.officeFunds.balanceUSD = 0;
-  autosave('officeLedger'); autosave('officeFunds');
   addAudit('DELETE', 'Office Ledger', 'Office ledger reset — ' + reason);
   if (typeof renderOffice === 'function') renderOffice();
   toast('Office ledger reset', 'success');
@@ -15152,6 +15188,13 @@ async function renderAccControls() {
     '<label>Agent debt limit ₱ <input class="f-inp" id="ctl-debt" type="number" min="0" step="1000" value="' + (ctl.agentDebtLimit || 0) + '" style="width:110px;display:inline-block" ' + (canCtl ? '' : 'disabled') + '> (0 = no limit)</label>' +
     '<label>High risk at <input class="f-inp" id="ctl-rbo" type="number" min="1" value="' + (ctl.riskBackouts || 3) + '" style="width:60px;display:inline-block" ' + (canCtl ? '' : 'disabled') + '> backouts or <input class="f-inp" id="ctl-rrp" type="number" min="1" value="' + (ctl.riskRepatriations || 2) + '" style="width:60px;display:inline-block" ' + (canCtl ? '' : 'disabled') + '> repatriations</label>' +
     '</div>' + (canCtl ? '<button class="btn btn-p btn-sm" onclick="saveAgentControls()">Save</button> <button class="btn btn-s btn-sm" onclick="syncCommissionsNow({confirmFirst:true})">⚡ Sync commissions now</button>' : ''));
+
+  // Office cash controls
+  html += card('🏦 Office cash', '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px;margin-bottom:12px">' +
+    '<label>Funds in, refunds, adjustments and transfers at or above ₱ <input class="f-inp" id="ctl-oappr" type="number" min="0" step="100" value="' + (ctl.officeApprovalAbove || 0) + '" style="width:110px;display:inline-block" ' + (canCtl ? '' : 'disabled') + '> need a senior accountant (0 = off)</label>' +
+    '<label>Alert when a PHP account falls below ₱ <input class="f-inp" id="ctl-olowp" type="number" min="0" step="1000" value="' + (ctl.officeLowBalancePHP || 0) + '" style="width:110px;display:inline-block" ' + (canCtl ? '' : 'disabled') + '> (0 = off)</label>' +
+    '<label>Alert when a USD account falls below $ <input class="f-inp" id="ctl-olowu" type="number" min="0" step="100" value="' + (ctl.officeLowBalanceUSD || 0) + '" style="width:110px;display:inline-block" ' + (canCtl ? '' : 'disabled') + '> (0 = off)</label>' +
+    '</div>' + (canCtl ? '<button class="btn btn-p btn-sm" onclick="saveOfficeControls()">Save</button>' : ''));
 
   // Ageing
   if (ag) {
@@ -15941,6 +15984,16 @@ function _applyAgentTransfer(t, data) {
   } catch (e) { console.warn('agent transfer', e); }
 }
 
+async function saveOfficeControls() {
+  var r = await _acctCall('/accounting/controls', {
+    officeApprovalAbove: parseFloat(document.getElementById('ctl-oappr').value) || 0,
+    officeLowBalancePHP: parseFloat(document.getElementById('ctl-olowp').value) || 0,
+    officeLowBalanceUSD: parseFloat(document.getElementById('ctl-olowu').value) || 0,
+  }, 'PUT');
+  if (!r.ok) { toast(_acctMsg(r, 'Could not save'), 'error'); return; }
+  toast('Office cash settings saved', 'success');
+}
+
 async function saveAgentControls() {
   var r = await _acctCall('/accounting/controls', {
     enforceGuarantee: document.getElementById('ctl-guar').checked,
@@ -16062,6 +16115,211 @@ async function openAgentScorecard(agentId) {
     '<table style="width:100%;font-size:12px"><tbody>' + hist.slice(0, 15).map(function(h) { return '<tr><td style="padding:3px 6px;color:var(--muted);white-space:nowrap">' + escapeHtml(String(h.created_at || '').slice(0, 10)) + '</td><td style="padding:3px 6px">' + escapeHtml(h.summary || '') + '</td><td style="padding:3px 6px;color:var(--muted)">' + escapeHtml(h.changed_by_name || '') + '</td></tr>'; }).join('') + '</tbody></table>'
     : '<div style="color:var(--muted);font-size:12px">No rate changes recorded.</div>');
   body.innerHTML = html;
+}
+
+// ── Office cash book ──────────────────────────────────────────────────────
+// A retry of the SAME form reuses one idempotency key, so a dropped connection can never post twice.
+var _offKeys = {};
+function _offFingerprint(e) { return [e.type, e.currency, e.amount, e.date, String(e.desc || '').slice(0, 80), e.accountId || ''].join('|'); }
+function _offKeyFor(e) { var f = _offFingerprint(e); if (!_offKeys[f]) _offKeys[f] = _idemKey(); return _offKeys[f]; }
+function _offKeyDone(e) { delete _offKeys[_offFingerprint(e)]; }
+function _acctSel(id) { var el = document.getElementById(id); return el && el.value ? el.value : undefined; }
+function _csvCell(v) {
+  var t = String(v == null ? '' : v);
+  if (/^[=+\-@\t\r]/.test(t)) t = "'" + t;          // spreadsheet formulas are never evaluated
+  return '"' + t.replace(/"/g, '""') + '"';
+}
+function _fillAccountSelect(selId, currency) {
+  var sel = document.getElementById(selId); if (!sel) return;
+  var accts = ((DB.officeFunds && DB.officeFunds.accounts) || []).filter(function(a) { return a.active && a.currency === currency; });
+  sel.innerHTML = accts.map(function(a) { return '<option value="' + escapeHtml(a.id) + '">' + escapeHtml(a.name) + ' · ' + _fmtAmt(a.balance, a.currency) + '</option>'; }).join('') || '<option value="">Default account</option>';
+}
+function _prepAccountField(overlayId, selId, curId) {
+  var ov = document.getElementById(overlayId); if (!ov) return;
+  var sel = document.getElementById(selId);
+  if (!sel) {
+    var body = ov.querySelector('.modal-body'); if (!body) return;
+    var g = document.createElement('div'); g.className = 'f-grp';
+    g.innerHTML = '<label class="f-lbl">Account</label><select class="f-inp" id="' + selId + '"></select>';
+    body.insertBefore(g, body.firstChild);
+    var cs = document.getElementById(curId);
+    if (cs) cs.addEventListener('change', function() { _fillAccountSelect(selId, cs.value); });
+  }
+  var cs2 = document.getElementById(curId);
+  _fillAccountSelect(selId, cs2 ? cs2.value : 'PHP');
+}
+function _toolsOverlay(title, html, foot) {
+  document.getElementById('office-tools-title').textContent = title;
+  document.getElementById('office-tools-body').innerHTML = html;
+  document.getElementById('office-tools-foot').innerHTML = foot || '<button class="btn btn-ghost" onclick="closeOverlay(\'overlay-office-tools\')">Close</button>';
+  openOverlay('overlay-office-tools');
+}
+function _officeAccounts(activeOnly) { return ((DB.officeFunds && DB.officeFunds.accounts) || []).filter(function(a) { return !activeOnly || a.active; }); }
+
+async function _renderOfficeExtras() {
+  var host = document.getElementById('office-extras');
+  if (!host || !_isLiveSession()) return;
+  var btn = function(label, fn, perm) { return !perm || hasPermission(perm) ? '<button class="btn btn-ghost btn-sm" onclick="' + fn + '">' + label + '</button>' : ''; };
+  var accts = _officeAccounts(true);
+  var chips = accts.map(function(a) {
+    return '<span style="display:inline-flex;gap:6px;align-items:center;border:1px solid var(--border);border-radius:99px;padding:3px 10px;font-size:12px;background:var(--s2)">' +
+      escapeHtml(a.name) + ' <b style="font-family:monospace;color:' + (a.balance < 0 ? 'var(--red)' : 'var(--text)') + '">' + _fmtAmt(a.balance, a.currency) + '</b></span>';
+  }).join(' ');
+  var html = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">' + chips + '</div>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+      btn('⇄ Transfer / convert', 'openOfficeTransfer()', 'Manage Accounting') + btn('🧮 Cash count', 'openCashCount()', 'Manage Accounting') +
+      btn('🏦 Accounts', 'openCashAccounts()', 'View Accounting') + btn('📈 Forecast', 'openCashForecast()', 'View Accounting') +
+      btn('🗑 Voided entries', 'openVoidedOffice()', 'Manage Accounting') + '</div><div id="office-alerts" style="margin-top:8px"></div>';
+  host.innerHTML = html;
+  var ar = await apiFetch('/accounting/alerts');
+  var al = document.getElementById('office-alerts');
+  if (!ar.ok || !ar.data || !al) return;
+  var d = ar.data, msgs = [];
+  (d.office_negative_accounts || []).forEach(function(a) { msgs.push('🔴 ' + escapeHtml(a.name) + ' is negative (' + _fmtAmt(a.balance, a.currency) + ')'); });
+  (d.office_low_accounts || []).forEach(function(a) { msgs.push('🟠 ' + escapeHtml(a.name) + ' is low (' + _fmtAmt(a.balance, a.currency) + ')'); });
+  if (d.fx_stale) msgs.push('🟡 The exchange rate has not been updated ' + (d.fx_stale.days == null ? 'yet' : 'in ' + d.fx_stale.days + ' days') + ' — check it before converting or posting USD');
+  al.innerHTML = msgs.map(function(m) { return '<div style="font-size:12.5px;padding:4px 0">' + m + '</div>'; }).join('');
+}
+
+function openOfficeTransfer() {
+  if (!hasPermission('Manage Accounting')) { toast('Your role cannot manage accounting', 'error'); return; }
+  var accts = _officeAccounts(true);
+  if (accts.length < 2) { toast('Add a second account first (Accounts)', 'info'); return; }
+  var opts = accts.map(function(a) { return '<option value="' + escapeHtml(a.id) + '" data-cur="' + a.currency + '">' + escapeHtml(a.name) + ' (' + a.currency + ') · ' + _fmtAmt(a.balance, a.currency) + '</option>'; }).join('');
+  _toolsOverlay('Transfer / convert',
+    '<div class="f-row"><div class="f-grp"><label class="f-lbl">From</label><select class="f-inp" id="ot-from" onchange="_syncTransferFields()">' + opts + '</select></div>' +
+    '<div class="f-grp"><label class="f-lbl">To</label><select class="f-inp" id="ot-to" onchange="_syncTransferFields()">' + opts + '</select></div></div>' +
+    '<div class="f-row"><div class="f-grp"><label class="f-lbl">Amount leaving</label><input class="f-inp" id="ot-amount" type="number" min="0.01" step="0.01"></div>' +
+    '<div class="f-grp" id="ot-toamt-grp" style="display:none"><label class="f-lbl">Amount received</label><input class="f-inp" id="ot-toamt" type="number" min="0.01" step="0.01"></div></div>' +
+    '<div id="ot-hint" style="font-size:11.5px;color:var(--muted);margin-bottom:8px"></div>' +
+    '<div class="f-row"><div class="f-grp"><label class="f-lbl">Date</label><input class="f-inp" id="ot-date" type="date" value="' + _ymd(new Date()) + '"></div>' +
+    '<div class="f-grp"><label class="f-lbl">Note</label><input class="f-inp" id="ot-note" type="text" maxlength="200"></div></div>',
+    '<button class="btn btn-ghost" onclick="closeOverlay(\'overlay-office-tools\')">Cancel</button><button class="btn btn-p" onclick="submitOfficeTransfer()">Post transfer</button>');
+  var to = document.getElementById('ot-to'); if (to && to.options.length > 1) to.selectedIndex = 1;
+  _syncTransferFields();
+}
+function _syncTransferFields() {
+  var f = document.getElementById('ot-from'), t = document.getElementById('ot-to'); if (!f || !t) return;
+  var fc = f.options[f.selectedIndex].getAttribute('data-cur'), tc = t.options[t.selectedIndex].getAttribute('data-cur');
+  var grp = document.getElementById('ot-toamt-grp'), hint = document.getElementById('ot-hint');
+  grp.style.display = fc !== tc ? '' : 'none';
+  var fx = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
+  hint.textContent = fc !== tc ? ('Conversion: enter what actually arrived. Office rate is $1 = ₱' + fx + '; any difference is recorded as an FX gain or loss.') : 'Moves money between two accounts of the same currency.';
+}
+async function submitOfficeTransfer() {
+  var f = document.getElementById('ot-from'), t = document.getElementById('ot-to');
+  var amount = parseFloat(document.getElementById('ot-amount').value);
+  if (!isFinite(amount) || amount <= 0) { toast('Enter the amount', 'error'); return; }
+  var body = { from_account_id: f.value, to_account_id: t.value, amount: amount, date: document.getElementById('ot-date').value, note: document.getElementById('ot-note').value || undefined };
+  var fc = f.options[f.selectedIndex].getAttribute('data-cur'), tc = t.options[t.selectedIndex].getAttribute('data-cur');
+  if (fc !== tc) {
+    var ta = parseFloat(document.getElementById('ot-toamt').value);
+    if (!isFinite(ta) || ta <= 0) { toast('Enter the amount received', 'error'); return; }
+    body.to_amount = ta;
+  }
+  body.idempotency_key = _offKeyFor({ type: 'transfer', currency: fc, amount: amount, date: body.date, desc: f.value + '>' + t.value, accountId: f.value });
+  if (!_acctLock('xfer')) return;
+  try {
+    var r = await _acctCall('/office-ledger/transfer', body);
+    if (!r.ok && r.httpStatus === 409 && r.data && r.data.error === 'insufficient_funds' && r.data.can_override) {
+      var why = _askReason(_acctMsg(r) + '\n\nReason to override?');
+      if (why) { body.override_reason = why; r = await _acctCall('/office-ledger/transfer', body); }
+    }
+    if (!r.ok) { toast(_acctMsg(r, 'Could not post the transfer'), 'error'); return; }
+    _offKeyDone({ type: 'transfer', currency: fc, amount: amount, date: body.date, desc: f.value + '>' + t.value, accountId: f.value });
+    await apiFetchOfficeLedger();
+    closeOverlay('overlay-office-tools');
+    var gl = r.data && r.data.fx_gain_loss;
+    addAudit('CREATE', 'Office Funds', 'Transfer ' + amount + ' ' + fc + (fc !== tc ? ' → ' + body.to_amount + ' ' + tc : ''));
+    toast('Transfer posted' + (gl ? ' · FX ' + (gl > 0 ? 'gain' : 'loss') + ' ₱' + Math.abs(gl).toLocaleString() : ''), 'success');
+    renderOffice();
+  } finally { _acctUnlock('xfer'); }
+}
+
+async function openCashCount() {
+  if (!hasPermission('Manage Accounting')) { toast('Your role cannot manage accounting', 'error'); return; }
+  var accts = _officeAccounts(true);
+  var opts = accts.map(function(a) { return '<option value="' + escapeHtml(a.id) + '">' + escapeHtml(a.name) + ' (' + a.currency + ') · book ' + _fmtAmt(a.balance, a.currency) + '</option>'; }).join('');
+  var hist = await apiFetch('/office-ledger/counts');
+  var rows = hist.ok && Array.isArray(hist.data) ? hist.data.slice(0, 5).map(function(c) {
+    return '<tr><td style="padding:3px 6px;color:var(--muted)">' + escapeHtml(String(c.count_date || '').slice(0, 10)) + '</td><td style="padding:3px 6px">' + escapeHtml(c.account_name) + '</td><td style="padding:3px 6px;text-align:right;font-family:monospace">' +
+      Number(c.counted).toLocaleString() + '</td><td style="padding:3px 6px;text-align:right;font-family:monospace;color:' + (Number(c.difference) === 0 ? 'var(--green)' : 'var(--red)') + '">' + (Number(c.difference) > 0 ? '+' : '') + Number(c.difference).toLocaleString() + '</td></tr>';
+  }).join('') : '';
+  _toolsOverlay('Closing cash count',
+    '<div class="f-grp"><label class="f-lbl">Account</label><select class="f-inp" id="cc-account">' + opts + '</select></div>' +
+    '<div class="f-row"><div class="f-grp"><label class="f-lbl">Counted (physical / bank statement)</label><input class="f-inp" id="cc-counted" type="number" min="0" step="0.01"></div>' +
+    '<div class="f-grp"><label class="f-lbl">Date</label><input class="f-inp" id="cc-date" type="date" value="' + _ymd(new Date()) + '"></div></div>' +
+    '<div class="f-grp"><label class="f-lbl">Note</label><input class="f-inp" id="cc-note" type="text" maxlength="300"></div>' +
+    '<div style="font-size:11.5px;color:var(--muted)">Any difference is booked as “Cash over/short”.</div>' +
+    (rows ? '<div style="font-size:12px;font-weight:800;margin:12px 0 4px">Recent counts</div><table style="width:100%;font-size:12px"><tbody>' + rows + '</tbody></table>' : ''),
+    '<button class="btn btn-ghost" onclick="closeOverlay(\'overlay-office-tools\')">Cancel</button><button class="btn btn-p" onclick="submitCashCount()">Record count</button>');
+}
+async function submitCashCount() {
+  var counted = parseFloat(document.getElementById('cc-counted').value);
+  if (!isFinite(counted) || counted < 0) { toast('Enter the counted amount', 'error'); return; }
+  if (!_acctLock('cashcount')) return;
+  try {
+    var r = await _acctCall('/office-ledger/count', { account_id: document.getElementById('cc-account').value, counted: counted, date: document.getElementById('cc-date').value, note: document.getElementById('cc-note').value || undefined });
+    if (!r.ok) { toast(_acctMsg(r, 'Could not record the count'), 'error'); return; }
+    await apiFetchOfficeLedger();
+    closeOverlay('overlay-office-tools');
+    var d = Number(r.data.count.difference);
+    toast(d === 0 ? '✅ Count matches the book' : 'Count recorded — ' + (d > 0 ? 'over' : 'short') + ' by ' + Math.abs(d).toLocaleString(), d === 0 ? 'success' : 'info');
+    renderOffice();
+  } finally { _acctUnlock('cashcount'); }
+}
+
+function openCashAccounts() {
+  var canEdit = hasPermission('Manage FX & Funds');
+  var rows = _officeAccounts(false).map(function(a) {
+    return '<tr><td style="padding:5px 6px;font-weight:600">' + escapeHtml(a.name) + (a.isDefault ? ' <span style="font-size:10px;color:var(--muted)">default</span>' : '') + '</td><td style="padding:5px 6px">' + escapeHtml(a.kind) + '</td><td style="padding:5px 6px">' + a.currency +
+      '</td><td style="padding:5px 6px;text-align:right;font-family:monospace">' + _fmtAmt(a.balance, a.currency) + '</td><td style="padding:5px 6px;text-align:right">' +
+      (canEdit && !a.isDefault ? '<button class="btn btn-ghost btn-xs" onclick="toggleCashAccount(\'' + escapeHtml(a.id) + '\',' + (a.active ? 'false' : 'true') + ')">' + (a.active ? 'Deactivate' : 'Activate') + '</button>' : (a.active ? '' : 'inactive')) + '</td></tr>';
+  }).join('');
+  _toolsOverlay('Cash accounts',
+    '<table style="width:100%;font-size:12.5px"><thead><tr style="color:var(--muted);font-size:11px"><th style="text-align:left;padding:4px 6px">Name</th><th style="text-align:left;padding:4px 6px">Kind</th><th style="text-align:left;padding:4px 6px">Cur.</th><th style="text-align:right;padding:4px 6px">Balance</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' +
+    (canEdit ? '<div style="font-size:12px;font-weight:800;margin:14px 0 6px">Add an account</div><div class="f-row"><div class="f-grp"><input class="f-inp" id="na-name" placeholder="e.g. BDO Savings" maxlength="80"></div>' +
+      '<div class="f-grp"><select class="f-inp" id="na-kind"><option value="bank">Bank</option><option value="cash">Cash</option><option value="gcash">GCash</option><option value="other">Other</option></select></div>' +
+      '<div class="f-grp"><select class="f-inp" id="na-cur"><option>PHP</option><option>USD</option></select></div></div>' : ''),
+    (canEdit ? '<button class="btn btn-p" onclick="submitNewCashAccount()">Add account</button> ' : '') + '<button class="btn btn-ghost" onclick="closeOverlay(\'overlay-office-tools\')">Close</button>');
+}
+async function submitNewCashAccount() {
+  var name = (document.getElementById('na-name').value || '').trim();
+  if (name.length < 2) { toast('Enter an account name', 'error'); return; }
+  var r = await _acctCall('/cash-accounts', { name: name, kind: document.getElementById('na-kind').value, currency: document.getElementById('na-cur').value });
+  if (!r.ok) { toast(_acctMsg(r, 'Could not add the account'), 'error'); return; }
+  await apiFetchOfficeLedger();
+  toast('Account added', 'success');
+  openCashAccounts(); renderOffice();
+}
+async function toggleCashAccount(id, active) {
+  var r = await _acctCall('/cash-accounts/' + id, { active: active }, 'PATCH');
+  if (!r.ok) { toast(_acctMsg(r, 'Could not update the account'), 'error'); return; }
+  await apiFetchOfficeLedger();
+  openCashAccounts(); renderOffice();
+}
+
+async function openVoidedOffice() {
+  var r = await apiFetch('/office-ledger?include_voided=1&limit=500');
+  var list = r.ok && Array.isArray(r.data) ? r.data.filter(function(x) { return x.voided_at; }) : [];
+  _toolsOverlay('Voided office entries',
+    list.length ? '<table style="width:100%;font-size:12px"><tbody>' + list.map(function(x) {
+      return '<tr><td style="padding:4px 6px;color:var(--muted);white-space:nowrap">' + escapeHtml(String(x.entry_date || '').slice(0, 10)) + '</td><td style="padding:4px 6px">' + escapeHtml(x.type) + '</td><td style="padding:4px 6px">' + escapeHtml(x.description || '') +
+        '</td><td style="padding:4px 6px;text-align:right;font-family:monospace">' + _fmtAmt(parseFloat(x.amount), x.currency) + '</td><td style="padding:4px 6px;color:var(--red)">' + escapeHtml(x.void_reason || '') + '</td></tr>'; }).join('') + '</tbody></table>'
+      : '<div style="color:var(--muted)">Nothing has been voided.</div>');
+}
+async function openCashForecast() {
+  var r = await apiFetch('/office-funds/forecast');
+  if (!r.ok || !r.data) { toast(_acctMsg(r, 'Could not load the forecast'), 'error'); return; }
+  var d = r.data;
+  var row = function(l, v, c) { return '<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:13px"><span>' + l + '</span><b style="font-family:monospace;color:' + (c || 'var(--text)') + '">' + v + '</b></div>'; };
+  _toolsOverlay('Cash forecast',
+    row('PHP cash on hand', _fmtAmt(d.cash.PHP, 'PHP')) + row('USD cash on hand', _fmtAmt(d.cash.USD, 'USD')) +
+    row('Released commissions not yet paid out', '−' + _fmtAmt(d.unpaid_commissions_php, 'PHP'), 'var(--red)') +
+    row('Expenses waiting for payment (PHP)', _fmtAmt(d.committed_expenses.PHP, 'PHP')) + row('Expenses fund available (PHP)', _fmtAmt(d.expenses_fund.PHP.available, 'PHP')) +
+    row('Projected PHP', _fmtAmt(d.projected.PHP, 'PHP'), d.projected.PHP < 0 ? 'var(--red)' : 'var(--green)') +
+    row('Projected PHP if all USD were converted at ₱' + d.fx_rate, _fmtAmt(d.projected.PHP_if_usd_converted, 'PHP')) +
+    '<div style="font-size:11.5px;color:var(--muted);margin-top:8px">' + escapeHtml(d.note) + '</div>');
 }
 
 function cleanDuplicateCommissions() {
@@ -19379,10 +19637,12 @@ function renderOffice() {
   renderOfficeTrend();
   renderOfficeTopCats();
   checkOfficeLowBalance();
+  _renderOfficeExtras();
 }
 
 // ── RECALCULATE RUNNING BALANCES ─────────────────────────────────────
 function recalcOfficeLedgerBalances() {
+  if (_isLiveSession()) return;   // the server owns balances; the browser never recomputes them from a partial list
   // Office fund = allocations IN − office expenses OUT
   // expense-allocation belongs to expenses fund — excluded here
   var phpBal = 0, usdBal = 0;
@@ -19618,12 +19878,14 @@ function renderOfficeLedger() {
 
   var sym = function(cur) { return cur === 'PHP' ? '₱' : '$'; };
   var isAdmin = (typeof getCurrentRole === 'function') && getCurrentRole() === 'Admin';
-  var typeCss  = { allocation:'lt-allocation', refund:'lt-refund', adjustment:'lt-adjustment', override:'lt-override', 'expense-allocation':'lt-allocation' };
-  var typeIcon = { allocation:'📥', refund:'↩', adjustment:'🔧', override:'⚠', 'expense-allocation':'💸' };
+  var typeCss  = { allocation:'lt-allocation', refund:'lt-refund', adjustment:'lt-adjustment', override:'lt-override', 'expense-allocation':'lt-allocation', receipt:'lt-refund', payout:'lt-override', transfer:'lt-adjustment' };
+  var typeIcon = { allocation:'📥', refund:'↩', adjustment:'🔧', override:'⚠', 'expense-allocation':'💸', receipt:'💵', payout:'📤', transfer:'⇄' };
+  var _effAmt = function(e) { return e.type === 'expense-allocation' ? -Math.abs(e.amount) : e.amount; };
+  var _acctName = function(id) { var a = _officeAccounts(false).find(function(x) { return x.id === id; }); return a ? a.name : ''; };
 
   // ── Office Fund Table (allocations, refunds, adjustments) ─────────────
   var fundEntries = DB.officeLedger.slice()
-    .filter(function(e){ return e.type !== 'expense-allocation'; })
+    .filter(function(e){ return e.type !== 'expense-allocation' || e.movesCash; })
     .sort(function(a,b){ return (b.ts||'').localeCompare(a.ts||''); });
   if (currFilter !== 'all') fundEntries = fundEntries.filter(function(e){ return e.currency === currFilter; });
   if (typeFilter !== 'all') fundEntries = fundEntries.filter(function(e){ return e.type === typeFilter; });
@@ -19638,8 +19900,9 @@ function renderOfficeLedger() {
     fundEntries.forEach(function(e) {
       var cur = e.currency || 'PHP';
       if (!fundTotals[cur]) fundTotals[cur] = { in: 0, out: 0 };
-      if (e.amount >= 0) fundTotals[cur].in  += e.amount;
-      else                fundTotals[cur].out += Math.abs(e.amount);
+      var _ea = _effAmt(e);
+      if (_ea >= 0) fundTotals[cur].in  += _ea;
+      else          fundTotals[cur].out += Math.abs(_ea);
     });
     var fundTotalsHtml = Object.keys(fundTotals).map(function(cur) {
       var t = fundTotals[cur];
@@ -19664,17 +19927,20 @@ function renderOfficeLedger() {
       fundTbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);font-size:12px;padding:16px">No office fund entries</td></tr>';
     } else {
       fundTbody.innerHTML = fundPageEntries.map(function(e) {
-        var isNeg = e.amount < 0;
+        var isNeg = _effAmt(e) < 0;
         var dispAmt = sym(e.currency)+(isNeg?'-':'+')+Math.abs(e.amount).toLocaleString('en',{minimumFractionDigits:2});
         var dispBal = e.balance !== undefined ? sym(e.currency)+Math.abs(e.balance).toLocaleString('en',{minimumFractionDigits:2}) : '—';
         var delBtn  = isAdmin ? '<button onclick="deleteOfficeLedgerEntry(&quot;'+e.id+'&quot;)" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:14px;padding:2px 5px" title="Delete">🗑</button>' : '';
+        if (e.sourceType === 'payment') delBtn = '<span title="Created by a payment — void the payment to remove it" style="color:var(--dim)">🔗</span>';
         return '<tr>'+
           '<td style="font-size:11px;font-family:monospace;color:var(--muted);white-space:nowrap">'+e.date+'</td>'+
           '<td><span class="ledger-type-pill '+(typeCss[e.type]||'lt-allocation')+'">'+(typeIcon[e.type]||'•')+' '+e.type.charAt(0).toUpperCase()+e.type.slice(1)+'</span>'+
             '<span class="pill '+(e.currency==='PHP'?'pill-blue':'pill-green')+'" style="font-size:10px;margin-left:4px">'+e.currency+'</span></td>'+
-          '<td style="font-size:12.5px;max-width:180px">'+e.desc+
+          '<td style="font-size:12.5px;max-width:180px">'+escapeHtml(e.desc)+
+            (e.fxGainLoss ? '<div style="font-size:10px;color:'+(e.fxGainLoss>0?'var(--green)':'var(--red)')+'">FX '+(e.fxGainLoss>0?'gain':'loss')+' ₱'+Math.abs(e.fxGainLoss).toLocaleString()+'</div>' : '')+
+            (e.accountId && _officeAccounts(false).length > 2 ? '<div style="font-size:10px;color:var(--dim)">'+escapeHtml(_acctName(e.accountId))+'</div>' : '')+
             (e.category?'<div><span style="display:inline-block;margin-top:3px;padding:1px 7px;border-radius:20px;font-size:10px;font-weight:700;background:var(--s2);border:1px solid var(--border);color:var(--muted)">'+escapeHtml(e.category)+'</span></div>':'')+
-            (e.ref?'<div style="font-size:10px;color:var(--dim);font-family:monospace">'+e.ref+'</div>':'')+'</td>'+
+            (e.ref?'<div style="font-size:10px;color:var(--dim);font-family:monospace">'+escapeHtml(e.ref)+'</div>':'')+'</td>'+
           '<td style="text-align:right;font-weight:800;font-family:monospace;color:'+(isNeg?'var(--red)':'var(--green)')+'">'+dispAmt+'</td>'+
           '<td style="text-align:right;font-weight:700;font-family:monospace;font-size:12px;color:'+(e.balance>=0?'var(--text)':'var(--red)')+'">'+dispBal+'</td>'+
           '<td>'+delBtn+'</td></tr>';
@@ -19987,6 +20253,7 @@ function openAddFunds(currency) {
   var src = document.getElementById('funds-source'); if (src) src.value='';
   var nt  = document.getElementById('funds-notes');  if (nt)  nt.value='';
   updateFundsBalance();
+  _prepAccountField('overlay-add-funds', 'funds-account', 'funds-currency');
   openOverlay('overlay-add-funds');
   setTimeout(function(){ var a=document.getElementById('funds-amount'); if(a)a.focus(); },100);
 }
@@ -20024,6 +20291,11 @@ function updateFundsBalance() {
 
 
 // ── OFFICE EXPENSE ────────────────────────────────────────────────────
+function _prepOfficeCategories() {
+  var sel = document.getElementById('oe-category'); if (!sel || !_expCategories) return;
+  var have = {}; Array.prototype.forEach.call(sel.options, function(o) { have[o.value] = true; });
+  _expCategories.forEach(function(c) { var n = c && c.name ? c.name : c; if (n && !have[n]) { var o = document.createElement('option'); o.value = n; o.textContent = n; sel.appendChild(o); } });
+}
 function openOfficeExpense(currency) {
   var cur = document.getElementById('oe-currency');
   if (cur) cur.value = currency || 'PHP';
@@ -20036,6 +20308,8 @@ function openOfficeExpense(currency) {
   if (warn) warn.style.display='none';
   var ovrPanel = document.getElementById('oe-override-panel');
   if (ovrPanel) ovrPanel.style.display='none';
+  _prepAccountField('overlay-office-expense', 'oe-account', 'oe-currency');
+  _prepOfficeCategories();
   openOverlay('overlay-office-expense');
   setTimeout(function(){ var el=document.getElementById('oe-desc'); if(el) el.focus(); },100);
 }
@@ -20063,6 +20337,7 @@ function openRefund() {
   ['rf-source-name','rf-notes'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
   var dt=document.getElementById('rf-date'); if(dt) dt.value=_ymd(new Date());
   var am=document.getElementById('rf-amount'); if(am) am.value='';
+  _prepAccountField('overlay-refund', 'rf-account', 'rf-currency');
   openOverlay('overlay-refund');
   setTimeout(function(){ var el=document.getElementById('rf-source-name'); if(el) el.focus(); },100);
 }
@@ -20071,6 +20346,7 @@ function openRefund() {
 // ── ADMIN ADJUSTMENT ──────────────────────────────────────────────────
 function openOfficeAdjustment() {
   ['oa-amount','oa-reason'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
+  _prepAccountField('overlay-office-adjustment', 'oa-account', 'oa-currency');
   openOverlay('overlay-office-adjustment');
 }
 
@@ -20083,7 +20359,7 @@ function exportOfficeLedger() {
   var range      = _resolvePeriodRange('office-fund');
 
   var entries = DB.officeLedger.slice()
-    .filter(function(e){ return e.type !== 'expense-allocation'; })
+    .filter(function(e){ return e.type !== 'expense-allocation' || e.movesCash; })
     .sort(function(a,b){ return (b.ts||'').localeCompare(a.ts||''); });
   if (currFilter !== 'all') entries = entries.filter(function(e){ return e.currency === currFilter; });
   if (typeFilter !== 'all') entries = entries.filter(function(e){ return e.type === typeFilter; });
@@ -20092,7 +20368,7 @@ function exportOfficeLedger() {
 
   var rows = ['Date,Type,Currency,Amount,Balance,Category,Description,Reference,Posted By'];
   entries.forEach(function(e){
-    rows.push([e.date,e.type,e.currency,e.amount,e.balance||'',e.category||'','"'+e.desc+'"',e.ref||'',e.postedBy||''].join(','));
+    rows.push([_csvCell(e.date),_csvCell(e.type),_csvCell(e.currency),e.amount,e.balance||'',_csvCell(e.category||''),_csvCell(e.desc),_csvCell(e.ref||''),_csvCell(e.postedBy||'')].join(','));
   });
   var blob = new Blob([rows.join('\n')],{type:'text/csv'});
   var a = document.createElement('a');
@@ -22849,6 +23125,13 @@ async function loadSharedPermissions() {
 </div>
 
 <!-- Add Country Rule Modal -->
+<div class="overlay" id="overlay-office-tools" onclick="closeOverlayIfBg(event,'overlay-office-tools')" role="dialog" aria-modal="true">
+  <div class="modal">
+    <div class="modal-hdr"><div><h2 id="office-tools-title">Office funds</h2></div><button class="close-btn" onclick="closeOverlay('overlay-office-tools')">✕</button></div>
+    <div class="modal-body" id="office-tools-body"></div>
+    <div class="modal-foot" id="office-tools-foot"></div>
+  </div>
+</div>
 <div class="overlay" id="overlay-rule-info" onclick="closeOverlayIfBg(event,'overlay-rule-info')" role="dialog" aria-modal="true">
   <div class="modal">
     <div class="modal-hdr"><div><h2 id="rule-info-title">Country rule</h2><p>What depends on this rule and how it changed</p></div>
