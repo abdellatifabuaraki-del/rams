@@ -7963,9 +7963,10 @@ function _inlineSaveMedical(appId, newMedical) {
   var oldMedical = app.medical;
   app.medical = newMedical;
   autosave('applicants');
+  if (_isLiveSession()) _scheduleCommissionSync();
 
   // ── Tranche 1 commission (20%) fires when medical → Passed ──────────
-  if (newMedical === 'Passed' && oldMedical !== 'Passed') {
+  if (!_isLiveSession() && newMedical === 'Passed' && oldMedical !== 'Passed') {
     var _agent = DB.agents.find(function(a){ return a.id===app._agentId||a.id===app._agentDbId||a.name===app.agent; });
     if (_agent) {
       // Reuse same dedup map from onApplicantStatusChange
@@ -8646,6 +8647,7 @@ function saveApplicant() {
         // knows this record was just updated and won't overwrite local data
         var serverData = mapApplicant(r.data);
         if (r.data.agent_transfer) _applyAgentTransfer(r.data.agent_transfer, data);
+        if (r.data.commission_sync) _afterCommissionSync(r.data.commission_sync);
         // Preserve non-server fields only
         if (!serverData.passport    && data.passport)    serverData.passport    = data.passport;
         if (data.category !== undefined)              serverData.category    = data.category;
@@ -13167,7 +13169,7 @@ function renderAccounting() {
   var totalComm = DB.agents.reduce(function(s,a){ return s+a.totalCommission; }, 0);
   var pendingFees = getComputableFees(DB.employerFees).filter(function(f){ return f.status==='Pending'; }).reduce(function(s,f){ return s+(f.feeUSD||0); }, 0);
   var releasedComm = DB.commissions.filter(function(c){ return c.status==='Released'; }).reduce(function(s,c){ return s+c.amount; }, 0);
-  var pendingRelease = DB.commissions.filter(function(c){ return c.status==='Pending Release'; }).reduce(function(s,c){ return s+c.amount; }, 0);
+  var pendingRelease = DB.commissions.filter(function(c){ return c.status==='Pending Release' || c.status==='In Guarantee'; }).reduce(function(s,c){ return s+c.amount; }, 0);
 
   var statsEl = document.getElementById('accounting-stats');
   if (statsEl) statsEl.innerHTML = [
@@ -13208,7 +13210,7 @@ function renderAccOverview() {
 
   // High risk agents (frequent backouts)
   DB.agents.forEach(function(a) {
-    if (a.backouts >= 3 || a.repatriations >= 2) {
+    if (_isLiveSession() ? a.highRisk : (a.backouts >= 3 || a.repatriations >= 2)) {
       alerts.push({ icon:'⚠', type:'warning', title:'High-Risk Agent: '+a.name, sub:a.backouts+' backouts, '+a.repatriations+' repatriations. Consider review.', action:'viewAgent', agentId:a.id });
     }
   });
@@ -13267,7 +13269,7 @@ function renderAccOverview() {
   if (actionsEl) {
     var pendingExpCount  = DB.expenses.filter(function(e){ return e.status==='Pending'; }).length;
     var pendingFeeCount  = getComputableFees(DB.employerFees).filter(function(f){ return f.status==='Pending'; }).length;
-    var pendingRelCount  = DB.commissions.filter(function(c){ return c.status==='Pending Release'; }).length;
+    var pendingRelCount  = DB.commissions.filter(function(c){ return c.status==='Pending Release' || c.status==='In Guarantee'; }).length;
     var pendingInvCount  = (DB.invoices||[]).filter(function(i){ return (i.balance||0) > 0; }).length;
 
     var _accRole = getCurrentRole();
@@ -13351,15 +13353,19 @@ function renderAccOverview() {
 
 // ── AGENT GRID ────────────────────────────────────────────────────────
 function renderAgentGrid(query) {
-  var agents = DB.agents;
+  if (query !== undefined) window._agentGridQuery = query; else query = window._agentGridQuery || '';
+  var all = DB.agents;
+  var archivedN = all.filter(function(a){ return a.archived; }).length;
+  var agents = all.filter(function(a){ return _showArchivedAgents || !a.archived; });
   if (query) {
     var q = query.toLowerCase();
     agents = agents.filter(function(a){
-      return a.name.toLowerCase().includes(q) || a.country.toLowerCase().includes(q) || a.code.toLowerCase().includes(q);
+      return (a.name||'').toLowerCase().includes(q) || (a.country||'').toLowerCase().includes(q) || (a.code||'').toLowerCase().includes(q);
     });
   }
   var countEl = document.getElementById('agent-count-lbl');
-  if (countEl) countEl.textContent = agents.length + ' agent' + (agents.length!==1?'s':'');
+  if (countEl) countEl.innerHTML = agents.length + ' agent' + (agents.length!==1?'s':'') +
+    (archivedN ? ' · <a href="#" onclick="toggleArchivedAgents();return false" style="color:var(--brand)">' + (_showArchivedAgents ? 'hide' : 'show') + ' ' + archivedN + ' archived</a>' : '');
 
   var grid = document.getElementById('agent-grid');
   if (!grid) return;
@@ -13367,65 +13373,47 @@ function renderAgentGrid(query) {
     grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">👥</div><div class="empty-title">No agents found</div></div>';
     return;
   }
-
-  grid.innerHTML = agents.map(function(a, idx) {
-    var risk = (a.backouts>=3||a.repatriations>=2)?'alert':(a.balance<0?'warning':'');
-    var riskBadge = (a.backouts>=3||a.repatriations>=2)?'<span class="risk-badge risk-high" style="position:absolute;top:12px;right:12px">High Risk</span>':
-                    a.balance<0?'<span class="risk-badge risk-med" style="position:absolute;top:12px;right:12px">In Debt</span>':'';
-    return '<div class="agent-card '+risk+'" onclick="viewAgentLedger(\''+a.id+'\')">'+
-      riskBadge+
+  var canManage = getCurrentRole() === 'Admin' || getCurrentRole() === 'Manager';
+  grid.innerHTML = agents.map(function(a) {
+    var idx = DB.agents.indexOf(a);
+    var hi = _isLiveSession() ? a.highRisk : (a.backouts>=3||a.repatriations>=2);
+    var risk = hi ? 'alert' : (a.balance<0 ? 'warning' : '');
+    var badge = a.archived ? '<span class="risk-badge" style="position:absolute;top:12px;right:12px;background:var(--border);color:var(--muted)">Archived</span>' :
+                a.status !== 'Active' ? '<span class="risk-badge risk-med" style="position:absolute;top:12px;right:12px">' + escapeHtml(a.status) + '</span>' :
+                hi ? '<span class="risk-badge risk-high" style="position:absolute;top:12px;right:12px">High Risk</span>' :
+                a.balance<0 ? '<span class="risk-badge risk-med" style="position:absolute;top:12px;right:12px">In Debt</span>' : '';
+    var rates = ((a.extraRates && a.extraRates.length)
+        ? ' <span style="color:var(--brand);font-weight:700" title="'+escapeHtml(a.extraRates.map(function(r){ return r.country+': '+(r.currency==='USD'?'$':'₱')+Number(r.amount).toLocaleString(); }).join(' · '))+'">+'+a.extraRates.length+' more</span>' : '') +
+      ((a.workerRates && a.workerRates.length)
+        ? ' <span style="color:var(--purple, #7c3aed);font-weight:700" title="'+escapeHtml(a.workerRates.map(function(r){ return (r.applicantName||r.applicantId)+': '+(r.currency==='USD'?'$':'₱')+Number(r.amount).toLocaleString(); }).join(' · '))+'">· '+a.workerRates.length+' worker rate'+(a.workerRates.length>1?'s':'')+'</span>' : '');
+    var aid = escapeHtml(String(a.id));
+    return '<div class="agent-card '+risk+'" style="'+(a.archived?'opacity:.6':'')+'" onclick="viewAgentLedger(\''+aid+'\')">'+
+      badge+
       '<div class="agent-card-hdr">'+
-        '<div class="agent-avatar">'+a.name.split(' ').map(function(n){return n[0];}).join('')+'</div>'+
-        '<div>'+
-          '<div class="agent-name">'+a.name+'</div>'+
-          '<div class="agent-sub">'+a.code+' · '+a.country+
-            ((a.extraRates && a.extraRates.length)
-              ? ' <span style="color:var(--brand);font-weight:700" title="'+
-                  escapeHtml(a.extraRates.map(function(r){
-                    return r.country+': '+(r.currency==='USD'?'$':'₱')+Number(r.amount).toLocaleString();
-                  }).join(' · '))+
-                '">+'+a.extraRates.length+' more</span>'
-              : '')+
-            ((a.workerRates && a.workerRates.length)
-              ? ' <span style="color:var(--purple, #7c3aed);font-weight:700" title="'+
-                  escapeHtml(a.workerRates.map(function(r){
-                    return (r.applicantName||r.applicantId)+': '+(r.currency==='USD'?'$':'₱')+Number(r.amount).toLocaleString();
-                  }).join(' · '))+
-                '">· '+a.workerRates.length+' worker rate'+(a.workerRates.length>1?'s':'')+'</span>'
-              : '')+'</div>'+
-          '<div class="agent-sub">'+a.phone+'</div>'+
-        '</div>'+
+        '<div class="agent-avatar">'+escapeHtml((a.name||'?').split(' ').map(function(n){return n[0]||'';}).join('').slice(0,3))+'</div>'+
+        '<div><div class="agent-name">'+escapeHtml(a.name)+'</div>'+
+          '<div class="agent-sub">'+escapeHtml(a.code)+' · '+escapeHtml(a.country)+rates+'</div>'+
+          '<div class="agent-sub">'+escapeHtml(a.phone)+'</div></div>'+
       '</div>'+
       '<div class="agent-stats">'+
-        '<div class="agent-stat">'+
-          '<div class="agent-stat-val" style="color:'+(a.balance>=0?'var(--green)':'var(--red)')+'">'+
-            (a.balance>=0?'₱':'−₱')+Math.abs(a.balance).toLocaleString()+
-          '</div>'+
-          '<div class="agent-stat-lbl">Net Balance</div>'+
-        '</div>'+
-        '<div class="agent-stat">'+
-          '<div class="agent-stat-val" style="color:var(--brand)">'+a.totalDeployed+'</div>'+
-          '<div class="agent-stat-lbl">Deployed</div>'+
-        '</div>'+
-        '<div class="agent-stat">'+
-          '<div class="agent-stat-val">₱'+a.totalCommission.toLocaleString()+'</div>'+
-          '<div class="agent-stat-lbl">Commission</div>'+
-        '</div>'+
-        '<div class="agent-stat">'+
-          '<div class="agent-stat-val" style="color:'+(a.backouts>0?'var(--red)':'var(--green)')+'">'+a.backouts+'</div>'+
-          '<div class="agent-stat-lbl">Backouts</div>'+
-        '</div>'+
+        '<div class="agent-stat"><div class="agent-stat-val" style="color:'+(a.balance>=0?'var(--green)':'var(--red)')+'">'+(a.balance>=0?'₱':'−₱')+Math.abs(a.balance).toLocaleString()+'</div><div class="agent-stat-lbl">Net Balance</div></div>'+
+        '<div class="agent-stat"><div class="agent-stat-val" style="color:var(--brand)">'+a.totalDeployed+'</div><div class="agent-stat-lbl">Deployed</div></div>'+
+        '<div class="agent-stat"><div class="agent-stat-val">₱'+a.totalCommission.toLocaleString()+'</div><div class="agent-stat-lbl">Commission</div></div>'+
+        '<div class="agent-stat"><div class="agent-stat-val" style="color:'+(a.backouts>0?'var(--red)':'var(--green)')+'">'+a.backouts+'</div><div class="agent-stat-lbl">Backouts</div></div>'+
       '</div>'+
-      '<div style="display:flex;gap:6px;margin-top:12px;border-top:1px solid var(--border);padding-top:12px">'+
-        '<button class="btn btn-s btn-sm" style="flex:1" onclick="event.stopPropagation();viewAgentLedger(\''+a.id+'\')">📒 Ledger</button>'+
-        '<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openEditAgent('+DB.agents.indexOf(a)+')">✏ Edit</button>'+
-        '<button class="btn btn-danger btn-xs" onclick="event.stopPropagation();deleteAgent('+DB.agents.indexOf(a)+')">✕</button>'+
+      '<div style="display:flex;gap:6px;margin-top:12px;border-top:1px solid var(--border);padding-top:12px;flex-wrap:wrap">'+
+        '<button class="btn btn-s btn-sm" style="flex:1" onclick="event.stopPropagation();viewAgentLedger(\''+aid+'\')">📒 Ledger</button>'+
+        '<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openAgentScorecard(\''+aid+'\')">📊</button>'+
+        (canManage ? '<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openEditAgent('+idx+')">✏</button>' +
+          (a.archived ? '<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();restoreAgent('+idx+')">↩ Restore</button>'
+                      : '<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();archiveAgent('+idx+')" title="Archive">🗄</button>') : '')+
+        (getCurrentRole() === 'Admin' ? '<button class="btn btn-danger btn-xs" onclick="event.stopPropagation();deleteAgent('+idx+')">✕</button>' : '')+
       '</div>'+
     '</div>';
   }).join('');
 }
 
-function filterAgents(q) { renderAgentGrid(q); }
+function filterAgents(q) { renderAgentGrid(q || ''); }
 
 // Called from applicant drawer — closes drawer then goes straight to agent ledger
 // _viewAgentLedger defined below (near drawer code)
@@ -13544,7 +13532,7 @@ function renderLedger() {
       '<td style="font-size:11.5px;font-family:\'IBM Plex Mono\',monospace;color:var(--muted)">'+e.date+'</td>'+
       '<td style="font-size:12.5px">'+(app?'<div style="font-weight:600"'+noteTip(app)+'>'+app.name+'</div><div style="font-size:11px;color:var(--muted)">'+(app.displayId||app.id)+'</div>':'<span style="color:var(--dim);font-size:12px">—</span>')+'</td>'+
       '<td><span class="pill '+(isPos?'pill-green':'pill-red')+'" style="font-size:11px">'+(typeIcons[e.type]||'•')+' '+e.type.charAt(0).toUpperCase()+e.type.slice(1)+'</span></td>'+
-      '<td style="font-size:12.5px;max-width:200px">'+e.desc+'</td>'+
+      '<td style="font-size:12.5px;max-width:200px">'+escapeHtml(e.desc)+(e.category && e.category !== 'Other' ? ' <span style="font-size:10px;background:var(--border);border-radius:99px;padding:1px 6px">'+escapeHtml(e.category)+'</span>' : '')+'</td>'+
       '<td style="text-align:right;font-weight:800;font-family:\'IBM Plex Mono\',monospace;color:'+(isPos?'var(--green)':'var(--red)')+'">'+
         (isPos?'+':'')+'₱'+e.amount.toLocaleString()+
       '</td>'+
@@ -13774,7 +13762,7 @@ function renderCommissions() {
     function _commPHP(list){ return list.reduce(function(s,c){ return s+(c.currency==='USD'?Math.round(c.amount*fx):c.amount); },0); }
     function _commUSD(list){ return list.reduce(function(s,c){ return s+(c.currency==='USD'?c.amount:Math.round(c.amount/fx)); },0); }
     var relList  = DB.commissions.filter(function(c){ return c.status==='Released'; });
-    var pendList = DB.commissions.filter(function(c){ return c.status==='Pending Release'; });
+    var pendList = DB.commissions.filter(function(c){ return c.status==='Pending Release' || c.status==='In Guarantee'; });
     var revList  = DB.commissions.filter(function(c){ return c.status==='Reversed'; });
     var released   = _commPHP(relList);
     var inGuarantee= _commPHP(pendList);
@@ -13811,7 +13799,7 @@ function renderCommissions() {
     var _toClawback    = [];
     var pending = DB.commissions.filter(function(cm) {
       if (cm._hideDuplicate) return false; // hide duplicate entries
-      if (cm.status !== 'Pending Release') return false;
+      if (cm.status !== 'Pending Release' && cm.status !== 'In Guarantee') return false;
       // Lookup applicant by ID or name (case-insensitive)
       var linkedApp = DB.applicants.find(function(a){
         return a.id === cm.applicantId ||
@@ -13840,7 +13828,7 @@ function renderCommissions() {
     });
 
     // Auto-reverse stale commissions for Backout/Rejected applicants (server: cancels, no money moves)
-    if (_toAutoReverse.length && _isLiveSession() && hasPermission('Release/Reverse Commissions')) {
+    if (_toAutoReverse.length && false && hasPermission('Release/Reverse Commissions')) {
       _toAutoReverse.forEach(function(cm) {
         if (cm._autoRev) return;
         cm._autoRev = true;
@@ -13850,7 +13838,7 @@ function renderCommissions() {
     }
 
     // Clawback already-Released commissions — the server debits the agent the exact amount paid out (stored FX)
-    if (_toClawback.length && _isLiveSession() && hasPermission('Release/Reverse Commissions')) {
+    if (_toClawback.length && false && hasPermission('Release/Reverse Commissions')) {
       _toClawback.forEach(function(cm) {
         if (cm._clawedBack) return;
         cm._clawedBack = true;
@@ -13937,7 +13925,9 @@ function renderCommissions() {
         (a.name && c.applicantName && a.name.toLowerCase()===c.applicantName.toLowerCase()); });
       var tColor     = trancheColors[c.tranche] || 'var(--muted)';
       var tLabel     = c.trancheLabel || (c.tranche ? 'Tranche '+c.tranche : 'Commission');
-      var statusPill = c.status === 'Pending Release'
+      var statusPill = c.status === 'In Guarantee'
+        ? '<span style="background:var(--bbg, #e0e7ff);color:var(--brand);border-radius:99px;padding:2px 8px;font-size:11px;font-weight:700" title="Cannot be released before the guarantee ends">🛡 In guarantee' + (c.guaranteeEnd ? ' until ' + escapeHtml(String(c.guaranteeEnd).slice(0, 10)) : '') + '</span>'
+        : c.status === 'Pending Release'
         ? '<span style="background:var(--abg);color:var(--amber);border-radius:99px;padding:2px 8px;font-size:11px;font-weight:700">⏳ Pending</span>'
         : c.status === 'Released'
         ? '<span style="background:var(--gbg);color:var(--green);border-radius:99px;padding:2px 8px;font-size:11px;font-weight:700">✓ Released</span>'
@@ -13960,7 +13950,7 @@ function renderCommissions() {
         '<td style="font-size:11px;color:var(--muted);padding:10px 12px">'+(c.triggerStatus||'')+'</td>'+
         '<td style="text-align:right;white-space:nowrap;padding:10px 12px">'+
           (function() {
-            if (c.status === 'Pending Release') {
+            if (c.status === 'Pending Release' || c.status === 'In Guarantee') {
               // Check if this tranche was already released for this applicant
               var isDup = DB.commissions.some(function(x) {
                 return x.id !== c.id && x.tranche === c.tranche
@@ -13979,7 +13969,9 @@ function renderCommissions() {
               var _roleOk2 = typeof getCurrentRole==='function' && (getCurrentRole()==='Admin'||getCurrentRole()==='Finance');
               if (!_roleOk2) return '<span style="font-size:10px;color:var(--muted)">Finance/Admin</span>';
               if (_prevBlocked2) return '<span style="font-size:10px;color:var(--amber)">🔒 T'+(c.tranche-1)+' first</span>';
-              return '<button class="btn btn-sm" style="font-size:11px;background:var(--gbg);color:var(--green);border:1px solid #86efac" onclick="releaseCommission(\''+c.id+'\')" >Release</button>';
+              var _gEnded = c.status === 'In Guarantee' && c.guaranteeEnd && String(c.guaranteeEnd).slice(0, 10) > _ymd(new Date());
+              if (_gEnded && !hasPermission('Void Accounting Records')) return '<span style="font-size:10px;color:var(--brand)">🛡 Guarantee</span>';
+              return '<button class="btn btn-sm" style="font-size:11px;background:var(--gbg);color:var(--green);border:1px solid #86efac" onclick="releaseCommission(\''+c.id+'\')" >'+(_gEnded ? 'Release early' : 'Release')+'</button>';
             }
             if (c.status === 'Released') {
               return '<button class="btn btn-sm" style="font-size:11px;background:var(--rbg);color:var(--red);border:1px solid #fca5a5" onclick="reverseCommission(\''+c.id+'\')">Reverse</button>';
@@ -14229,6 +14221,12 @@ async function releaseCommission(commId) {
         r = await _acctCall('/commissions/' + dbId + '/release', { reverse_duplicate: true });
       } else return;
     }
+    if (!r.ok && r.httpStatus === 409 && r.data && r.data.error === 'guarantee_not_ended') {
+      if (!hasPermission('Void Accounting Records')) { toast(_acctMsg(r, 'The guarantee period has not ended yet'), 'error'); return; }
+      var _gr = _askReason('The guarantee has not ended. Reason for releasing early?');
+      if (!_gr) return;
+      r = await _acctCall('/commissions/' + dbId + '/release', { override_guarantee_reason: _gr });
+    }
     if (!r.ok) { toast(_acctMsg(r, 'Could not release this commission'), 'error'); return; }
     var d = r.data;
     var cm = _applyCommissionRow(d.commission);
@@ -14300,7 +14298,15 @@ async function addLedgerEntry(agentId, type, desc, amount, applicantId, opts) {
   var r = await _acctCall('/agent-ledger', {
     agent_id: agentId, applicant_id: isUUID(applicantId) ? applicantId : null, type: type, description: desc,
     amount: amount, entry_date: opts.date || _ymd(new Date()), notes: opts.notes || null, idempotency_key: opts.key || _idemKey(),
+    category: opts.category || undefined, override_reason: opts.override_reason || undefined,
   });
+  if (!r.ok && r.httpStatus === 409 && r.data && /debt_limit/.test(String(r.data.error || '')) && !opts.override_reason) {
+    if (hasPermission('Manage FX & Funds') || getCurrentRole() === 'Admin') {
+      var _or = _askReason(_acctMsg(r, 'This would exceed the agent debt limit.') + ' Reason to override?');
+      if (_or) return addLedgerEntry(agentId, type, desc, amount, applicantId, Object.assign({}, opts, { override_reason: _or, key: opts.key || undefined }));
+      return null;
+    }
+  }
   if (!r.ok) { toast(_acctMsg(r, 'Could not post the ledger entry'), 'error'); return null; }
   _applyLedgerRow(r.data);
   _applyAgentSnapshot(r.data.agent);
@@ -14389,7 +14395,7 @@ async function submitAdjustment() {
   if (currency === 'USD') { var fx = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5; phpEquiv = Math.round(finalAmt * fx); }
   var fullDesc = desc + (currency === 'USD' ? ' [USD ' + (finalAmt > 0 ? '+' : '') + finalAmt.toFixed(2) + ' @ ₱' + ((DB.officeFunds && DB.officeFunds.fxRate) || 57.5) + ']' : '');
   var ledgerType = ['adjustment', 'penalty', 'bonus'].indexOf(type) !== -1 ? type : 'adjustment';
-  var saved = await addLedgerEntry(agentId, ledgerType, fullDesc, phpEquiv, appId, { date: adjDate, notes: desc });
+  var saved = await addLedgerEntry(agentId, ledgerType, fullDesc, phpEquiv, appId, { date: adjDate, notes: desc, category: (document.getElementById('adj-category') || {}).value || 'Other' });
   if (!saved) return;
   var sym = currency === 'PHP' ? '₱' : '$';
   addAudit('CREATE', 'Ledger', 'Manual adjustment: ' + desc + ' (' + sym + amount.toLocaleString() + ' ' + currency + ')');
@@ -15117,6 +15123,14 @@ async function renderAccControls() {
     '<div style="font-size:12px;font-weight:800;margin:4px 0 6px">Categories <span style="font-weight:400;color:var(--muted)">— an optional per-category approval limit overrides the general one. "Medical Exam" and "Other" are always kept.</span></div>' +
     '<div id="xc-list">' + xcats.map(function(c) { return '<div class="xc-row" style="display:flex;gap:8px;margin-bottom:6px"><input class="f-inp xc-name" value="' + escapeHtml(c.name) + '" style="flex:1" ' + (canCtl ? '' : 'disabled') + '><input class="f-inp xc-limit" type="number" min="0" step="100" value="' + (c.limit || 0) + '" style="width:200px" title="Approval needed at or above (₱, 0 = never)" ' + (canCtl ? '' : 'disabled') + '></div>'; }).join('') + '</div>' +
     (canCtl ? '<div style="margin-top:8px"><button class="btn btn-s btn-sm" onclick="addExpenseCategoryRow()">+ Category</button> <button class="btn btn-p btn-sm" onclick="saveExpenseControls()">Save expense settings</button></div>' : ''));
+
+  // Agent & commission controls
+  html += card('🏆 Agents & commissions', '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px;margin-bottom:12px">' +
+    '<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="ctl-guar" ' + (ctl.enforceGuarantee !== false ? 'checked' : '') + ' ' + (canCtl ? '' : 'disabled') + '> Hold the final tranche "In Guarantee" until the guarantee period ends</label>' +
+    '<label>Adjustments at or above ₱ <input class="f-inp" id="ctl-adjappr" type="number" min="0" step="100" value="' + (ctl.adjustmentApprovalAbove || 0) + '" style="width:110px;display:inline-block" ' + (canCtl ? '' : 'disabled') + '> need a senior user (0 = off)</label>' +
+    '<label>Agent debt limit ₱ <input class="f-inp" id="ctl-debt" type="number" min="0" step="1000" value="' + (ctl.agentDebtLimit || 0) + '" style="width:110px;display:inline-block" ' + (canCtl ? '' : 'disabled') + '> (0 = no limit)</label>' +
+    '<label>High risk at <input class="f-inp" id="ctl-rbo" type="number" min="1" value="' + (ctl.riskBackouts || 3) + '" style="width:60px;display:inline-block" ' + (canCtl ? '' : 'disabled') + '> backouts or <input class="f-inp" id="ctl-rrp" type="number" min="1" value="' + (ctl.riskRepatriations || 2) + '" style="width:60px;display:inline-block" ' + (canCtl ? '' : 'disabled') + '> repatriations</label>' +
+    '</div>' + (canCtl ? '<button class="btn btn-p btn-sm" onclick="saveAgentControls()">Save</button> <button class="btn btn-s btn-sm" onclick="syncCommissionsNow({confirmFirst:true})">⚡ Sync commissions now</button>' : ''));
 
   // Ageing
   if (ag) {
@@ -15906,6 +15920,18 @@ function _applyAgentTransfer(t, data) {
   } catch (e) { console.warn('agent transfer', e); }
 }
 
+async function saveAgentControls() {
+  var r = await _acctCall('/accounting/controls', {
+    enforceGuarantee: document.getElementById('ctl-guar').checked,
+    adjustmentApprovalAbove: parseFloat(document.getElementById('ctl-adjappr').value) || 0,
+    agentDebtLimit: parseFloat(document.getElementById('ctl-debt').value) || 0,
+    riskBackouts: parseInt(document.getElementById('ctl-rbo').value, 10) || 3,
+    riskRepatriations: parseInt(document.getElementById('ctl-rrp').value, 10) || 2,
+  }, 'PUT');
+  if (!r.ok) { toast(_acctMsg(r, 'Could not save'), 'error'); return; }
+  toast('Agent & commission settings saved', 'success');
+}
+
 async function saveExpenseControls() {
   var r = await _acctCall('/accounting/controls', {
     expenseFundCheck: document.getElementById('ctl-xfund').checked,
@@ -15914,6 +15940,107 @@ async function saveExpenseControls() {
   }, 'PUT');
   if (!r.ok) { toast(_acctMsg(r, 'Could not save'), 'error'); return; }
   await saveExpenseCategories();
+}
+
+// ── Server-side commission sync ───────────────────────────────────────────
+var _commSyncTimer = null;
+function _scheduleCommissionSync() {
+  if (!_isLiveSession() || !hasPermission('Release/Reverse Commissions')) return;
+  clearTimeout(_commSyncTimer);
+  _commSyncTimer = setTimeout(function() { syncCommissionsNow({ quiet: true }); }, 2500);
+}
+function _normCommSync(cs) {
+  cs = cs || {};
+  return { created: Array.isArray(cs.created) ? cs.created.length : (cs.created || 0), cancelled: cs.cancelled || 0,
+           clawed_back: cs.clawed_back || cs.clawed || 0, advanced: Array.isArray(cs.advanced) ? cs.advanced.length : (cs.advanced || 0) };
+}
+async function _afterCommissionSync(cs) {
+  cs = _normCommSync(cs);
+  if (!(cs.created || cs.cancelled || cs.clawed_back || cs.advanced)) return;
+  _bustAcctCache();
+  try { await Promise.all([apiFetchCommissions(), fetchAgents(), apiFetchAgentLedger()]); } catch (e) {}
+  var bits = [];
+  if (cs.created) bits.push(cs.created + ' created');
+  if (cs.cancelled) bits.push(cs.cancelled + ' cancelled');
+  if (cs.clawed_back) bits.push(cs.clawed_back + ' clawed back');
+  if (cs.advanced) bits.push(cs.advanced + ' guarantee(s) ended');
+  toast('Commissions updated: ' + bits.join(', '), 'info');
+  try { if (currentAccTab === 'commissions') renderCommissions(); renderAgentGrid(); } catch (e) {}
+}
+async function syncCommissionsNow(opts) {
+  opts = opts || {};
+  if (!_isLiveSession()) return;
+  if (!hasPermission('Release/Reverse Commissions') && !hasPermission('Manage Accounting')) { if (!opts.quiet) toast('Your role cannot sync commissions', 'error'); return; }
+  if (opts.confirmFirst && !confirm('Re-check every applicant on the server and create, cancel or claw back commissions as the rules require?\n\nExisting records are never duplicated.')) return;
+  if (!_acctLock('commsync')) return;
+  try {
+    var r = await _acctCall('/accounting/commissions/sync', {});
+    if (!r.ok) { if (!opts.quiet) toast(_acctMsg(r, 'Could not sync commissions'), 'error'); return; }
+    var d = r.data || {};
+    var cs = _normCommSync(d.summary || d);
+    var changed = cs.created || cs.cancelled || cs.clawed_back || cs.advanced;
+    if (changed) await _afterCommissionSync(cs);
+    else if (!opts.quiet) toast('✅ Commissions are up to date', 'success');
+  } finally { _acctUnlock('commsync'); }
+}
+
+// ── Agents: archive / restore / scorecard ─────────────────────────────────
+async function archiveAgent(idx) {
+  if (!hasPermission('Manage Accounting') && getCurrentRole() !== 'Admin') { toast('Your role cannot archive agents', 'error'); return; }
+  var a = DB.agents[idx]; if (!a) return;
+  var reason = _askReason('Why is "' + a.name + '" being archived? (Archived agents cannot receive new applicants; history is kept.)');
+  if (!reason) return;
+  var r = await _acctCall('/agents/' + (a._dbId || a.id) + '/archive', { reason: reason });
+  if (!r.ok) { toast(_acctMsg(r, 'Could not archive the agent'), 'error'); return; }
+  await fetchAgents();
+  addAudit('UPDATE', 'Agent', 'Archived agent: ' + a.name);
+  toast('Agent archived', 'success');
+  renderAgentGrid();
+}
+async function restoreAgent(idx) {
+  var a = DB.agents[idx]; if (!a) return;
+  var r = await _acctCall('/agents/' + (a._dbId || a.id) + '/restore', {});
+  if (!r.ok) { toast(_acctMsg(r, 'Could not restore the agent'), 'error'); return; }
+  await fetchAgents();
+  addAudit('UPDATE', 'Agent', 'Restored agent: ' + a.name);
+  toast('Agent restored', 'success');
+  renderAgentGrid();
+}
+var _showArchivedAgents = false;
+function toggleArchivedAgents() { _showArchivedAgents = !_showArchivedAgents; renderAgentGrid(); }
+
+async function openAgentScorecard(agentId) {
+  var a = DB.agents.find(function(x) { return x.id === agentId || x._dbId === agentId; });
+  if (!a) return;
+  var body = document.getElementById('agent-score-body');
+  var ttl = document.getElementById('agent-score-title');
+  if (!body) return;
+  if (ttl) ttl.textContent = a.name + ' — scorecard';
+  body.innerHTML = '<div style="padding:24px;color:var(--muted)">Loading…</div>';
+  openOverlay('overlay-agent-score');
+  if (!_isLiveSession()) { body.innerHTML = '<div style="padding:24px;color:var(--muted)">Scorecards need a live server session.</div>'; return; }
+  var id = a._dbId || a.id;
+  var res = await Promise.all([apiFetch('/agents/' + id + '/scorecard'), apiFetch('/agents/' + id + '/rate-history'), apiFetch('/agents/' + id + '/unpaid-commissions')]);
+  if (!res[0].ok) { body.innerHTML = '<div style="padding:24px;color:var(--red)">' + escapeHtml(_acctMsg(res[0], 'Could not load the scorecard')) + '</div>'; return; }
+  var sc = res[0].data, hist = res[1].ok && Array.isArray(res[1].data) ? res[1].data : [], unpaid = res[2].ok && Array.isArray(res[2].data) ? res[2].data : [];
+  function money(v) { return '₱' + (Number(v) || 0).toLocaleString(); }
+  function kpi(l, v, c) { return '<div class="ledger-sum-card"><div class="ledger-sum-val" style="color:' + (c || 'var(--text)') + '">' + v + '</div><div class="ledger-sum-lbl">' + l + '</div></div>'; }
+  var html = '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">' +
+    kpi('Applicants', sc.applicants.total) + kpi('Deployed', sc.applicants.deployed, 'var(--green)') + kpi('In pipeline', sc.applicants.in_pipeline) +
+    kpi('Conversion', sc.conversion_pct + '%') + kpi('Exit rate', sc.exit_rate_pct + '%', sc.high_risk ? 'var(--red)' : 'var(--text)') +
+    kpi('Avg days to deploy', sc.avg_days_to_deploy == null ? '—' : sc.avg_days_to_deploy) +
+    kpi('Backouts', sc.applicants.backouts, sc.applicants.backouts ? 'var(--red)' : 'var(--text)') + kpi('Repatriations', sc.applicants.repatriations, sc.applicants.repatriations ? 'var(--red)' : 'var(--text)') + kpi('Rejected', sc.applicants.rejected) +
+    kpi('Commission released', money(sc.commissions.released_php), 'var(--green)') + kpi('Pending / in guarantee', money(sc.commissions.pending_php) + ' (' + sc.commissions.pending_count + ')') +
+    kpi('Clawed back', money(sc.commissions.clawed_back_php) + ' (' + sc.commissions.clawed_back_count + ')', sc.commissions.clawed_back_count ? 'var(--red)' : 'var(--text)') +
+    kpi('Released, not yet paid out', money(sc.commissions.unpaid_released_php), 'var(--amber)') + kpi('Avg days release→payout', sc.avg_days_release_to_payout == null ? '—' : sc.avg_days_release_to_payout) +
+    kpi('Net balance', (sc.agent.balance >= 0 ? '' : '−') + money(Math.abs(sc.agent.balance)), sc.agent.balance >= 0 ? 'var(--green)' : 'var(--red)') + '</div>';
+  if (sc.high_risk) html += '<div class="alert-card danger" style="margin-bottom:12px"><div class="alert-body"><div class="alert-title">High-risk agent</div><div class="alert-sub">At or over ' + sc.thresholds.backouts + ' backouts or ' + sc.thresholds.repatriations + ' repatriations (set in Accounting → Controls).</div></div></div>';
+  if (unpaid.length) html += '<div style="font-size:12px;font-weight:800;margin:10px 0 6px">Released commissions awaiting payout</div><table style="width:100%;font-size:12px"><tbody>' +
+    unpaid.slice(0, 10).map(function(u) { return '<tr><td style="padding:3px 6px">' + escapeHtml(u.applicant_name || u.applicantName || '') + ' · T' + escapeHtml(String(u.tranche || '')) + '</td><td style="text-align:right;padding:3px 6px;font-family:monospace">' + money(u.outstanding) + '</td></tr>'; }).join('') + '</tbody></table>';
+  html += '<div style="font-size:12px;font-weight:800;margin:14px 0 6px">Rate history</div>' + (hist.length ?
+    '<table style="width:100%;font-size:12px"><tbody>' + hist.slice(0, 15).map(function(h) { return '<tr><td style="padding:3px 6px;color:var(--muted);white-space:nowrap">' + escapeHtml(String(h.created_at || '').slice(0, 10)) + '</td><td style="padding:3px 6px">' + escapeHtml(h.summary || '') + '</td><td style="padding:3px 6px;color:var(--muted)">' + escapeHtml(h.changed_by_name || '') + '</td></tr>'; }).join('') + '</tbody></table>'
+    : '<div style="color:var(--muted);font-size:12px">No rate changes recorded.</div>');
+  body.innerHTML = html;
 }
 
 function cleanDuplicateCommissions() {
@@ -16177,8 +16304,8 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
   // ── 1. EXIT EXPENSES — apply the country expense rule; the server charges the agent / marks Agency ──
   if (shouldChargeAll) {
     _settleExitExpenses(app, agent, newStatus).catch(function(e) { console.warn('[exit expenses]', e); });
-    if (agent && newStatus === 'Backout')     agent.backouts = (agent.backouts || 0) + 1;
-    if (agent && newStatus === 'Repatriated') agent.repatriations = (agent.repatriations || 0) + 1;
+    if (agent && !_isLiveSession() && newStatus === 'Backout')     agent.backouts = (agent.backouts || 0) + 1;
+    if (agent && !_isLiveSession() && newStatus === 'Repatriated') agent.repatriations = (agent.repatriations || 0) + 1;
   }
 
   // ── AUTO-WAIVE PENDING EMPLOYER FEES on Backout / Repatriated ───────
@@ -16325,7 +16452,7 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
       try { Store.set('rams:commission:fired', JSON.stringify(window._commissionFired)); } catch(e){}
     }
     // The server cancels unreleased tranches and debits the exact released amount (stored FX) for released ones
-    if (hasPermission('Release/Reverse Commissions') || _isLiveSession()) {
+    if (!_isLiveSession() && hasPermission('Release/Reverse Commissions')) {
       _reverseApplicantCommissions(app, applicantId, 'Applicant ' + newStatus).then(function(res) {
         if (res && res.count) {
           addAudit('UPDATE', 'Commission', res.count + ' commission(s) reversed for ' + app.name + ' (' + newStatus + ')' + (res.debited ? ' — ₱' + res.debited.toLocaleString() + ' debited' : ''));
@@ -16374,7 +16501,7 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
   // (No commission triggered here — moving applicant to Medical stage alone doesn't earn commission)
 
   // ── OWWA / PROCESSING → 20% (Tranche 2) ─────────────────────────
-  if ((newStatus === 'OWWA' || newStatus === 'Processing') &&
+  if (!_isLiveSession() && (newStatus === 'OWWA' || newStatus === 'Processing') &&
       (oldStatus !== 'OWWA' && oldStatus !== 'Processing') && agent) {
     if (_trancheFired(2)) {
       toast('\u2139\uFE0F Processing commission for ' + app.name + ' already recorded — skipped', 'info');
@@ -16816,7 +16943,7 @@ function submitAgent() {
   var data = {
     commissionRule:      _ruleRes.rule,
     name: name,
-    code: (document.getElementById('ag-code').value||'').trim() || _nextAgentCode(),
+    code: (document.getElementById('ag-code').value||'').trim() || (_isLiveSession() ? '' : _nextAgentCode()),
     phone: phone,
     email: (document.getElementById('ag-email').value||'').trim(),
     country: document.getElementById('ag-country').value,
@@ -16833,82 +16960,65 @@ function submitAgent() {
     Object.assign(existing, data);
     addAudit('UPDATE','Agent','Updated agent: '+name);
     apiUpdateAgent(existing).then(function(r){
-      if (!r.ok) toast('💾 Agent saved — server will update when reconnected','info');
+      if (!r.ok) { toast('⚠️ Agent not saved: ' + _acctMsg(r, 'server error'), 'error'); fetchAgents().then(function(){ renderAgentGrid(); }); }
       else {
-        Object.assign(existing, mapAgent(r.data));
+        if (r.data && r.data.id) Object.assign(existing, mapAgent(r.data));
         autosave('agents');
         if (typeof _lastFetch !== 'undefined') _lastFetch['agents'] = 0;
+        var ri = r.data && r.data.rate_impact;
+        if (ri && ri.applicants_affected) toast('Rate changed: ' + ri.applicants_affected + ' applicant(s) in the pipeline will use the new rate for tranches not yet created. Existing commissions keep their original terms.', 'info');
+        else toast('Agent updated','success');
+        renderAgentGrid();
       }
     });
-    toast('Agent updated','success');
   } else {
     // Ensure the local placeholder id never collides with an existing agent's id or code
-    var _localId = data.code;
+    var _localId = data.code || ('tmp-' + Date.now());
     while (DB.agents.some(function(a){ return a.id === _localId; })) {
-      _localId = _nextAgentCode();
+      _localId = 'tmp-' + Date.now() + Math.random().toString(36).slice(2, 5);
     }
     var newAgent = Object.assign(data,{id:_localId,balance:0,totalCommission:0,totalExpenses:0,totalDeployed:0,backouts:0,repatriations:0});
     DB.agents.push(newAgent);
     addAudit('CREATE','Agent','Added agent: '+name);
     apiCreateAgent(newAgent).then(function(r){
       if (r.ok) {
-        Object.assign(newAgent, mapAgent(r.data));
+        if (r.data && r.data.id) Object.assign(newAgent, mapAgent(r.data));
         autosave('agents');
         if (typeof _lastFetch !== 'undefined') _lastFetch['agents'] = 0;
         try { _triggerImmediateSync(); } catch(e) {}
+        toast('Agent added' + (newAgent.code ? ' (' + newAgent.code + ')' : ''), 'success');
+      } else {
+        var ix = DB.agents.indexOf(newAgent); if (ix !== -1) DB.agents.splice(ix, 1);
+        autosave('agents');
       }
-      // Error toast already shown by apiCreateAgent
+      renderAgentGrid();
     }).catch(function(e){ console.error('[Agent create]', e); });
-    toast('Agent added','success');
   }
   autosave('agents');
   closeOverlay('overlay-agent');
   renderAgentGrid();
 }
 
-function deleteAgent(idx) {
+async function deleteAgent(idx) {
   if (getCurrentRole() !== 'Admin') { toast('Only Admin can delete agents', 'error'); return; }
   var a = DB.agents[idx];
   if (!a) return;
-  if (!confirm('Remove agent "'+a.name+'"? This cannot be undone.')) return;
-  var dbId   = a._dbId || a.id;
-  var agName = a.name;
-
-  // Remove from agents list
+  if (!confirm('Permanently delete agent "'+a.name+'"? This cannot be undone.\n\nAgents with applicants or accounting history cannot be deleted — archive them instead.')) return;
+  var dbId = a._dbId || a.id, agName = a.name;
+  if (_isLiveSession() && isUUID(dbId)) {
+    var r = await apiDeleteAgent(dbId);
+    if (!r.ok) {
+      var code = r.data && r.data.error;
+      if (r.httpStatus === 409 && (code === 'has_history' || code === 'has_applicants')) {
+        if (confirm(_acctMsg(r, 'This agent has history.') + '\n\nArchive this agent instead?')) archiveAgent(idx);
+      } else toast(_acctMsg(r, 'Could not delete the agent'), 'error');
+      return;
+    }
+  }
   DB.agents.splice(idx, 1);
   autosave('agents');
-
-  // Clear this agent from ALL applicants immediately
-  DB.applicants.forEach(function(ap) {
-    if (ap.agent === agName) {
-      ap.agent      = '';
-      ap._agentDbId = '';
-    }
-  });
-  _reapplyFiltersIfActive();
-  autosave('applicants');
-
-  // Clear from persistent agent assignment store
-  if (window._agentAssignments) {
-    Object.keys(window._agentAssignments).forEach(function(aid) {
-      if (window._agentAssignments[aid] === agName) {
-        delete window._agentAssignments[aid];
-      }
-    });
-    Store.set('rams:applicant:agents', JSON.stringify(window._agentAssignments));
-  }
-
-  // Delete from server — server FK ON DELETE SET NULL handles applicants.agent_id
-  apiDeleteAgent(dbId).then(function(r) {
-    if (!r.ok) toast('💾 Agent removed — server will update when reconnected','info');
-    else {
-      // Re-fetch applicants so server-nulled agent_id is reflected
-      fetchApplicants().catch(function(){});
-    }
-  });
-
   addAudit('DELETE', 'Agent', 'Removed agent: ' + agName);
-  toast('Agent removed', 'success');
+  toast('Agent deleted', 'success');
   renderAgentGrid();
   if (currentPage === 'applicants') renderApplicants();
 }
@@ -17544,7 +17654,9 @@ function _doStatusChangeDeployed(applicantId, oldStatus, deployDate) {
     });
   }
 
-  if (!_trancheFired3()) {
+  if (_isLiveSession()) {
+    // the server creates T3 (with its guarantee period) when the applicant is saved as Deployed
+  } else if (!_trancheFired3()) {
     if (!agent) {
       toast('⚠️ Deployed: No agent found for ' + app.name +
         ' — T3 commission skipped. Assign an agent then use ⚡ Backfill Commissions.', 'error');
@@ -17586,7 +17698,7 @@ function _doStatusChangeDeployed(applicantId, oldStatus, deployDate) {
     apiCreateCommission(_t3).then(function(r){
       if (r&&r.ok&&r.data&&r.data.id){ _t3._dbId=r.data.id; _t3.id=r.data.id; autosave('commissions'); try{_triggerImmediateSync();}catch(e){} }
     }).catch(function(){});
-    agent.totalDeployed = (agent.totalDeployed||0)+1;
+    if (!_isLiveSession()) agent.totalDeployed = (agent.totalDeployed||0)+1;
     autosave('agents');
     addAudit('CREATE','Commission','T3 ('+_split3.p3+'%) — '+(_dc.currency==='USD'?'$':'₱')+t3amt.toLocaleString()+
       ' for '+app.name+' — deployed '+deployDate+' — guarantee ends '+guaranteeEnd);
@@ -18916,8 +19028,9 @@ function _autoBackfillCommissions() {
   // "everything is missing" and create bogus records.
   if (!DB.applicants || !DB.applicants.length) return;
   if (!DB.agents || !DB.agents.length) return;
-  var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
-  if (isLive && !_lastFetch['commissions']) return; // commissions not fetched yet
+  if (_isLiveSession()) return; // the server creates and settles commissions
+  var isLive = false;
+  if (isLive && !_lastFetch['commissions']) return;
   if (typeof hasPermission === 'function' && !hasPermission('Manage Accounting')) return;
 
   _autoBackfillBusy = true;
@@ -18941,6 +19054,7 @@ function _autoBackfillCommissions() {
 
 function backfillCommissions() {
   if (!hasPermission('Manage Accounting')) { toast('Your role cannot manage accounting','error'); return; }
+  if (_isLiveSession()) { syncCommissionsNow({ confirmFirst: true }); return; }
   if (!confirm('Scan all applicants with agents and create missing T1/T2/T3 commission records?\n\nExisting records will NOT be duplicated. Proceed?')) return;
   var made = _createMissingCommissions();
   autosave('commissions'); try{_triggerImmediateSync();}catch(e){}
@@ -19970,7 +20084,7 @@ function _populateAgentSelect(selectId, selectedName, selectedUuid) {
   var uuidInput = document.getElementById('a-agent-uuid');
   if (!sel) return;
 
-  var activeAgents = DB.agents.filter(function(a){ return a.status === 'Active'; });
+  var activeAgents = DB.agents.filter(function(a){ return (a.status === 'Active' && !a.archived) || (a.name === selectedName) || (selectedUuid && (a._dbId === selectedUuid || a.id === selectedUuid)); });
 
   if (activeAgents.length === 0) {
     sel.innerHTML = '<option value="">-- No agents yet. Add via Accounting → Agents --</option>';
@@ -19989,7 +20103,7 @@ function _populateAgentSelect(selectId, selectedName, selectedUuid) {
     activeAgents.map(function(a){
       var label = a.name + (a.code ? ' · ' + a.code : '') + (a.country ? ' · ' + a.country : '');
       var isSelected = (a.name === selectedName) || (selectedUuid && (a._dbId === selectedUuid || a.id === selectedUuid));
-      return '<option value="' + a.name + '"' + (isSelected ? ' selected' : '') + '>' + label + '</option>';
+      return '<option value="' + escapeHtml(a.name) + '"' + (isSelected ? ' selected' : '') + '>' + escapeHtml(label) + (a.status !== 'Active' || a.archived ? ' (inactive)' : '') + '</option>';
     }).join('');
 
   // Set the UUID hidden input based on selection
@@ -21915,6 +22029,9 @@ function mapAgent(row) {
     totalDeployed:   parseInt(row.total_deployed) || 0,
     backouts:        parseInt(row.backouts) || 0,
     repatriations:   parseInt(row.repatriations) || 0,
+    highRisk:        !!row.high_risk,
+    archived:        !!row.archived_at || !!row.archived,
+    archivedAt:      row.archived_at || null,
     _dbId:           row.id,
   };
 }
@@ -21965,36 +22082,24 @@ async function apiCreateAgent(data) {
       commission_rule:     data.commissionRule || null,
       address:        data.address || null,
       notes:          data.notes || null,
+      allow_duplicate_name: data.allow_duplicate_name || undefined,
     })
   });
 
-  // If the code collided with one the server has but our local copy didn't know about,
-  // refresh the real agent list and retry once with a freshly-generated code.
-  if (!r.ok && r.httpStatus === 409 && !data._codeRetried) {
-    await fetchAgents(); // pulls the true server-side list into DB.agents
-    var maxNum = 0;
-    DB.agents.forEach(function(a) {
-      var m = /^AGT-(\d+)$/.exec(a.code || '');
-      if (m) { var n = parseInt(m[1], 10); if (n > maxNum) maxNum = n; }
-    });
-    var retryCode;
-    do {
-      maxNum++;
-      retryCode = 'AGT-' + String(maxNum).padStart(3, '0');
-    } while (DB.agents.some(function(a){ return a.code === retryCode; }));
-    data.code = retryCode;
-    data._codeRetried = true;
-    return apiCreateAgent(data);
+  if (!r.ok && r.httpStatus === 409 && r.data && r.data.error === 'duplicate_name' && !data.allow_duplicate_name) {
+    if (confirm(_acctMsg(r, 'An agent with this name already exists.') + '\n\nCreate it anyway?')) {
+      data.allow_duplicate_name = true;
+      return apiCreateAgent(data);
+    }
+    toast('Agent not created', 'info');
+    return r;
   }
 
   if (r.ok && r.data && r.data.id) {
     data._dbId = r.data.id;
     data.id    = r.data.id;
   } else if (!r.ok) {
-    var hint = r.httpStatus === 409 ? 'Agent code already exists'
-             : r.httpStatus === 400 ? (r.error || 'Missing required field')
-             : r.httpStatus === 500 ? ('Server error: ' + (r.error || 'check Railway logs'))
-             : (r.error || 'Unknown error');
+    var hint = _acctMsg(r, r.error || 'Unknown error');
     console.error('[Agent create] HTTP', r.httpStatus, '—', r.error);
     toast('⚠️ Agent not saved: ' + hint, 'error');
   }
@@ -22020,9 +22125,6 @@ async function apiUpdateAgent(data) {
       address:          data.address || null,
       notes:            data.notes || null,
       status:           data.status,
-      balance:          typeof data.balance === 'number' ? data.balance : null,
-      total_expenses:   typeof data.totalExpenses === 'number' ? data.totalExpenses : null,
-      total_commission: typeof data.totalCommission === 'number' ? data.totalCommission : null,
     })
   });
 }
@@ -22047,6 +22149,7 @@ function mapLedgerRow(row) {
     commissionId:   row.commission_id || null,
     expenseId:      row.expense_id || null,
     paymentId:      row.payment_id || null,
+    category:       row.category || '',
     voided:         !!row.voided_at,
   };
 }
@@ -22054,8 +22157,15 @@ function mapLedgerRow(row) {
 async function apiFetchAgentLedger() {
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
   if (!isLive) return { ok: false };
-  var r = await apiFetch('/agent-ledger');
+  var r = await apiFetch('/agent-ledger?limit=2000&page=1');
   if (r.ok && Array.isArray(r.data)) {
+    var _all = r.data.slice(), _pg = 1;
+    while (r.ok && Array.isArray(r.data) && r.data.length >= 2000 && _pg < 50) {
+      _pg++;
+      r = await apiFetch('/agent-ledger?limit=2000&page=' + _pg);
+      if (r.ok && Array.isArray(r.data)) _all = _all.concat(r.data);
+    }
+    r = { ok: true, data: _all };
     DB.agentLedger = r.data.map(mapLedgerRow);
     autosave('agentLedger');
     _markFresh('agentLedger');
@@ -22415,6 +22525,13 @@ async function loadSharedPermissions() {
 </div>
 
 <!-- Add/Edit Agent Modal -->
+<div class="overlay" id="overlay-agent-score" onclick="closeOverlayIfBg(event,'overlay-agent-score')" role="dialog" aria-modal="true">
+  <div class="modal">
+    <div class="modal-hdr"><div><h2 id="agent-score-title">Agent scorecard</h2><p>Performance, commissions and rate history</p></div>
+      <button class="close-btn" onclick="closeOverlay('overlay-agent-score')">✕</button></div>
+    <div class="modal-body" id="agent-score-body"></div>
+  </div>
+</div>
 <div class="overlay" id="overlay-agent" onclick="closeOverlayIfBg(event,'overlay-agent')" role="dialog" aria-modal="true">
   <div class="modal modal-md">
     <div class="modal-hdr">
@@ -22555,6 +22672,13 @@ async function loadSharedPermissions() {
             <option value="adjustment">Adjustment</option>
             <option value="reversal">Commission Reversal</option>
             <option value="penalty">Penalty</option>
+          </select>
+        </div>
+        <div class="f-grp">
+          <label class="f-lbl">Category</label>
+          <select class="f-inp" id="adj-category">
+            <option value="Other">Other</option><option value="Advance">Advance</option><option value="Penalty">Penalty</option>
+            <option value="Bonus">Bonus</option><option value="Correction">Correction</option><option value="Fee">Fee</option><option value="Refund">Refund</option>
           </select>
         </div>
         <div class="f-grp">
