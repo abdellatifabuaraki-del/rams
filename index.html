@@ -1850,6 +1850,7 @@ button[disabled][data-rbac-locked] {
       </div>
       <button class="btn btn-p btn-sm" onclick="openAddCountryRule()">+ Add Country</button>
     </div>
+    <div id="rules-missing"></div>
     <div class="rules-grid" id="rules-grid"></div>
   </div>
 
@@ -4013,9 +4014,35 @@ async function apiUpdateCommission(c, patch) {
 }
 
 // ── COUNTRY RULES API ─────────────────────────────────────────────────
+// ── Canonical countries (mirrors the server list) ─────────────────────────
+var COUNTRY_LIST = [["Saudi Arabia","🇸🇦",["saudi","ksa","kingdom of saudi arabia","saudi arabia ksa"]],["United Arab Emirates","🇦🇪",["uae","u.a.e","u.a.e.","dubai","abu dhabi","emirates"]],["Qatar","🇶🇦",[]],["Kuwait","🇰🇼",[]],["Bahrain","🇧🇭",[]],["Oman","🇴🇲",[]],["Jordan","🇯🇴",[]],["Lebanon","🇱🇧",[]],["Israel","🇮🇱",[]],["Hong Kong","🇭🇰",["hk","hongkong","hong kong sar"]],["Singapore","🇸🇬",["sg"]],["Taiwan","🇹🇼",["roc"]],["Japan","🇯🇵",[]],["South Korea","🇰🇷",["korea","republic of korea","rok"]],["Malaysia","🇲🇾",[]],["Brunei","🇧🇳",[]],["Macau","🇲🇴",["macao"]],["China","🇨🇳",["prc"]],["Thailand","🇹🇭",[]],["Canada","🇨🇦",[]],["United States","🇺🇸",["usa","us","u.s.","u.s.a.","america","united states of america"]],["United Kingdom","🇬🇧",["uk","u.k.","britain","great britain","england"]],["Ireland","🇮🇪",[]],["Germany","🇩🇪",[]],["Slovenia","🇸🇮",[]],["Italy","🇮🇹",[]],["Spain","🇪🇸",[]],["France","🇫🇷",[]],["Netherlands","🇳🇱",["holland"]],["Norway","🇳🇴",[]],["Sweden","🇸🇪",[]],["Switzerland","🇨🇭",[]],["Poland","🇵🇱",[]],["Romania","🇷🇴",[]],["Malta","🇲🇹",[]],["Cyprus","🇨🇾",[]],["Australia","🇦🇺",[]],["New Zealand","🇳🇿",["nz"]],["Papua New Guinea","🇵🇬",["png"]],["Libya","🇱🇾",[]],["Nigeria","🇳🇬",[]],["Philippines","🇵🇭",["ph"]]].map(function(c) { return { name: c[0], flag: c[1], aliases: c[2] }; });
+var _countryIdx = null;
+function _cnorm(t) { return String(t || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
+function _canonCountry(t) {
+  if (!_countryIdx) {
+    _countryIdx = {};
+    COUNTRY_LIST.forEach(function(c) { _countryIdx[_cnorm(c.name)] = c.name; c.aliases.forEach(function(a) { _countryIdx[_cnorm(a)] = c.name; }); });
+  }
+  var k = _cnorm(t);
+  return k ? (_countryIdx[k] || null) : null;
+}
+function _countryKey(t) { return _cnorm(_canonCountry(t) || t); }
+function _countryDisplay(t) { return _canonCountry(t) || String(t || '').replace(/\s+/g, ' ').trim(); }
+// Active rule for a destination ("Saudi", "KSA" and "Saudi Arabia" are the same country). No fallback to another country.
+function _findCountryRule(country) {
+  var k = _countryKey(country);
+  if (!k) return null;
+  return (DB.countryRules || []).find(function(r) {
+    return r.active && (_countryKey(r.country) === k || (r.aliases || []).some(function(a) { return _countryKey(a) === k; }));
+  }) || null;
+}
+function _parseAliases(v) { if (typeof v === 'string') { try { v = JSON.parse(v); } catch (e) { v = []; } } return Array.isArray(v) ? v : []; }
+
 function mapCountryRule(row) {
   return {
     id: row.id, _dbId: row.id,
+    version:            row.version != null ? parseInt(row.version) : 1,
+    aliases:            _parseAliases(row.aliases),
     country:            row.country             || '',
     flag:               row.flag                || '🌍',
     guaranteePeriod:    row.guarantee_period != null ? parseInt(row.guarantee_period) : 6,
@@ -4033,11 +4060,11 @@ async function apiFetchCountryRules() {
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
   if (!isLive) return;
   var r = await apiFetch('/country-rules');
-  if (r.ok && Array.isArray(r.data) && r.data.length > 0) {
-    // Only overwrite if server returned actual data — never wipe with empty
+  if (r.ok && Array.isArray(r.data)) {
+    // The server is the only source of truth in a live session (no demo seeds, no stale local copy)
     DB.countryRules = r.data.map(mapCountryRule);
     autosave('countryRules');
-  } else if (r.ok && Array.isArray(r.data) && r.data.length === 0 && DB.countryRules.length > 0) {
+  } else if (false) {
     // Server returned empty but we have local rules — push them up instead
     DB.countryRules.forEach(function(rule) {
       var dbId = rule._dbId || rule.id;
@@ -4061,14 +4088,15 @@ async function apiSaveCountryRule(rule) {
     country: rule.country, flag: rule.flag,
     guarantee_period: rule.guaranteePeriod, commission_amt: rule.commissionAmt,
     commission_currency: rule.commissionCurrency || 'PHP',
-    withhold_pct: rule.withholdPct, currency: rule.currency,
     expense_rule: rule.expenseRule, active: rule.active,
     commission_split: rule.commissionSplit || null,
   };
+  if (rule._dbId && rule.version) payload.expected_version = rule.version;
   var dbId = rule._dbId || rule.id;
   if (dbId && isUUID(dbId)) {
     var r = await apiFetch('/country-rules/' + dbId, { method:'PATCH', body: JSON.stringify(payload) });
-    if (r.ok && r.data && r.data.id) { rule._dbId = r.data.id; rule.id = r.data.id; }
+    _bustAcctCache();
+    if (r.ok && r.data && r.data.id) { rule._dbId = r.data.id; rule.id = r.data.id; rule.version = r.data.version; }
     return r;
   }
   var r = await apiFetch('/country-rules', { method:'POST', body: JSON.stringify(payload) });
@@ -4728,7 +4756,7 @@ function startPolling() {
       }).catch(function(){});
     }
     // Sync country rules from other users/sessions
-    if (Store) {
+    if (Store && !_isLiveSession()) {
       Store.get('rams:shared:countryRules:ts', true).then(function(ts) {
         var remoteTs = ts ? parseInt(typeof ts === 'string' ? ts : (ts.value || '0')) : 0;
         if (remoteTs > (window._localCountryRulesTs || 0)) {
@@ -5391,7 +5419,7 @@ async function loadDB() {
          : (Array.isArray(_crShared.value) ? _crShared.value
          : (typeof _crShared.value === 'string' ? JSON.parse(_crShared.value) : null)))
       : null;
-    if (_crVal && _crVal.length > 0) {
+    if (_crVal && _crVal.length > 0 && !_isLiveSession()) {
       DB.countryRules = _crVal;
     }
   } catch(e) {}
@@ -7982,7 +8010,7 @@ function _inlineSaveMedical(appId, newMedical) {
         toast('ℹ️ Medical commission for ' + app.name + ' already recorded — skipped', 'info');
       } else {
         var _medCountry = app.job ? app.job.split('·').pop().trim() : '';
-        var _medRule    = DB.countryRules.find(function(r){ return r.country===_medCountry && r.active; });
+        var _medRule    = _findCountryRule(_medCountry);
         // Same precedence as _resolveCommission: worker override → per-country
         // override → agent primary rate → country rule → default
         var _agentRate = getAgentRateForApplicant(_agent, app);
@@ -13780,12 +13808,10 @@ function renderCommissions() {
   if (ratesEl) {
     ratesEl.innerHTML = DB.countryRules.filter(function(r){ return r.active; }).map(function(r) {
       return '<div class="comm-row">'+
-        '<div class="comm-country">'+r.flag+' '+r.country+'</div>'+
+        '<div class="comm-country">'+escapeHtml(r.flag)+' '+escapeHtml(r.country)+'</div>'+
         '<div style="display:flex;align-items:center;gap:8px">'+
           '<span style="font-size:12px;color:var(--muted);font-weight:700">'+(r.commissionCurrency==='USD'?'$ USD':'₱ PHP')+'</span>'+
-          '<input class="comm-inp" type="number" min="0" step="500" value="'+r.commissionAmt+'" id="crate-'+r.id+'" title="Commission amount PHP" style="width:90px">'+
-          '<input class="comm-inp" type="number" min="0" max="100" step="1" value="'+r.withholdPct+'" id="cwith-'+r.id+'" title="Withhold during guarantee %" style="width:60px">'+
-          '<span style="font-size:11px;color:var(--dim)">%&nbsp;held</span>'+
+          '<input class="comm-inp" type="number" min="0.01" step="0.01" value="'+r.commissionAmt+'" id="crate-'+r.id+'" title="Commission amount ('+(r.commissionCurrency||'PHP')+') — used by every agent on \'country rate\' mode" style="width:100px">'+
         '</div>'+
       '</div>';
     }).join('');
@@ -14063,48 +14089,36 @@ function resetCommissions() {
   })();
 }
 
-function saveCommissionRates() {
-  var updated = 0;
-  var promises = [];
-
+async function saveCommissionRates() {
+  if (!hasPermission('Manage Country Rules')) { toast('Your role cannot change country rules', 'error'); return; }
+  var changes = [];
   DB.countryRules.filter(function(r){ return r.active; }).forEach(function(r) {
-    var amtEl  = document.getElementById('crate-' + r.id);
-    var witEl  = document.getElementById('cwith-' + r.id);
-    if (!amtEl) return;
-
-    var newAmt  = parseInt(amtEl.value)  || 0;
-    var newWith = parseInt((witEl||{}).value) || 0;
-
-    if (newAmt === r.commissionAmt && newWith === r.withholdPct) return; // unchanged
-
-    r.commissionAmt = newAmt;
-    r.withholdPct   = newWith;
-    updated++;
-
-    // Persist to backend
-    var dbId = r._dbId || r.id;
-    if (dbId) {
-      var p = apiFetch('/country-rules/' + dbId, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          commission_amt:   newAmt,
-          withhold_pct:     newWith,
-          commission_amount: newAmt,
-        }),
-      }).catch(function(e){ console.warn('[saveCommissionRates] PATCH failed:', e.message); });
-      promises.push(p);
-    }
+    var el = document.getElementById('crate-' + r.id);
+    if (!el) return;
+    var v = parseFloat(el.value);
+    if (!isFinite(v) || v <= 0) { if (el.value !== '') changes.push({ bad: r.country }); return; }
+    v = Math.round(v * 100) / 100;
+    if (v !== r.commissionAmt) changes.push({ rule: r, amt: v });
   });
-
-  if (!updated) { toast('No changes to save', 'info'); return; }
-
+  var bad = changes.filter(function(c){ return c.bad; });
+  if (bad.length) { toast('Amount must be greater than 0 (' + bad[0].bad + ')', 'error'); return; }
+  if (!changes.length) { toast('No changes to save', 'info'); return; }
+  if (!confirm('Change the commission amount for ' + changes.map(function(c){ return c.rule.country + ' → ' + c.amt.toLocaleString(); }).join(', ') +
+      '?\n\nExisting commissions keep their original terms; new tranches use the new amount.')) return;
+  var done = 0, failed = 0, impact = 0;
+  for (var i = 0; i < changes.length; i++) {
+    var c = changes[i];
+    if (!_isLiveSession()) { c.rule.commissionAmt = c.amt; done++; continue; }
+    var r = await apiFetch('/country-rules/' + (c.rule._dbId || c.rule.id), { method: 'PATCH', body: JSON.stringify({ commission_amt: c.amt, expected_version: c.rule.version }) });
+    if (r.ok) { c.rule.commissionAmt = parseFloat(r.data.commission_amt); c.rule.version = r.data.version; done++; impact += (r.data.impact && r.data.impact.applicants_in_pipeline) || 0; }
+    else { failed++; toast(_acctMsg(r, 'Could not save ' + c.rule.country), 'error'); }
+  }
+  _bustAcctCache();
   autosave('countryRules');
-  // Trigger sync so other users get updated rates
-  Promise.all(promises).then(function(){
-    try { _triggerImmediateSync(); } catch(e) {}
-    addAudit('UPDATE', 'Country Rules', updated + ' commission rate(s) updated');
-    toast('✅ Commission rates saved for ' + updated + ' country rule(s)', 'success');
-  });
+  if (_isLiveSession() && failed) { try { await apiFetchCountryRules(); } catch (e) {} }
+  if (done) { addAudit('UPDATE', 'Country Rules', done + ' commission amount(s) updated'); toast('✅ Saved ' + done + ' country rate(s)' + (impact ? ' — ' + impact + ' applicant(s) in the pipeline will use them for new tranches' : ''), 'success'); }
+  renderCommissions();
+  if (typeof renderCountryRules === 'function') renderCountryRules();
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -14417,7 +14431,14 @@ async function _chargeExpenseServer(exp, agentId, opts) {
   }
   var ag = DB.agents.find(function(a) { return a.id === agentId || a._dbId === agentId; });
   var aid = ag ? (ag._dbId || ag.id) : agentId;
-  var r = await _acctCall('/expenses/' + dbId + '/charge', { agent_id: aid, description: opts.description || undefined, percent: opts.percent || undefined });
+  var r = await _acctCall('/expenses/' + dbId + '/charge', { agent_id: aid, description: opts.description || undefined, percent: opts.percent || undefined, override_reason: opts.override_reason || undefined });
+  if (!r.ok && r.httpStatus === 409 && r.data && r.data.error === 'rule_mismatch' && !opts.override_reason) {
+    if (hasPermission('Manage FX & Funds') || getCurrentRole() === 'Admin') {
+      var why = _askReason(_acctMsg(r, 'This differs from the country expense rule.') + '\n\nReason to override?');
+      if (why) return _chargeExpenseServer(exp, agentId, Object.assign({}, opts, { override_reason: why, percent: opts.percent || r.data.required_percent || 100 }));
+    }
+    return { ok: false, status: 409, error: _acctMsg(r, 'The country expense rule does not allow this charge') };
+  }
   if (!r.ok) return { ok: false, status: r.httpStatus, error: _acctMsg(r, 'Could not charge the expense'), already: r.httpStatus === 409 && r.data && r.data.error === 'already_charged' };
   var d = r.data;
   _applyExpenseRow(d.expense);
@@ -14485,7 +14506,7 @@ async function _settleExpenseByRule(e, agent, rule, label, pctOverride) {
 
 async function _settleExitExpenses(app, agent, newStatus) {
   var country = app.job ? app.job.split('·').pop().trim() : '';
-  var cr = DB.countryRules.find(function(r) { return r.country === country && r.active; });
+  var cr = _findCountryRule(country);
   var rule = cr ? (cr.expenseRule || 'full') : 'full';
   var label = { full: 'Full recovery', partial: '50% recovery', medical: 'Medical only', none: 'Agency absorbs' }[rule] || rule;
   var nameLower = (app.name || '').toLowerCase();
@@ -15799,7 +15820,7 @@ async function saveExpense() {
   var plan = { charge: null, status: null };
   var _country = app && app.job ? app.job.split('·').pop().trim() : '';
   if (app && ['Backout', 'Repatriated', 'Rejected'].indexOf(app.status) !== -1) {
-    var _rule = DB.countryRules.find(function(r) { return r.country === _country && r.active; });
+    var _rule = _findCountryRule(_country);
     var _expRule = _rule ? (_rule.expenseRule || 'full') : 'full';
     var canBill = !!agent && currency === 'PHP';
     if (_expRule === 'none') plan.status = 'Agency';
@@ -16091,32 +16112,91 @@ function cleanDuplicateCommissions() {
 function renderCountryRules() {
   var grid = document.getElementById('rules-grid');
   if (!grid) return;
+  var canEdit = hasPermission('Manage Country Rules');
+  var isAdmin = getCurrentRole() === 'Admin';
   grid.innerHTML = DB.countryRules.map(function(r, idx) {
     var expLabel = {full:'Full recovery',partial:'50% recovery',medical:'Medical only',none:'Agency absorbs'}[r.expenseRule]||r.expenseRule;
     return '<div class="rule-card">'+
-      '<div class="rule-country">'+r.flag+' '+r.country+
+      '<div class="rule-country">'+escapeHtml(r.flag)+' '+escapeHtml(r.country)+
         '<span class="pill '+(r.active?'pill-green':'pill-gray')+'" style="font-size:10px;margin-left:auto">'+(r.active?'Active':'Inactive')+'</span>'+
       '</div>'+
       '<div class="rule-row"><span>Guarantee Period</span><span class="rule-val">'+r.guaranteePeriod+' mo</span></div>'+
       '<div class="rule-row"><span>Commission Amount</span><span class="rule-val">'+(r.commissionCurrency==='USD'?'$':'₱')+r.commissionAmt.toLocaleString()+' '+(r.commissionCurrency||'PHP')+'</span></div>'+
-      '<div class="rule-row"><span>Withhold (guarantee)</span><span class="rule-val">'+r.withholdPct+'%</span></div>'+
       '<div class="rule-row"><span>Split T1/T2/T3</span><span class="rule-val">'+(r.commissionSplit ? r.commissionSplit.t1+'/'+r.commissionSplit.t2+'/'+r.commissionSplit.t3 : '20/20/60')+'%'+(r.commissionSplit?' ✎':'')+'</span></div>'+
       '<div class="rule-row"><span>Expense Rule</span><span style="font-size:11.5px;color:var(--muted)">'+expLabel+'</span></div>'+
-      '<div class="rule-row"><span>Currency</span><span class="rule-val">'+r.currency+'</span></div>'+
-      '<div style="display:flex;gap:6px;margin-top:10px">'+
-        '<button class="btn btn-s btn-sm" style="flex:1" onclick="openEditCountryRule('+idx+')">✏ Edit</button>'+
-        '<button class="btn btn-ghost btn-xs" onclick="toggleRuleActive('+idx+')">'+(r.active?'Disable':'Enable')+'</button>'+
+      '<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">'+
+        (canEdit ? '<button class="btn btn-s btn-sm" style="flex:1" onclick="openEditCountryRule('+idx+')">✏ Edit</button>' : '')+
+        '<button class="btn btn-ghost btn-xs" onclick="openCountryRuleInfo('+idx+')" title="Usage and history">ℹ</button>'+
+        (canEdit ? '<button class="btn btn-ghost btn-xs" onclick="toggleRuleActive('+idx+')">'+(r.active?'Disable':'Enable')+'</button>' : '')+
+        (isAdmin && canEdit ? '<button class="btn btn-danger btn-xs" onclick="deleteCountryRule('+idx+')">✕</button>' : '')+
       '</div>'+
     '</div>';
-  }).join('');
+  }).join('') || '<div class="empty-state" style="grid-column:1/-1"><div class="empty-title">No country rules yet</div></div>';
+  _renderMissingRules();
 }
 
-function toggleRuleActive(idx) {
-  var rule = DB.countryRules[idx];
-  rule.active = !rule.active;
-  renderCountryRules();
+async function _renderMissingRules() {
+  var host = document.getElementById('rules-missing');
+  if (!host || !_isLiveSession()) return;
+  var r = await apiFetch('/country-rules/countries');
+  if (!r.ok || !r.data) return;
+  var m = r.data.missing || [];
+  host.innerHTML = m.length ? '<div class="alert-card" style="margin-bottom:12px"><div class="alert-icon">⚠</div><div class="alert-body"><div class="alert-title">Countries with jobs or applicants but no active rule</div><div class="alert-sub">' +
+    m.slice(0, 8).map(function(x){ return escapeHtml(x.country) + ' (' + x.records + ')'; }).join(' · ') +
+    ' — these use the default terms (₱15,000, 20/20/60, 6 months, full expense recovery).</div></div></div>' : '';
+}
+
+async function openCountryRuleInfo(idx) {
+  var r = DB.countryRules[idx]; if (!r) return;
+  var body = document.getElementById('rule-info-body'), ttl = document.getElementById('rule-info-title');
+  if (!body) return;
+  if (ttl) ttl.textContent = r.country + ' — usage & history';
+  body.innerHTML = '<div style="padding:20px;color:var(--muted)">Loading…</div>';
+  openOverlay('overlay-rule-info');
+  if (!_isLiveSession()) { body.innerHTML = '<div style="padding:20px;color:var(--muted)">Usage and history need a live server session.</div>'; return; }
+  var id = r._dbId || r.id;
+  var res = await Promise.all([apiFetch('/country-rules/' + id + '/usage'), apiFetch('/country-rules/' + id + '/history')]);
+  var u = res[0].ok ? res[0].data : null, h = res[1].ok && Array.isArray(res[1].data) ? res[1].data : [];
+  var html = u ? '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">' +
+    [['Applicants', u.applicants_total], ['In pipeline', u.applicants_in_pipeline], ['Jobs', u.jobs], ['Agent overrides', u.agents_with_override], ['Open commissions', u.pending_commissions]].map(function(k){
+      return '<div class="ledger-sum-card"><div class="ledger-sum-val">' + k[1] + '</div><div class="ledger-sum-lbl">' + k[0] + '</div></div>'; }).join('') + '</div>' : '';
+  html += '<div style="font-size:12px;font-weight:800;margin:10px 0 6px">History</div>' + (h.length ?
+    '<table style="width:100%;font-size:12px"><tbody>' + h.map(function(x){
+      return '<tr><td style="padding:3px 6px;color:var(--muted);white-space:nowrap">' + escapeHtml(String(x.created_at || '').slice(0, 10)) + '</td><td style="padding:3px 6px">' + escapeHtml(x.summary || x.action) + '</td><td style="padding:3px 6px;color:var(--muted)">' + escapeHtml(x.changed_by_name || '') + '</td></tr>'; }).join('') + '</tbody></table>'
+    : '<div style="color:var(--muted);font-size:12px">No history yet.</div>');
+  body.innerHTML = html;
+}
+
+async function deleteCountryRule(idx) {
+  var rule = DB.countryRules[idx]; if (!rule) return;
+  if (!hasPermission('Manage Country Rules')) { toast('Your role cannot change country rules', 'error'); return; }
+  if (!confirm('Delete the rule for ' + rule.country + '? This cannot be undone. (A rule in use cannot be deleted — disable it instead.)')) return;
+  if (_isLiveSession()) {
+    var r = await apiFetch('/country-rules/' + (rule._dbId || rule.id), { method: 'DELETE' });
+    _bustAcctCache();
+    if (!r.ok) { toast(_acctMsg(r, 'Could not delete the rule'), 'error'); return; }
+  }
+  DB.countryRules.splice(idx, 1);
   autosave('countryRules');
-  apiSaveCountryRule(rule).catch(function(){});
+  addAudit('DELETE', 'Settings', 'Country rule deleted: ' + rule.country);
+  toast('Country rule deleted', 'success');
+  renderCountryRules();
+}
+
+async function toggleRuleActive(idx) {
+  var rule = DB.countryRules[idx];
+  if (!rule) return;
+  if (!hasPermission('Manage Country Rules')) { toast('Your role cannot change country rules', 'error'); return; }
+  var next = !rule.active;
+  if (!next && !confirm('Disable ' + rule.country + '? Workers going there will use the default terms (₱15,000, 20/20/60, 6 months, full expense recovery) until it is enabled again.')) return;
+  var prev = rule.active;
+  rule.active = next;
+  if (_isLiveSession()) {
+    var r = await apiSaveCountryRule(rule);
+    if (!r.ok) { rule.active = prev; toast(_acctMsg(r, 'Could not update the rule'), 'error'); renderCountryRules(); return; }
+  }
+  autosave('countryRules');
+  renderCountryRules();
   toast('Country rule ' + (rule.active ? 'enabled' : 'disabled'), 'success');
 }
 
@@ -16328,10 +16408,15 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
         // No T3 commission found — worker might not have been properly deployed
         // Fall back to country rule guarantee period from deployment date
         var _country = app.job ? app.job.split('·').pop().trim() : '';
-        var _rule = DB.countryRules.find(function(r){ return r.country===_country && r.active; });
-        var _gp   = _rule ? (_rule.guaranteePeriod||6) : 6;
-        // Use date applied + deployment assumed — conservative: waive if no T3 record
-        _shouldWaiveRepatriated = true;
+        var _rule = _findCountryRule(_country);
+        var _gp   = _rule ? (_rule.guaranteePeriod != null ? _rule.guaranteePeriod : 6) : 6;
+        // No T3 record: use the real deployment date + the country guarantee; waive only if it is still within it
+        if (app.deploymentDate) {
+          var _ge = new Date(app.deploymentDate); _ge.setMonth(_ge.getMonth() + _gp);
+          _shouldWaiveRepatriated = _today <= _ymd(_ge);
+        } else {
+          _shouldWaiveRepatriated = true;
+        }
       }
     }
 
@@ -16466,8 +16551,7 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
   // ── 3. Commission helper — resolve country rule + total commission ──
   function _resolveCommission() {
     var country  = app.job ? app.job.split('·').pop().trim() : '';
-    var rule     = DB.countryRules.find(function(r){ return r.country === country && r.active; })
-                || DB.countryRules.find(function(r){ return r.active; });
+    var rule     = _findCountryRule(country);
     // Priority: 1) Agent's worker-specific override for this applicant
     //           2) Agent's per-country override for this destination
     //           3) Agent's primary commission rate
@@ -16883,7 +16967,9 @@ function openAddAgent() {
   ['ag-name','ag-code','ag-phone','ag-email','ag-address','ag-notes'].forEach(function(id){
     var el = document.getElementById(id); if(el) el.value='';
   });
-  var ci = document.getElementById('ag-commission'); if(ci) ci.value='5';
+  var ci = document.getElementById('ag-commission'); if(ci) ci.value='15000';
+  var rm = document.getElementById('ag-rate-mode'); if (rm) rm.value = 'country';
+  _syncRateMode();
   _renderAgentRateRows([]);
   _renderAgentWorkerRateRows([]);
   // Worker-specific rates need an existing agent id to pick applicants from —
@@ -16903,6 +16989,7 @@ function openEditAgent(idx) {
     'ag-email':a.email,'ag-address':a.address,'ag-notes':a.notes||'',
     'ag-commission':a.commissionAmt,
     'ag-commission-currency': a.commissionCurrency || 'PHP',
+    'ag-rate-mode': a.rateMode || 'country',
   };
   Object.keys(flds).forEach(function(id){ var el=document.getElementById(id); if(el) el.value=flds[id]; });
   var ci = document.getElementById('ag-country');
@@ -16911,7 +16998,15 @@ function openEditAgent(idx) {
   _renderAgentWorkerRateRows(a.workerRates || []);
   _setAgentRuleFields(a.commissionRule || null);
   var wsec = document.getElementById('ag-worker-section'); if (wsec) wsec.style.display = '';
+  _syncRateMode();
   openOverlay('overlay-agent');
+}
+function _syncRateMode() {
+  var m = document.getElementById('ag-rate-mode'), a = document.getElementById('ag-commission'), c = document.getElementById('ag-commission-currency');
+  if (!m || !a) return;
+  var fixed = m.value === 'fixed';
+  a.disabled = !fixed; if (c) c.disabled = !fixed;
+  a.title = fixed ? '' : 'Not used: commissions follow each country rule';
 }
 
 function submitAgent() {
@@ -16947,6 +17042,7 @@ function submitAgent() {
     phone: phone,
     email: (document.getElementById('ag-email').value||'').trim(),
     country: document.getElementById('ag-country').value,
+    rateMode:            (document.getElementById('ag-rate-mode') || {}).value || 'country',
     commissionAmt:       parseFloat(document.getElementById('ag-commission').value)||15000,
     commissionCurrency:  (document.getElementById('ag-commission-currency') || {}).value || 'PHP',
     extraRates:          _collectAgentRateRows(),
@@ -17669,8 +17765,7 @@ function _doStatusChangeDeployed(applicantId, oldStatus, deployDate) {
     // per-country and worker-specific overrides on the biggest tranche (60%).
     var _dc = (function() {
       var country  = app.job ? app.job.split('·').pop().trim() : (app.destination || '');
-      var rule     = DB.countryRules.find(function(r){ return r.country === country && r.active; })
-                  || DB.countryRules.find(function(r){ return r.active; });
+      var rule     = _findCountryRule(country);
       var agentRate = agent ? getAgentRateForApplicant(agent, app) : null;
       var total    = agentRate ? agentRate.amount   : (rule ? rule.commissionAmt : 15000);
       var currency = agentRate ? agentRate.currency : (rule ? (rule.commissionCurrency || 'PHP') : 'PHP');
@@ -18606,14 +18701,14 @@ function renderDrawerComplaintsTab(applicantId) {
 
 // ── COUNTRY RULE CRUD ─────────────────────────────────────────────────
 function openAddCountryRule() {
+  _fillCountryList();
   editingRuleIdx = -1;
   document.getElementById('rule-modal-title').textContent = 'Add Country Rule';
-  ['cr-country','cr-guarantee','cr-commission','cr-withhold'].forEach(function(id){
+  ['cr-country','cr-guarantee','cr-commission'].forEach(function(id){
     var el=document.getElementById(id); if(el) el.value='';
   });
   var gu=document.getElementById('cr-guarantee'); if(gu) gu.value='6';
-  var co=document.getElementById('cr-commission'); if(co) co.value='5';
-  var wh=document.getElementById('cr-withhold'); if(wh) wh.value='20';
+  var co=document.getElementById('cr-commission'); if(co) co.value='15000';
   _setCountrySplitFields(null);
   openOverlay('overlay-country-rule');
 }
@@ -18638,9 +18733,14 @@ function _syncCountrySplitSum() {
   el.style.color = Math.abs(s - 100) < 0.001 ? '#16a34a' : '#dc2626';
 }
 
+function _fillCountryList() {
+  var dl = document.getElementById('cr-country-list');
+  if (dl) dl.innerHTML = COUNTRY_LIST.map(function(c){ return '<option value="' + escapeHtml(c.name) + '">'; }).join('');
+}
 function openEditCountryRule(idx) {
   var r = DB.countryRules[idx];
   if (!r) return;
+  _fillCountryList();
   editingRuleIdx = idx;
   document.getElementById('rule-modal-title').textContent = 'Edit Country Rule';
   document.getElementById('cr-country').value    = r.country;
@@ -18648,44 +18748,70 @@ function openEditCountryRule(idx) {
   document.getElementById('cr-commission').value = r.commissionAmt;
   var crCurEl = document.getElementById('cr-commission-currency');
   if (crCurEl) crCurEl.value = r.commissionCurrency || 'PHP';
-  document.getElementById('cr-withhold').value   = r.withholdPct;
-  document.getElementById('cr-currency').value   = r.currency;
   document.getElementById('cr-expense-rule').value = r.expenseRule;
   _setCountrySplitFields(r.commissionSplit || null);
   openOverlay('overlay-country-rule');
 }
 
-function submitCountryRule() {
-  var country = (document.getElementById('cr-country').value||'').trim();
+async function submitCountryRule() {
+  if (!hasPermission('Manage Country Rules')) { toast('Your role cannot change country rules', 'error'); return; }
+  var country = _countryDisplay(document.getElementById('cr-country').value);
   if (!country) { toast('Country name is required','error'); return; }
   if (Math.abs(_countrySplitSum() - 100) > 0.001) { toast('Commission split must total 100% (currently ' + _countrySplitSum() + '%)','error'); return; }
+  var g = parseInt(document.getElementById('cr-guarantee').value, 10);
+  if (!isFinite(g) || g < 0 || g > 60) { toast('Guarantee period must be 0 to 60 months', 'error'); return; }
+  var amt = parseFloat(document.getElementById('cr-commission').value);
+  if (!isFinite(amt) || amt <= 0) { toast('Commission amount must be greater than 0', 'error'); return; }
+  var dup = DB.countryRules.findIndex(function(x, i){ return i !== editingRuleIdx && _countryKey(x.country) === _countryKey(country); });
+  if (dup !== -1) { toast('A rule for ' + country + ' already exists', 'error'); return; }
+  var cf = null; COUNTRY_LIST.forEach(function(c){ if (c.name === country) cf = c.flag; });
   var data = {
     country: country,
-    flag: '🌍',
+    flag: cf || (editingRuleIdx >= 0 ? DB.countryRules[editingRuleIdx].flag : '🌍'),
     commissionSplit: _parseCommissionRule({
       t1: parseFloat(document.getElementById('cr-split-t1').value) || 0,
       t2: parseFloat(document.getElementById('cr-split-t2').value) || 0,
       t3: parseFloat(document.getElementById('cr-split-t3').value) || 0
     }),
-    guaranteePeriod: (function(){ var v = document.getElementById('cr-guarantee').value; return v !== '' && !isNaN(parseInt(v)) ? parseInt(v) : 6; })(),
-    commissionAmt:   (function(){ var v = document.getElementById('cr-commission').value; return v !== '' && !isNaN(parseFloat(v)) ? parseFloat(v) : 15000; })(),
+    guaranteePeriod: g,
+    commissionAmt:   Math.round(amt * 100) / 100,
     commissionCurrency: (document.getElementById('cr-commission-currency') || {}).value || 'PHP',
-    withholdPct:     (function(){ var v = document.getElementById('cr-withhold').value; return v !== '' && !isNaN(parseFloat(v)) ? parseFloat(v) : 20; })(),
-    currency:        document.getElementById('cr-currency').value,
     expenseRule:     document.getElementById('cr-expense-rule').value,
     active: true,
   };
-  if (editingRuleIdx >= 0) {
-    Object.assign(DB.countryRules[editingRuleIdx], data);
-    toast('Country rule updated', 'success');
+  var editing = editingRuleIdx >= 0;
+  var rule = editing ? DB.countryRules[editingRuleIdx] : null;
+  // impact preview before a live edit that changes money terms
+  if (editing && _isLiveSession()) {
+    var money = rule.commissionAmt !== data.commissionAmt || rule.guaranteePeriod !== data.guaranteePeriod || rule.commissionCurrency !== data.commissionCurrency ||
+      JSON.stringify(rule.commissionSplit || null) !== JSON.stringify(data.commissionSplit || null) || rule.expenseRule !== data.expenseRule;
+    if (money) {
+      var ur = await apiFetch('/country-rules/' + (rule._dbId || rule.id) + '/usage');
+      if (ur.ok && ur.data && !confirm(rule.country + ': ' + ur.data.applicants_in_pipeline + ' applicant(s) in the pipeline and ' + ur.data.pending_commissions +
+          ' open commission(s) use this rule.\n\nExisting commissions keep their original terms; new tranches and exit expenses use the new terms. Save the change?')) return;
+    }
+  }
+  var backup = rule ? Object.assign({}, rule) : null;
+  var target;
+  if (editing) { Object.assign(rule, data); target = rule; }
+  else { data.id = 'CR-' + String(DB.countryRules.length + 1).padStart(3, '0'); DB.countryRules.push(data); target = data; }
+  if (_isLiveSession()) {
+    var r = await apiSaveCountryRule(target);
+    if (!r.ok) {
+      if (editing) Object.assign(rule, backup); else DB.countryRules.splice(DB.countryRules.indexOf(target), 1);
+      toast(_acctMsg(r, 'Could not save the country rule'), 'error');
+      if (r.httpStatus === 409) { try { await apiFetchCountryRules(); } catch (e) {} }
+      renderCountryRules();
+      return;
+    }
+    Object.assign(target, mapCountryRule(r.data));
+    var imp = r.data.impact;
+    toast((editing ? 'Country rule updated' : 'Country added') + (imp && imp.applicants_in_pipeline ? ' — ' + imp.applicants_in_pipeline + ' applicant(s) in the pipeline use it for new tranches' : ''), 'success');
   } else {
-    data.id = 'CR-' + String(DB.countryRules.length + 1).padStart(3, '0');
-    DB.countryRules.push(data);
-    toast('Country added', 'success');
+    toast(editing ? 'Country rule updated' : 'Country added', 'success');
   }
   autosave('countryRules');
-  apiSaveCountryRule(editingRuleIdx >= 0 ? DB.countryRules[editingRuleIdx] : DB.countryRules[DB.countryRules.length-1]).catch(function(){});
-  addAudit('UPDATE', 'Settings', 'Country rule saved: ' + (data.country || ''));
+  addAudit('UPDATE', 'Settings', 'Country rule saved: ' + data.country);
   closeOverlay('overlay-country-rule');
   renderCountryRules();
 }
@@ -19077,7 +19203,7 @@ function _createMissingCommissions() {
     var agent=DB.agents.find(function(a){ return a.id===app._agentDbId||a.id===app._agentId||a.id===app.agentId||a.name===app.agent; });
     if (!agent) { skipped++; return; }
     var appId=app.id||app._dbId, country=app.job?app.job.split('·').pop().trim():'';
-    var rule=DB.countryRules.find(function(r){return r.country===country&&r.active;})||DB.countryRules.find(function(r){return r.active;});
+    var rule=_findCountryRule(country);
     // Honour the agent's worker-specific / per-country rate, matching the live commission path
     var _rate = (typeof getAgentRateForApplicant === 'function') ? getAgentRateForApplicant(agent, app) : null;
     var total    = _rate ? _rate.amount   : (rule ? rule.commissionAmt : 15000);
@@ -21885,12 +22011,13 @@ function _parseExtraRates(raw) {
 function getAgentRateForCountry(agent, country) {
   if (!agent) return null;
   var rates = agent.extraRates || [];
-  var key = String(country || '').toLowerCase().trim();
+  var key = _countryKey(country);
   if (key) {
-    var hit = rates.find(function(r){ return String(r.country).toLowerCase().trim() === key; });
+    var hit = rates.find(function(r){ return _countryKey(r.country) === key; });
     if (hit) return { amount: hit.amount, currency: hit.currency || 'PHP', source: 'override' };
   }
-  if (agent.commissionAmt != null && agent.commissionAmt > 0) {
+  // 'country' mode (default): the country rule prices it. Legacy/undefined mode behaves as fixed.
+  if (agent.rateMode !== 'country' && agent.commissionAmt != null && agent.commissionAmt > 0) {
     return { amount: agent.commissionAmt, currency: agent.commissionCurrency || 'PHP', source: 'primary' };
   }
   return null;
@@ -21988,9 +22115,7 @@ function getAgentCommissionSplit(agent, country) {
   if (!s && r && r.t1 != null) s = r;
   if (!s && country) {
     var key = String(country).toLowerCase().trim();
-    var cr = (DB.countryRules || []).find(function(x){
-      return x.active && String(x.country).toLowerCase().trim() === key;
-    });
+    var cr = _findCountryRule(country);
     if (cr && cr.commissionSplit && cr.commissionSplit.t1 != null) s = cr.commissionSplit;
   }
   if (!s) s = DEFAULT_COMMISSION_SPLIT;
@@ -22030,6 +22155,7 @@ function mapAgent(row) {
     backouts:        parseInt(row.backouts) || 0,
     repatriations:   parseInt(row.repatriations) || 0,
     highRisk:        !!row.high_risk,
+    rateMode:        row.rate_mode || 'country',
     archived:        !!row.archived_at || !!row.archived,
     archivedAt:      row.archived_at || null,
     _dbId:           row.id,
@@ -22075,6 +22201,7 @@ async function apiCreateAgent(data) {
       phone:          data.phone || null,
       email:          data.email || null,
       country:        data.country || null,
+      rate_mode:           data.rateMode || 'country',
       commission_amt:      data.commissionAmt != null ? data.commissionAmt : 15000,
       commission_currency: data.commissionCurrency || 'PHP',
       extra_rates:         data.extraRates || [],
@@ -22117,6 +22244,7 @@ async function apiUpdateAgent(data) {
       phone:            data.phone || null,
       email:            data.email || null,
       country:          data.country || null,
+      rate_mode:           data.rateMode || 'country',
       commission_amt:      data.commissionAmt || 15000,
       commission_currency: data.commissionCurrency || 'PHP',
       extra_rates:         data.extraRates || [],
@@ -22572,6 +22700,10 @@ async function loadSharedPermissions() {
         </div>
         <div class="f-grp">
           <label class="f-lbl">Commission Amount</label>
+          <select class="f-inp" id="ag-rate-mode" onchange="_syncRateMode()" style="margin-bottom:6px">
+            <option value="country">Use each country's rate (recommended)</option>
+            <option value="fixed">Fixed amount for every country</option>
+          </select>
           <div style="display:flex;gap:6px">
             <select class="f-inp" id="ag-commission-currency" style="width:90px">
               <option value="PHP">₱ PHP</option>
@@ -22717,6 +22849,13 @@ async function loadSharedPermissions() {
 </div>
 
 <!-- Add Country Rule Modal -->
+<div class="overlay" id="overlay-rule-info" onclick="closeOverlayIfBg(event,'overlay-rule-info')" role="dialog" aria-modal="true">
+  <div class="modal">
+    <div class="modal-hdr"><div><h2 id="rule-info-title">Country rule</h2><p>What depends on this rule and how it changed</p></div>
+      <button class="close-btn" onclick="closeOverlay('overlay-rule-info')">✕</button></div>
+    <div class="modal-body" id="rule-info-body"></div>
+  </div>
+</div>
 <div class="overlay" id="overlay-country-rule" onclick="closeOverlayIfBg(event,'overlay-country-rule')" role="dialog" aria-modal="true">
   <div class="modal modal-sm">
     <div class="modal-hdr">
@@ -22726,12 +22865,14 @@ async function loadSharedPermissions() {
     <div class="modal-body">
       <div class="f-grp">
         <label class="f-lbl">Country <span class="req">*</span></label>
-        <input class="f-inp" id="cr-country" type="text" placeholder="e.g. Saudi Arabia">
+        <input class="f-inp" id="cr-country" type="text" list="cr-country-list" placeholder="e.g. Saudi Arabia" autocomplete="off">
+        <datalist id="cr-country-list"></datalist>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">Pick from the list so names always match (KSA and Saudi both become Saudi Arabia).</div>
       </div>
       <div class="f-row">
         <div class="f-grp">
           <label class="f-lbl">Guarantee Period (months)</label>
-          <input class="f-inp" id="cr-guarantee" type="number" min="1" max="24" value="6">
+          <input class="f-inp" id="cr-guarantee" type="number" min="0" max="60" step="1" value="6">
         </div>
         <div class="f-grp">
           <label class="f-lbl">Commission Amount</label>
@@ -22740,22 +22881,8 @@ async function loadSharedPermissions() {
               <option value="PHP">₱ PHP</option>
               <option value="USD">$ USD</option>
             </select>
-            <input class="f-inp" id="cr-commission" type="number" min="0" step="100" value="15000" style="flex:1">
+            <input class="f-inp" id="cr-commission" type="number" min="0.01" step="0.01" value="15000" style="flex:1">
           </div>
-        </div>
-      </div>
-      <div class="f-row">
-        <div class="f-grp">
-          <label class="f-lbl">Withhold During Guarantee (%)</label>
-          <input class="f-inp" id="cr-withhold" type="number" min="0" max="100" step="5" value="20">
-        </div>
-        <div class="f-grp">
-          <label class="f-lbl">Currency</label>
-          <select class="f-inp" id="cr-currency">
-            <option>PHP</option><option>USD</option><option>SAR</option><option>AED</option><option>QAR</option>
-            <option>KWD</option><option>HKD</option><option>SGD</option><option>JPY</option><option>EUR</option><option>GBP</option>
-            <option>CAD</option><option>EUR</option>
-          </select>
         </div>
       </div>
       <div class="f-grp">
@@ -22771,7 +22898,7 @@ async function loadSharedPermissions() {
       <div class="f-grp">
         <label class="f-lbl">Expense Responsibility on Backout</label>
         <select class="f-inp" id="cr-expense-rule">
-          <option value="full">Full — Agent pays all expenses</option>
+          <option value="full">Full — Agent pays all expenses (enforced by the server)</option>
           <option value="partial">Partial — Agent pays 50% of expenses</option>
           <option value="medical">Medical Only — Agent pays medical expenses</option>
           <option value="none">None — Agency absorbs expenses</option>
