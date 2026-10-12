@@ -1674,29 +1674,33 @@ button[disabled][data-rbac-locked] {
     <div class="card">
       <div style="padding:16px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
         <div style="font-size:14px;font-weight:800">All Expenses</div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <select class="f-inp" id="exp-agent-filter" onchange="_expFilterState.agent=this.value;renderExpensesTab()" style="width:160px">
-            <option value="">All Agents</option>
-          </select>
-          <select class="f-inp" id="exp-status-filter" onchange="_expFilterState.status=this.value;renderExpensesTab()" style="width:140px">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <select class="f-inp" id="exp-agent-filter" onchange="expSetFilter('agent',this.value)" style="width:150px"><option value="">All Agents</option></select>
+          <select class="f-inp" id="exp-cat-filter" onchange="expSetFilter('category',this.value)" style="width:150px"><option value="">All Categories</option></select>
+          <select class="f-inp" id="exp-status-filter" onchange="expSetFilter('status',this.value)" style="width:130px">
             <option value="">All Status</option>
-            <option>Agency</option><option>Charged</option><option>Paid</option><option>Pending</option>
+            <option>Pending</option><option>Approved</option><option>Paid</option><option>Agency</option><option>Charged</option><option>Rejected</option>
           </select>
-          <div class="filter-search" style="width:200px">
+          <input class="f-inp" type="date" id="exp-from-filter" onchange="expSetFilter('from',this.value)" title="From" style="width:132px">
+          <input class="f-inp" type="date" id="exp-to-filter" onchange="expSetFilter('to',this.value)" title="To" style="width:132px">
+          <div class="filter-search" style="width:180px">
             <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <input type="text" placeholder="Search…" oninput="_expFilterState.q=this.value;renderExpensesTab(this.value)">
+            <input type="text" placeholder="Search…" oninput="expSetFilter('q',this.value)">
           </div>
+          <button class="btn btn-ghost btn-sm" id="exp-voided-btn" onclick="expToggleVoided()">🗑 Voided</button>
           <button class="btn btn-s btn-sm" onclick="exportFilteredExpenses()" title="Export filtered expenses to CSV">⬇ Export</button>
         </div>
       </div>
+      <div id="exp-inbox" style="padding:8px 18px;display:flex;align-items:center;gap:6px;flex-wrap:wrap"></div>
       <table style="width:100%;border-collapse:collapse">
         <thead>
-          <tr><th>Date</th><th>Applicant</th><th>Agent</th><th>Category</th>
+          <tr><th style="width:26px"><input type="checkbox" onchange="expSelectAll(this.checked)" title="Select this page"></th><th>Date</th><th>Applicant / cost centre</th><th>Agent</th><th>Category</th>
               <th>Description</th><th style="text-align:right">Amount</th>
               <th>Status</th><th style="text-align:right">Actions</th></tr>
         </thead>
         <tbody id="expense-tbody"></tbody>
       </table>
+      <div id="exp-pager"></div>
     </div>
   </div>
 
@@ -2798,7 +2802,7 @@ button[disabled][data-rbac-locked] {
 
       <!-- Applicant selector (connected to pool) -->
       <div class="f-grp">
-        <label class="f-lbl">Applicant <span class="req">*</span></label>
+        <label class="f-lbl">Applicant <span style="font-weight:400;color:var(--muted)">(leave blank for an overhead expense)</span></label>
         <select class="f-inp" id="e-applicant" onchange="onExpenseApplicantChange()">
           <option value="">— Select Applicant —</option>
         </select>
@@ -2822,26 +2826,31 @@ button[disabled][data-rbac-locked] {
         </div>
       </div>
 
+      <div class="f-grp" id="e-cc-wrap">
+        <label class="f-lbl">Cost centre <span class="req">*</span></label>
+        <input type="text" class="f-inp" id="e-cc" placeholder="e.g. Head office, Courier, Rent, Office supplies">
+      </div>
+
       <div class="f-row">
         <div class="f-grp">
           <label class="f-lbl">Category <span class="req">*</span></label>
-          <select class="f-inp" id="e-category" onchange="onExpenseCategoryChange()">
-            <option value="Medical Exam">💊 Medical Exam</option>
-            <option value="Documentation">📄 Documentation</option>
-            <option value="Processing Fee">🏛 Processing Fee</option>
-            <option value="Training">🎓 Training</option>
-            <option value="Visa Fee">🛂 Visa Fee</option>
-            <option value="OWWA Fee">🪪 OWWA Fee</option>
-            <option value="Ticketing">✈ Ticketing</option>
-            <option value="Transportation">🚗 Transportation</option>
-            <option value="Accommodation">🏠 Accommodation</option>
-            <option value="Other">📎 Other</option>
-          </select>
+          <select class="f-inp" id="e-category" onchange="onExpenseCategoryChange()"></select>
         </div>
         <div class="f-grp">
-          <label class="f-lbl">Amount (₱) <span class="req">*</span></label>
+          <label class="f-lbl">Amount <span id="e-cur-sym">(₱)</span> <span class="req">*</span></label>
           <input type="number" class="f-inp" id="e-amount" placeholder="0.00"
                  min="0" step="0.01" oninput="updateExpenseTotal()">
+        </div>
+      </div>
+
+      <div class="f-row">
+        <div class="f-grp">
+          <label class="f-lbl">Currency</label>
+          <select class="f-inp" id="e-currency" onchange="updateExpenseTotal()"><option value="PHP">₱ Philippine peso</option><option value="USD">$ US dollar</option></select>
+        </div>
+        <div class="f-grp">
+          <label class="f-lbl">Paid by (if Paid)</label>
+          <select class="f-inp" id="e-method"><option value="cash">Cash</option><option value="bank">Bank transfer</option><option value="gcash">GCash / e-wallet</option><option value="cheque">Cheque</option><option value="wire">Wire / remittance</option><option value="other">Other</option></select>
         </div>
       </div>
 
@@ -2869,6 +2878,10 @@ button[disabled][data-rbac-locked] {
       <div class="f-grp">
         <label class="f-lbl">Receipt / Reference No.</label>
         <input type="text" class="f-inp" id="e-ref" placeholder="e.g. OR-2026-04321 (optional)">
+      </div>
+      <div class="f-grp">
+        <label class="f-lbl">Attach receipt <span style="font-weight:400;color:var(--muted)">(photo or PDF, optional)</span></label>
+        <input type="file" class="f-inp" id="e-receipt" accept="image/*,application/pdf">
       </div>
 
       <!-- Running total preview -->
@@ -3595,6 +3608,13 @@ function mapExpense(row) {
     status:      row.status || 'Pending',
     currency:    row.currency || 'PHP',
     rejectReason: row.reject_reason || '',
+    costCentre:  row.cost_centre || '',
+    paidMethod:  row.paid_method || '',
+    paidRef:     row.paid_ref || '',
+    ref:         row.notes || '',
+    receiptCount: parseInt(row.receipt_count) || 0,
+    voided:      !!row.voided_at,
+    voidReason:  row.void_reason || '',
     _dbId:       row.id,
   };
 }
@@ -3757,6 +3777,9 @@ async function apiCreateExpense(data) {
     applicant_id: (data.applicantId && isUUID(data.applicantId)) ? data.applicantId : null,
     notes:        data.ref || data.notes || null,
     currency:     data.currency || 'PHP',
+    cost_centre:  data.costCentre || null,
+    paid_method:  data.paidMethod || null,
+    paid_ref:     data.paidRef || null,
   };
   var _agentUuid = data.agentId && isUUID(data.agentId) ? data.agentId : '';
   if (_agentUuid) payload.agent_id = _agentUuid;
@@ -4305,41 +4328,6 @@ async function fetchJobs() {
   if (currentPage === 'dashboard')  renderDashboard();
 }
 
-async function fetchExpenses() {
-  var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
-  if (!isLive) return;
-  var r = await apiFetch('/expenses?limit=500');
-  if (!r.ok) return;
-  _markFresh('expenses');
-  var fresh = r.data.map(mapExpense);
-  // Preserve applicant name, agent, and Charged status from local cache
-  fresh.forEach(function(e) {
-    var local = DB.expenses.find(function(x){ return x.id === e.id || x._dbId === e.id; });
-    if (local) {
-      if (!e.applicant   && local.applicant)   e.applicant   = local.applicant;
-      if (!e.applicantId && local.applicantId) e.applicantId = local.applicantId;
-      if (!e.agentName   && local.agentName)   e.agentName   = local.agentName;
-      if (!e.agentId     && local.agentId)     e.agentId     = local.agentId;
-      // Never let a poll revert a locally-charged expense back to Pending.
-      // The server PATCH may not have landed yet, or the backend may not track status.
-      if (local.status === 'Charged' && e.status !== 'Charged') {
-        e.status    = 'Charged';
-        e.agentId   = e.agentId   || local.agentId;
-        e.agentName = e.agentName || local.agentName;
-      }
-    }
-  });
-  DB.expenses = fresh;
-  // Server status is authoritative — no local overrides
-  // Re-resolve from live DB.applicants (catches fresh assignments since last load)
-  _resolveExpenseApplicants();
-  autosave('expenses');
-  if (currentPage === 'accounting') {
-    if (typeof renderAccounting === 'function') renderAccounting();
-    if (typeof renderExpensesTab === 'function') renderExpensesTab();
-  }
-  if (currentPage === 'dashboard') renderDashboard();
-}
 
 async function fetchUsers() {
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
@@ -4521,6 +4509,7 @@ async function syncAllFromAPI() {
     DB.expenses = expenses.data.map(mapExpense);
     // Server status is authoritative — no local overrides
     _markFresh('expenses');
+    if (expenses.data.length >= 500) setTimeout(function(){ fetchExpenses(); }, 300);   // more than one page — load the rest
   }
   if (users.ok)    { DB.users    = users.data.map(mapUser);      _markFresh('users');    }
   if (audit.ok)    {
@@ -4785,9 +4774,9 @@ function startPolling() {
       }).catch(function(){});
     }
     // Sync expenses — always fetch from PostgreSQL every tick
-    apiFetch('/expenses?limit=500').then(function(r) {
-      if (r && r.ok && Array.isArray(r.data)) {
-        var fresh = r.data.map(mapExpense);
+    _fetchAllExpenses().then(function(_rows) {
+      if (_rows) {
+        var fresh = _rows.map(mapExpense);
         // Re-apply any locally-charged expenses not yet confirmed by server
         // This prevents the poll from overwriting unsynced charges
         if (window._pendingCharges && Object.keys(window._pendingCharges).length > 0) {
@@ -6958,9 +6947,9 @@ function switchDrawerTab(tab, btn) {
   }
   if (tab === 'expenses') {
     var _canExp    = getCurrentRole && !['Viewer'].includes(getCurrentRole());
-    var _isAdminExp = getCurrentRole && getCurrentRole() === 'Admin';
-    var exps   = DB.expenses.filter(function(e){ return e.applicant === app.name; });
-    var total  = exps.reduce(function(s,e){ return s + (e.amount||0); }, 0);
+    var _isAdminExp = hasPermission('Delete Expenses');
+    var exps   = DB.expenses.filter(function(e){ return !e.voided && (e.applicantId === app.id || e.applicantId === app._dbId || (!e.applicantId && e.applicant === app.name)); });
+    var total  = exps.filter(function(e){ return (e.currency||'PHP') === 'PHP' && e.status !== 'Rejected'; }).reduce(function(s,e){ return s + (e.amount||0); }, 0);
 
     // Pre-fill applicant name for the expense modal — pass app.name to the preselect param
     function _openExpForApp() {
@@ -6987,13 +6976,13 @@ function switchDrawerTab(tab, btn) {
         exps.map(function(e){
           return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--s2);border:1px solid var(--border);border-radius:8px">' +
             '<div style="min-width:0;flex:1">' +
-              '<div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (e.desc||'Expense') + '</div>' +
-              '<div style="font-size:11px;color:var(--muted)">' + (e.date||'') + ' · ' + (e.category||'') + '</div>' +
+              '<div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _eh(e.desc||'Expense') + '</div>' +
+              '<div style="font-size:11px;color:var(--muted)">' + _eh(e.date||'') + ' · ' + _eh(e.category||'') + '</div>' +
             '</div>' +
             '<div style="display:flex;align-items:center;gap:8px;flex-shrink:0">' +
-              '<span class="pill ' + (e.status==='Paid'?'pill-green':'pill-amber') + '">' + (e.status||'Pending') + '</span>' +
-              '<span style="font-size:13px;font-weight:800;font-family:monospace">₱' + (e.amount||0).toLocaleString() + '</span>' +
-              (_isAdminExp ? '<button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="confirmDelete(&quot;expense&quot;,&quot;' + e.id + '&quot;)">🗑</button>' : '') +
+              pillHtml(e.status||'Pending') +
+              '<span style="font-size:13px;font-weight:800;font-family:monospace">' + _fmtAmt(e.amount||0, e.currency) + '</span>' +
+              ((_isAdminExp && e.status !== 'Charged') ? '<button class="btn btn-ghost btn-xs" style="color:var(--red)" title="Void" onclick="voidExpense(&quot;' + _eh(e.id) + '&quot;)">🗑</button>' : '') +
             '</div>' +
           '</div>';
         }).join('') +
@@ -7105,10 +7094,10 @@ function pillHtml(status, variant) {
     'With Complaint':'pill-red',
     'Passed':'pill-green','Pending':'pill-amber','Failed':'pill-red',
     'Open':'pill-green','In Progress':'pill-blue','Filled':'pill-purple','Closed':'pill-gray',
-    'Approved':'pill-green','Paid':'pill-green','Active':'pill-green','Inactive':'pill-gray',
+    'Approved':'pill-blue','Paid':'pill-green','Agency':'pill-purple','Charged':'pill-red','Active':'pill-green','Inactive':'pill-gray',
     'Overdue':'pill-red',
   };
-  return `<span class="pill ${map[status]||'pill-gray'}">${status}</span>`;
+  return `<span class="pill ${map[status]||'pill-gray'}">${escapeHtml(String(status))}</span>`;
 }
 // ── Persistent auto-increment sequences (stored in Store) ─────────────
 var _sequences = { APP: 0, JOB: 0, EXP: 0, DOC: 0 };
@@ -8521,7 +8510,7 @@ function saveApplicant() {
     DB.applicants[idx] = data;
 
     // ── Agent change: transfer expenses and ledger entries to new agent ──
-    if (existing && existing.agent && data.agent && existing.agent !== data.agent) {
+    if (!_isLiveSession() && existing && existing.agent && data.agent && existing.agent !== data.agent) {
       var oldAgentName = existing.agent;
       var newAgent     = DB.agents.find(function(ag){ return ag.name === data.agent || ag.name.toLowerCase().trim() === data.agent.toLowerCase().trim(); });
       var oldAgent     = DB.agents.find(function(ag){ return ag.name === oldAgentName; });
@@ -8656,6 +8645,7 @@ function saveApplicant() {
         // Merge server response back — preserves _updatedAt so fetchApplicants
         // knows this record was just updated and won't overwrite local data
         var serverData = mapApplicant(r.data);
+        if (r.data.agent_transfer) _applyAgentTransfer(r.data.agent_transfer, data);
         // Preserve non-server fields only
         if (!serverData.passport    && data.passport)    serverData.passport    = data.passport;
         if (data.category !== undefined)              serverData.category    = data.category;
@@ -8760,6 +8750,7 @@ function saveApplicant() {
 // CONFIRM DELETE
 // ════════════════════════════════════════════════════════
 function confirmDelete(type, id) {
+  if (type === 'expense') { voidExpense(id); return; }   // expenses are voided with a reason, never deleted
   let name = '';
   if (type==='applicant') { const a=DB.applicants.find(x=>x.id===id); name=a?a.name:id; }
   if (type==='expense') { const e=DB.expenses.find(x=>x.id===id); name=e?e.desc:id; }
@@ -9769,7 +9760,7 @@ function renderAnalyticsLegacy() {
   // KPI strip shows current all-time balances (like the Accounting Overview
   // tab does) — the dedicated Profitability card below is where the selected
   // date range actually applies to money.
-  var totalExpPHP = _scopedExpenses.reduce(function(s,e){ return s + (e.amount||0); }, 0);
+  var totalExpPHP = _scopedExpenses.filter(function(e){ return (e.currency||'PHP') === 'PHP' && e.status !== 'Rejected' && e.status !== 'Charged'; }).reduce(function(s,e){ return s + (e.amount||0); }, 0);   // net cost: not rejected, not recovered from an agent
   var totalExpUSD = getComputableFees(_scopedFees).reduce(function(s,f){ return s + (f.feeUSD||0); }, 0);
   var settledFees = _scopedFees.filter(function(f){ return f.status==='Settled'; }).reduce(function(s,f){ return s + (f.feeUSD||0); }, 0);
   var openJobs    = getScopedJobs().filter(function(j){ return j.status === 'Open' || j.status === 'In Progress'; });
@@ -10566,122 +10557,12 @@ function filterExpenses(q) {
 }
 // renderAccounting — defined below in full accounting module
 
-function openAddExpense(preselect) {
-  // Reset form
-  ['e-desc','e-amount','e-ref'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
-  var dt = document.getElementById('e-date');
-  if (dt) dt.valueAsDate = new Date();
-  var statEl = document.getElementById('e-status');
-  if (statEl) statEl.value = 'Paid';
-  var errEl = document.getElementById('e-error');
-  if (errEl) errEl.style.display = 'none';
-  var totalEl = document.getElementById('e-running-total');
-  if (totalEl) totalEl.style.display = 'none';
-  var infoEl = document.getElementById('e-applicant-info');
-  if (infoEl) infoEl.style.display = 'none';
-
-  // Populate applicant dropdown from DB.applicants
-  var sel = document.getElementById('e-applicant');
-  if (sel) {
-    sel.innerHTML = '<option value="">— Select Applicant —</option>' +
-      DB.applicants.map(function(a) {
-        var selected = (preselect && a.name === preselect) ? ' selected' : '';
-        return '<option value="' + a.name + '"' + selected + '>' +
-          a.name + ' (' + a.id + ' · ' + a.status + ')</option>';
-      }).join('');
-
-    // Fire change handler if preselected
-    if (preselect) {
-      setTimeout(onExpenseApplicantChange, 50);
-    }
-  }
-
-  openOverlay('overlay-expense');
-  setTimeout(function(){ var s=document.getElementById('e-applicant'); if(s) s.focus(); }, 100);
-}
 
 // ── Applicant selected — show info card + running total ───────────────
-function onExpenseApplicantChange() {
-  var sel   = document.getElementById('e-applicant');
-  var name  = sel ? sel.value : '';
-  var info  = document.getElementById('e-applicant-info');
-  var total = document.getElementById('e-running-total');
-
-  if (!name) {
-    if (info)  info.style.display  = 'none';
-    if (total) total.style.display = 'none';
-    return;
-  }
-
-  var app = DB.applicants.find(function(a){ return a.name === name; });
-  if (!app) return;
-
-  // Fill info card
-  var initials = app.name.split(' ').map(function(w){ return w[0]; }).join('').toUpperCase().slice(0,2);
-  var avatar   = document.getElementById('e-app-avatar');
-  var appName  = document.getElementById('e-app-name');
-  var detail   = document.getElementById('e-app-detail');
-  var pill     = document.getElementById('e-app-status-pill');
-  var appTotal = document.getElementById('e-app-total');
-
-  if (avatar)   avatar.textContent   = initials;
-  if (appName)  appName.textContent  = app.name;
-  if (detail)   detail.textContent   = (app.job || 'No job') + ' · Agent: ' + (app.agent || '—');
-  if (pill)     pill.innerHTML       = pillHtml(app.status);
-
-  // Existing expense total for this applicant
-  var existingTotal = DB.expenses
-    .filter(function(e){ return e.applicant === app.name; })
-    .reduce(function(s,e){ return s + e.amount; }, 0);
-  if (appTotal) appTotal.textContent = '₱' + existingTotal.toLocaleString() + ' recorded so far';
-
-  if (info) info.style.display = 'flex';
-
-  // Show running total row
-  updateExpenseTotal();
-  if (total) total.style.display = 'flex';
-
-  // Auto-suggest description from category
-  onExpenseCategoryChange();
-}
 
 // ── Auto-suggest description when category changes ────────────────────
-function onExpenseCategoryChange() {
-  var cat   = document.getElementById('e-category');
-  var desc  = document.getElementById('e-desc');
-  var appSel = document.getElementById('e-applicant');
-  if (!cat || !desc || desc.value) return;  // don't overwrite existing
-  var appName = appSel ? appSel.value : '';
-  var suggestions = {
-    'Medical Exam':    'Medical examination' + (appName ? ' — ' + appName : ''),
-    'Documentation':   'Document processing' + (appName ? ' — ' + appName : ''),
-    'Processing Fee':  'POEA processing fee' + (appName ? ' — ' + appName : ''),
-    'Training':        'OFW skills training' + (appName ? ' — ' + appName : ''),
-    'Visa Fee':        'Visa application fee' + (appName ? ' — ' + appName : ''),
-    'OWWA Fee':        'OWWA membership fee' + (appName ? ' — ' + appName : ''),
-    'Ticketing':       'Airfare / ticketing' + (appName ? ' — ' + appName : ''),
-    'Transportation':  'Transportation expense',
-    'Accommodation':   'Accommodation cost',
-  };
-  if (suggestions[cat.value]) desc.value = suggestions[cat.value];
-}
 
 // ── Update running expense total preview ──────────────────────────────
-function updateExpenseTotal() {
-  var appSel  = document.getElementById('e-applicant');
-  var amtEl   = document.getElementById('e-amount');
-  var totalEl = document.getElementById('e-total-val');
-  if (!appSel || !totalEl) return;
-
-  var name = appSel.value;
-  if (!name) return;
-
-  var existing = DB.expenses
-    .filter(function(e){ return e.applicant === name; })
-    .reduce(function(s,e){ return s + e.amount; }, 0);
-  var newAmt   = parseFloat(amtEl ? amtEl.value : 0) || 0;
-  totalEl.textContent = '₱' + (existing + newAmt).toLocaleString();
-}
 
 // ════════════════════════════════════════════════════════
 // AUDIT
@@ -13686,122 +13567,9 @@ function clearLedgerFilters() {
 }
 
 // ── Expense filter state — persists across poll-triggered re-renders ──
-var _expFilterState = { q: '', agent: '', status: '' };
+var _expFilterState = { q: '', agent: '', status: '', category: '', from: '', to: '', voided: false, page: 1 };
 
-function renderExpensesTab(search) {
-  // If called with a search string, update state
-  if (typeof search === 'string') _expFilterState.q = search;
 
-  // Pull fresh expenses from PostgreSQL so all users see latest charged status
-  if (!window._expTabFetching) {
-    window._expTabFetching = true;
-    _smartFetch('expenses').then(function() {
-      window._expTabFetching = false;
-      _renderExpensesTabInner(search);
-    }).catch(function() {
-      window._expTabFetching = false;
-      _renderExpensesTabInner(search);
-    });
-    _renderExpensesTabInner(search); // render immediately with cached data too
-    return;
-  }
-  _renderExpensesTabInner(search);
-}
-
-function _renderExpensesTabInner(search) {
-  var agentF  = document.getElementById('exp-agent-filter');
-  var statusF = document.getElementById('exp-status-filter');
-
-  // Restore filter state from memory (survives poll-triggered re-renders)
-  if (typeof search === 'string' && search) _expFilterState.q = search;
-
-  // Populate agent filter — always repopulate so newly loaded agents appear
-  if (agentF) {
-    var _agentFPrev = agentF.value || _expFilterState.agent;
-    agentF.innerHTML = '<option value="">All Agents</option>';
-    DB.agents.forEach(function(a){
-      var o = document.createElement('option');
-      o.value = a.name; o.text = a.name;
-      agentF.appendChild(o);
-    });
-    if (_agentFPrev) { agentF.value = _agentFPrev; _expFilterState.agent = agentF.value; }
-  }
-
-  // Restore status filter
-  if (statusF && !statusF.value && _expFilterState.status) {
-    statusF.value = _expFilterState.status;
-  }
-
-  // Read current values and persist to state
-  if (agentF)  _expFilterState.agent  = agentF.value  || _expFilterState.agent;
-  if (statusF) _expFilterState.status = statusF.value || _expFilterState.status;
-
-  var expenses = DB.expenses.slice();
-  if (agentF && (agentF.value || _expFilterState.agent)) {
-    var _af = agentF.value || _expFilterState.agent;
-    expenses = expenses.filter(function(e){
-      if (e.agentName === _af) return true;
-      var _a = e.applicantId ? DB.applicants.find(function(a){ return a.id===e.applicantId||a._dbId===e.applicantId; })
-                             : (e.applicant ? DB.applicants.find(function(a){ return a.name===e.applicant; }) : null);
-      return _a && _a.agent === _af;
-    });
-  }
-  if (statusF && (statusF.value || _expFilterState.status)) expenses = expenses.filter(function(e){ return e.status===(statusF.value||_expFilterState.status); });
-  var _activeQ = (typeof search === 'string' && search) ? search : _expFilterState.q;
-  if (_activeQ) { var q=_activeQ.toLowerCase(); expenses = expenses.filter(function(e){ return (e.desc||'').toLowerCase().includes(q)||(e.applicant||'').toLowerCase().includes(q); }); }
-
-  // KPIs
-  var kpisEl = document.getElementById('expense-kpis');
-  if (kpisEl) {
-    var total   = expenses.reduce(function(s,e){ return s+e.amount; }, 0);
-    var charged = expenses.filter(function(e){ return e.status==='Charged'; }).reduce(function(s,e){ return s+e.amount; }, 0);
-    var agency  = total - charged; // absorbed = everything NOT charged to an agent
-    kpisEl.innerHTML = [
-      { label:'Total Expenses', val:'₱'+total.toLocaleString(),   icon:'📊', bg:'var(--brand-l)', c:'var(--brand)' },
-      { label:'Charged to Agents', val:'₱'+charged.toLocaleString(), icon:'💸', bg:'var(--rbg)',  c:'var(--red)' },
-      { label:'Agency Absorbed', val:'₱'+agency.toLocaleString(), icon:'🏢', bg:'var(--abg)',    c:'var(--amber)' },
-      { label:'Transactions', val:expenses.length, icon:'🔢', bg:'var(--gbg)', c:'var(--green)' },
-    ].map(function(s){ return '<div class="stat-card"><div class="stat-top"><div class="stat-icon" style="background:'+s.bg+';color:'+s.c+'">'+s.icon+'</div></div><div class="stat-val">'+s.val+'</div><div class="stat-lbl">'+s.label+'</div></div>'; }).join('');
-  }
-
-  var tbody = document.getElementById('expense-tbody');
-  if (!tbody) return;
-  if (!expenses.length) {
-    tbody.innerHTML = '<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">💸</div><div class="empty-title">No expenses found</div></div></td></tr>';
-    return;
-  }
-  tbody.innerHTML = expenses.map(function(e) {
-    // Use stored agentName/agentId directly — avoids broken name-chain lookup
-    var app   = e.applicantId ? DB.applicants.find(function(a){ return a.id===e.applicantId || a._dbId===e.applicantId; })
-                              : (e.applicant ? DB.applicants.find(function(a){ return a.name===e.applicant; }) : null);
-    var agentName = e.agentName || (app && app.agent ? app.agent : '');
-    var agentId   = e.agentId   || (app && app._agentDbId ? app._agentDbId : '');
-    // Re-resolve agent name from DB.agents if we have id but no name
-    if (!agentName && agentId) {
-      var _ag = DB.agents.find(function(a){ return a.id===agentId || a._dbId===agentId; });
-      if (_ag) agentName = _ag.name;
-    }
-    var appId = app ? (app.displayId || app.id) : '';
-    return '<tr>'+
-      '<td style="font-size:11.5px;font-family:\'IBM Plex Mono\',monospace;color:var(--muted)">'+e.date+'</td>'+
-      '<td>'+
-        '<div style="font-size:12.5px;font-weight:700">'+(e.applicant||'—')+'</div>'+
-        (app?'<div style="font-size:11px;color:var(--muted);">'+appId+' · '+pillHtml(app.status)+'</div>':'')+
-      '</td>'+
-      '<td style="font-size:12.5px;color:var(--text2)">'+(agentName||'—')+'</td>'+
-      '<td>'+pillHtml(e.category,'category')+'</td>'+
-      '<td style="font-size:12.5px;max-width:160px">'+e.desc+(e.ref?'<div style="font-size:10.5px;color:var(--dim)">Ref: '+e.ref+'</div>':'')+'</td>'+
-      '<td style="font-weight:800;font-family:\'IBM Plex Mono\',monospace;text-align:right">₱'+e.amount.toLocaleString()+'</td>'+
-      '<td>'+pillHtml(e.status)+'</td>'+
-      '<td style="text-align:right;white-space:nowrap">'+
-        (app?'<button class="btn btn-ghost btn-xs" onclick="openDrawer(\''+app.id+'\')" title="View applicant">👤</button> ':'')+
-        ((agentId && e.status !== 'Charged' && e.status !== 'Rejected')?'<button class="btn btn-sm" style="font-size:11px;background:var(--rbg);color:var(--red);border:1px solid #fca5a5" onclick="chargeExpenseToAgent(\''+e.id+'\',\''+agentId+'\')" >Charge Agent</button> ':'')+
-        (e.status === 'Charged' ? '<button class="btn btn-ghost btn-xs" style="font-size:11px" onclick="unchargeExpenseFromAgent(\''+e.id+'\')" title="Reverse the charge">↩ Reverse charge</button> ' : '')+
-        ((hasPermission('Delete Expenses') && e.status !== 'Charged') ? '<button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="confirmDelete(\'expense\',\''+e.id+'\')" >🗑</button>' : '')+
-      '</td>'+
-    '</tr>';
-  }).join('');
-}
 
 // ── COMMISSIONS ───────────────────────────────────────────────────────
 // ── Commission history: shared filter logic ───────────────────────────
@@ -14687,7 +14455,7 @@ async function unchargeExpenseFromAgent(expenseId) {
 }
 
 // Country expense rule → what to do with ONE uncharged expense when an applicant exits (Backout / Rejected / Repatriated)
-async function _settleExpenseByRule(e, agent, rule, label) {
+async function _settleExpenseByRule(e, agent, rule, label, pctOverride) {
   var dbId = e._dbId || e.id;
   var amt = parseFloat(e.amount) || 0;
   function toAgency() {
@@ -14698,13 +14466,15 @@ async function _settleExpenseByRule(e, agent, rule, label) {
     });
   }
   if (rule === 'none' || !agent) return toAgency();
+  if ((e.currency || 'PHP') !== 'PHP') return toAgency();          // agent balances are in pesos — foreign-currency costs stay with the agency
   if (rule === 'medical' && e.category !== 'Medical Exam') return toAgency();
-  var pct = rule === 'partial' ? 50 : 100;
+  var pct = (pctOverride !== null && pctOverride !== undefined) ? pctOverride : (rule === 'partial' ? 50 : 100);
+  if (pct <= 0) return toAgency();
   var res = await _chargeExpenseServer(e, agent._dbId || agent.id, {
     percent: pct,
     description: label + (rule === 'partial' ? ' 50% (partial rule)' : rule === 'medical' ? ' (medical rule)' : '') + ': ' + (e.category || '') + ' — ' + (e.applicant || '') + (e.desc ? ' · ' + e.desc : ''),
   });
-  return { ok: res.ok, mode: 'charged', amount: rule === 'partial' ? Math.round(amt * 0.5) : amt, error: res.error, already: res.already };
+  return { ok: res.ok, mode: 'charged', amount: pct < 100 ? Math.round(amt * pct / 100) : amt, error: res.error, already: res.already };
 }
 
 async function _settleExitExpenses(app, agent, newStatus) {
@@ -14716,12 +14486,22 @@ async function _settleExitExpenses(app, agent, newStatus) {
   var appDbId = app._dbId || app.id || '';
   var list = (DB.expenses || []).filter(function(e) {
     var match = (e.applicant && e.applicant.toLowerCase() === nameLower) || (e.applicantId && (e.applicantId === app.id || e.applicantId === appDbId));
-    return match && ['Paid', 'Pending', 'Approved'].indexOf(e.status) !== -1;
+    return match && !e.voided && ['Paid', 'Pending', 'Approved', 'Agency'].indexOf(e.status) !== -1;
   });
   if (!list.length) return null;
+  // The country rule decides the share charged to the agent; the accountant may override it (with a reason)
+  var pctOverride = null;
+  if (rule !== 'none' && agent && _isLiveSession() && typeof window.prompt === 'function') {
+    var defPct = rule === 'partial' ? 50 : 100;
+    var ans = window.prompt(list.length + ' expense(s) of ' + app.name + ' will be settled under the "' + label + '" rule: ' + defPct + '% charged to ' + agent.name + '.\n\nPress OK to accept, or enter a different percentage (0-100):', String(defPct));
+    var n = ans === null ? NaN : parseFloat(ans);
+    if (isFinite(n) && n >= 0 && n <= 100 && n !== defPct) {
+      if (_askReason('Why is ' + n + '% being charged instead of ' + defPct + '%?')) pctOverride = n;
+    }
+  }
   var charged = 0, agencyN = 0, chargedN = 0, failed = 0;
   for (var i = 0; i < list.length; i++) {
-    var res = await _settleExpenseByRule(list[i], agent, rule, newStatus);
+    var res = await _settleExpenseByRule(list[i], agent, rule, newStatus, pctOverride);
     if (!res.ok) { if (!res.already) failed++; continue; }
     if (res.mode === 'charged') { charged += res.amount; chargedN++; } else agencyN++;
   }
@@ -14807,25 +14587,30 @@ async function submitAddFunds() {
   if (!_acctLock('addfunds')) return;
   try {
     if (dest === 'expenses') {
-      var expFilter = DB.expenses.filter(function(e) { return e.status === 'Pending' && (!expCat || e.category === expCat); });
+      var cand = DB.expenses.filter(function(e) { return !e.voided && ['Pending', 'Approved'].indexOf(e.status) !== -1 && (e.currency || 'PHP') === cur && (!expCat || e.category === expCat); })
+        .sort(function(a, b) { return (a.date || '').localeCompare(b.date || ''); });
+      var left = amount, expFilter = [];
+      cand.forEach(function(e) { if (e.amount <= left + 0.005) { expFilter.push(e); left -= e.amount; } });     // oldest first, only what the allocation covers
       var totalPending = expFilter.reduce(function(s, e) { return s + (e.amount || 0); }, 0);
+      var allocRef = 'EXP-ALLOC-' + String(Date.now()).slice(-5);
       var saved = await _postOffice({
         id: 'OL-' + String(DB.officeLedger.length + 1).padStart(3, '0'), type: 'expense-allocation', currency: cur, amount: amount,
         balance: cur === 'PHP' ? DB.officeFunds.balancePHP : DB.officeFunds.balanceUSD,
         desc: 'Fund allocated to expenses' + (expCat ? ' (' + expCat + ')' : '') + (source ? ' — ' + source : ''),
-        ref: 'EXP-ALLOC-' + String(Date.now()).slice(-5), category: expCat || null, date: date, postedBy: uname, ts: new Date().toISOString(), notes: notes,
+        ref: allocRef, category: expCat || null, date: date, postedBy: uname, ts: new Date().toISOString(), notes: notes,
       });
       if (!saved) return;
       var ids = expFilter.map(function(e) { return e._dbId || e.id; }).filter(isUUID);
-      var marked = expFilter.length;
+      var marked = 0, skipped = 0;
       if (ids.length && _isLiveSession()) {
-        var mr = await _acctCall('/expenses/mark-paid', { ids: ids });
+        var mr = await _acctCall('/expenses/bulk', { action: 'pay', ids: ids, method: 'other', reference: allocRef });
         if (!mr.ok) toast('Fund recorded, but expenses could not be marked Paid: ' + _acctMsg(mr), 'error');
-        else { var done = {}; mr.data.updated.forEach(function(i) { done[i] = true; }); expFilter.forEach(function(e) { if (done[e._dbId || e.id]) e.status = 'Paid'; }); marked = mr.data.updated.length; }
-      } else expFilter.forEach(function(e) { e.status = 'Paid'; });
+        else { (mr.data.rows || []).forEach(_applyExpenseRow); marked = mr.data.updated.length; skipped = (mr.data.failed || []).length; }
+      } else { expFilter.forEach(function(e) { e.status = 'Paid'; }); marked = expFilter.length; }
       autosave('expenses');
-      addAudit('UPDATE', 'Expenses', 'Fund ₱' + amount.toLocaleString() + ' allocated — ' + marked + ' expense(s) marked Paid (₱' + totalPending.toLocaleString() + ')');
-      toast(marked + ' expense(s) marked as Paid · ₱' + totalPending.toLocaleString() + ' covered', 'success');
+      var stillWaiting = cand.length - marked;
+      addAudit('UPDATE', 'Expenses', 'Fund ' + _fmtAmt(amount, cur) + ' allocated — ' + marked + ' expense(s) marked Paid');
+      toast('Fund added · ' + marked + ' expense(s) paid' + (stillWaiting > 0 ? ' · ' + stillWaiting + ' still waiting (' + (skipped ? 'some need approval or are blocked' : 'not covered by this allocation') + ')' : ''), 'success');
       closeOverlay('overlay-add-funds');
       renderAccounting();
     } else {
@@ -15274,6 +15059,7 @@ async function renderAccControls() {
   _bustAcctCache();
   var res = await Promise.all([apiFetch('/accounting/alerts'), apiFetch('/accounting/reconcile'), apiFetch('/accounting/periods'), apiFetch('/accounting/controls'), apiFetch('/accounting/ageing'), apiFetch('/fx-history?limit=10')]);
   var al = res[0].ok ? res[0].data : null, rc = res[1].ok ? res[1].data : null, per = res[2].ok ? res[2].data : [], ctl = res[3].ok ? res[3].data : {}, ag = res[4].ok ? res[4].data : null, fx = res[5].ok ? res[5].data : [];
+  var xcats = await _loadExpCategories(true);
   var canClose = hasPermission('Close Periods');
   var card = function(t, inner, extra) { return '<div class="card" style="padding:16px;margin-bottom:14px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div style="font-size:14px;font-weight:800">' + t + '</div>' + (extra || '') + '</div>' + inner + '</div>'; };
   var html = '';
@@ -15285,6 +15071,9 @@ async function renderAccControls() {
     var soon = (al.guarantee_expiring || []).filter(function(x) { return x.days > 0; });
     if (soon.length) items.push('<b>' + soon.length + '</b> guarantee period(s) end within 30 days: ' + soon.slice(0, 6).map(function(x) { return escapeHtml(x.applicant_name || '—') + ' T' + x.tranche + ' (' + x.days + 'd)'; }).join(', ') + (soon.length > 6 ? '…' : ''));
     if (al.stale_pending_expenses && al.stale_pending_expenses.length) items.push('<b>' + al.stale_pending_expenses.length + '</b> expense(s) have been Pending for over 14 days');
+    var _an = al.expense_anomalies || {};
+    if ((_an.duplicates || []).length) items.push('<b>' + _an.duplicates.length + '</b> possible duplicate expense(s): ' + _an.duplicates.slice(0, 3).map(function(d) { return escapeHtml(d.description) + ' ×' + d.n; }).join(', '));
+    if ((_an.unusually_large || []).length) items.push('<b>' + _an.unusually_large.length + '</b> unpaid expense(s) are over 3× the usual for their category: ' + _an.unusually_large.slice(0, 3).map(function(d) { return escapeHtml(d.description) + ' (' + _fmtAmt(d.amount, d.currency) + ')'; }).join(', '));
     if (al.negative_agent_balances && al.negative_agent_balances.length) items.push('<b>' + al.negative_agent_balances.length + '</b> agent(s) owe the agency money: ' + al.negative_agent_balances.slice(0, 5).map(function(a) { return escapeHtml(a.name) + ' ' + _money(a.balance, 'PHP'); }).join(', '));
     if (al.office_negative && (al.office_negative.php || al.office_negative.usd)) items.push('Office fund balance is negative' + (al.office_negative.php ? ' (PHP)' : '') + (al.office_negative.usd ? ' (USD)' : ''));
     if (al.previous_period_open) items.push('Last month (' + al.previous_period + ') is not closed yet');
@@ -15317,6 +15106,17 @@ async function renderAccControls() {
     '<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="ctl-auto" ' + (ctl.autoSettleFees !== false ? 'checked' : '') + ' ' + (canClose ? '' : 'disabled') + '> Settle matching employer fees when an invoice is fully paid</label>' +
     '<label>Ledger adjustments at or above ₱ <input class="f-inp" id="ctl-large" type="number" min="0" step="100" value="' + (ctl.largeAdjustment || 0) + '" style="width:120px;display:inline-block" ' + (canClose ? '' : 'disabled') + '> need a reason (0 = off)</label></div>',
     canClose ? '<button class="btn btn-p btn-sm" onclick="saveAccControls()">Save</button>' : '');
+
+  // Expense controls + categories
+  var canCtl = hasPermission('Manage Accounting') || canClose;
+  html += card('🧾 Expense controls', '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px;margin-bottom:12px">' +
+    '<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="ctl-xfund" ' + (ctl.expenseFundCheck ? 'checked' : '') + ' ' + (canCtl ? '' : 'disabled') + '> Block paying an expense when the Expenses Fund would go negative (override needs a reason)</label>' +
+    '<label>Receipt or reference required to pay at or above ₱ <input class="f-inp" id="ctl-xrcpt" type="number" min="0" step="100" value="' + (ctl.receiptRequiredAbove || 0) + '" style="width:110px;display:inline-block" ' + (canCtl ? '' : 'disabled') + '> (0 = off)</label>' +
+    '<label>Expenses at or above ₱ <input class="f-inp" id="ctl-xappr" type="number" min="0" step="100" value="' + (ctl.expenseApprovalAbove || 0) + '" style="width:110px;display:inline-block" ' + (canCtl ? '' : 'disabled') + '> need an approver to be paid (0 = off)</label>' +
+    '</div>' +
+    '<div style="font-size:12px;font-weight:800;margin:4px 0 6px">Categories <span style="font-weight:400;color:var(--muted)">— an optional per-category approval limit overrides the general one. "Medical Exam" and "Other" are always kept.</span></div>' +
+    '<div id="xc-list">' + xcats.map(function(c) { return '<div class="xc-row" style="display:flex;gap:8px;margin-bottom:6px"><input class="f-inp xc-name" value="' + escapeHtml(c.name) + '" style="flex:1" ' + (canCtl ? '' : 'disabled') + '><input class="f-inp xc-limit" type="number" min="0" step="100" value="' + (c.limit || 0) + '" style="width:200px" title="Approval needed at or above (₱, 0 = never)" ' + (canCtl ? '' : 'disabled') + '></div>'; }).join('') + '</div>' +
+    (canCtl ? '<div style="margin-top:8px"><button class="btn btn-s btn-sm" onclick="addExpenseCategoryRow()">+ Category</button> <button class="btn btn-p btn-sm" onclick="saveExpenseControls()">Save expense settings</button></div>' : ''));
 
   // Ageing
   if (ag) {
@@ -15378,52 +15178,624 @@ async function advanceGuaranteeUi() {
 // Saved on the server first. If the applicant has already exited (Backout / Repatriated / Rejected) the
 // country expense rule decides whether the agent is charged (the server posts the debit atomically) or
 // the agency absorbs it.
+
+// ════════════════════════════════════════════════════════════════════════
+// EXPENSES — server-first. One definition of every total (the server's), an approval inbox with
+// bulk actions, edit / re-open / void, payment details, receipts, overhead expenses, categories.
+// ════════════════════════════════════════════════════════════════════════
+var _expSel = {};                 // selected expense ids (bulk actions)
+var _expSummary = null;           // last /expenses/summary result
+var _expCategories = null;        // managed category list [{name, limit}]
+var _expVoidedRows = null;        // loaded on demand for the "Voided" view
+var EXP_PAGE_SIZE = 50;
+
+function _eh(s) { return escapeHtml(String(s === undefined || s === null ? '' : s)); }
+function _curSym(c) { return c === 'USD' ? '$' : '₱'; }
+function _fmtAmt(n, c) {
+  n = parseFloat(n) || 0;
+  return _curSym(c) + (c === 'USD' ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : n.toLocaleString());
+}
+function _expById(id) { return (DB.expenses || []).find(function(e) { return e.id === id || e._dbId === id; }) || (_expVoidedRows || []).find(function(e) { return e.id === id || e._dbId === id; }); }
+function _expAgentOf(e) {
+  var app = e.applicantId ? DB.applicants.find(function(a) { return a.id === e.applicantId || a._dbId === e.applicantId; })
+                          : (e.applicant ? DB.applicants.find(function(a) { return a.name === e.applicant; }) : null);
+  var name = e.agentName || (app && app.agent ? app.agent : '');
+  var id = e.agentId || (app && app._agentDbId ? app._agentDbId : '');
+  if (!name && id) { var ag = DB.agents.find(function(a) { return a.id === id || a._dbId === id; }); if (ag) name = ag.name; }
+  return { app: app, name: name, id: id };
+}
+
+// ── data loading ────────────────────────────────────────────────────────
+async function _fetchAllExpenses() {
+  var all = [];
+  for (var page = 1; page <= 8; page++) {
+    var r = await apiFetch('/expenses?limit=500&page=' + page);
+    if (!r.ok || !Array.isArray(r.data)) return page === 1 ? null : all;
+    all = all.concat(r.data);
+    if (r.data.length < 500) break;
+  }
+  return all;
+}
+
+async function fetchExpenses() {
+  if (!_isLiveSession()) return;
+  var rows = await _fetchAllExpenses();
+  if (!rows) return;
+  _markFresh('expenses');
+  var fresh = rows.map(mapExpense);
+  fresh.forEach(function(e) {
+    var local = DB.expenses.find(function(x) { return x.id === e.id || x._dbId === e.id; });
+    if (local) {                          // names the server did not join — never the status: the server is authoritative
+      if (!e.applicant && local.applicant) e.applicant = local.applicant;
+      if (!e.applicantId && local.applicantId) e.applicantId = local.applicantId;
+      if (!e.agentName && local.agentName) e.agentName = local.agentName;
+      if (!e.agentId && local.agentId) e.agentId = local.agentId;
+    }
+  });
+  DB.expenses = fresh;
+  _resolveExpenseApplicants();
+  autosave('expenses');
+  if (currentPage === 'accounting') {
+    if (typeof renderAccounting === 'function') renderAccounting();
+    if (typeof renderExpensesTab === 'function') renderExpensesTab();
+  }
+  if (currentPage === 'dashboard') renderDashboard();
+}
+
+async function _loadExpCategories(force) {
+  if (_expCategories && !force) return _expCategories;
+  if (_isLiveSession()) {
+    var r = await apiFetch('/expenses/categories');
+    if (r.ok && r.data && Array.isArray(r.data.categories)) { _expCategories = r.data.categories; return _expCategories; }
+  }
+  _expCategories = ['Medical Exam', 'Documentation', 'Processing Fee', 'Training', 'Visa Fee', 'OWWA Fee', 'Ticketing', 'Transportation', 'Accommodation', 'Office', 'Other'].map(function(n) { return { name: n, limit: 0 }; });
+  return _expCategories;
+}
+function _expCatIcon(n) {
+  return { 'Medical Exam': '💊', 'Documentation': '📄', 'Processing Fee': '🏛', 'Training': '🎓', 'Visa Fee': '🛂', 'OWWA Fee': '🪪', 'Ticketing': '✈', 'Transportation': '🚗', 'Accommodation': '🏠', 'Office': '🏢', 'Other': '📎' }[n] || '🏷';
+}
+
+// The same shape as the server's /expenses/summary, computed from local rows (demo mode and fallback)
+function _expSummaryLocal(list) {
+  var out = { currencies: {}, fund: {}, by_category: [] };
+  (list || DB.expenses || []).forEach(function(e) {
+    if (e.voided) return;
+    var c = e.currency || 'PHP';
+    var s = out.currencies[c] = out.currencies[c] || { pending: 0, approved: 0, paid: 0, agency: 0, charged: 0, rejected: 0, pending_n: 0, approved_n: 0, count: 0 };
+    var k = (e.status || 'Pending').toLowerCase();
+    if (s[k] === undefined) return;
+    s[k] += e.amount || 0; s.count++;
+    if (k === 'pending' || k === 'approved') s[k + '_n']++;
+  });
+  Object.keys(out.currencies).forEach(function(c) {
+    var s = out.currencies[c];
+    s.net_cost = s.paid + s.agency; s.recoverable = s.charged; s.committed = s.pending + s.approved;
+    s.total = s.net_cost + s.recoverable + s.committed;
+  });
+  ['PHP', 'USD'].forEach(function(c) {
+    var alloc = (DB.officeLedger || []).filter(function(l) { return l.type === 'expense-allocation' && (l.currency || 'PHP') === c && !l.voided; })
+      .reduce(function(s, l) { return s + Math.abs(l.amount || 0); }, 0);
+    var cs = out.currencies[c] || { net_cost: 0, recoverable: 0, committed: 0 };
+    var paidOut = cs.net_cost + cs.recoverable;
+    out.fund[c] = { currency: c, allocated: alloc, paid_out: paidOut, committed: cs.committed, balance: alloc - paidOut, available: alloc - paidOut - cs.committed };
+  });
+  return out;
+}
+
+async function _loadExpSummary() {
+  if (!_isLiveSession()) { _expSummary = _expSummaryLocal(); return _expSummary; }
+  var f = _expFilterState, qs = [];
+  if (f.from) qs.push('from=' + encodeURIComponent(f.from));
+  if (f.to) qs.push('to=' + encodeURIComponent(f.to));
+  if (f.agent) { var ag = DB.agents.find(function(a) { return a.name === f.agent; }); if (ag && isUUID(ag._dbId || ag.id)) qs.push('agent_id=' + (ag._dbId || ag.id)); }
+  var r = await apiFetch('/expenses/summary' + (qs.length ? '?' + qs.join('&') : ''));
+  _expSummary = (r.ok && r.data && r.data.currencies) ? r.data : _expSummaryLocal();
+  return _expSummary;
+}
+
+// ── list / filters ──────────────────────────────────────────────────────
+function _expFiltered() {
+  var f = _expFilterState;
+  var list = f.voided ? (_expVoidedRows || []).filter(function(e) { return e.voided; }) : (DB.expenses || []).filter(function(e) { return !e.voided; });
+  if (f.agent) list = list.filter(function(e) { return _expAgentOf(e).name === f.agent; });
+  if (f.status) list = list.filter(function(e) { return e.status === f.status; });
+  if (f.category) list = list.filter(function(e) { return e.category === f.category; });
+  if (f.from) list = list.filter(function(e) { return (e.date || '') >= f.from; });
+  if (f.to) list = list.filter(function(e) { return (e.date || '') <= f.to; });
+  if (f.q) {
+    var q = f.q.toLowerCase();
+    list = list.filter(function(e) {
+      return [e.desc, e.applicant, e.category, e.ref, e.paidRef, e.costCentre, _expAgentOf(e).name].join(' ').toLowerCase().indexOf(q) !== -1;
+    });
+  }
+  return list.sort(function(a, b) { return (b.date || '').localeCompare(a.date || ''); });
+}
+
+function expSetFilter(key, val) { _expFilterState[key] = val; _expFilterState.page = 1; _expSel = {}; renderExpensesTab(); }
+function expPage(p) { _expFilterState.page = p; renderExpensesTab(); }
+function expToggleVoided() {
+  _expFilterState.voided = !_expFilterState.voided; _expFilterState.page = 1; _expSel = {};
+  if (_expFilterState.voided && _isLiveSession()) {
+    apiFetch('/expenses?limit=500&include_voided=1').then(function(r) {
+      _expVoidedRows = r.ok && Array.isArray(r.data) ? r.data.map(mapExpense) : [];
+      renderExpensesTab();
+    });
+  } else renderExpensesTab();
+}
+
+function renderExpensesTab(search) {
+  if (typeof search === 'string') { _expFilterState.q = search; _expFilterState.page = 1; }
+  if (_isLiveSession() && !window._expTabFetching) {
+    window._expTabFetching = true;
+    _smartFetch('expenses').then(function() {
+      window._expTabFetching = false;
+      _renderExpensesTabInner();
+    }).catch(function() { window._expTabFetching = false; _renderExpensesTabInner(); });
+  }
+  _renderExpensesTabInner();
+}
+
+function _expKpis() {
+  var el = document.getElementById('expense-kpis'); if (!el) return;
+  var s = _expSummary || _expSummaryLocal();
+  var cur = s.currencies || {};
+  function both(key) {
+    var parts = [];
+    ['PHP', 'USD'].forEach(function(c) { var v = cur[c] ? cur[c][key] : 0; if (v || (c === 'PHP' && !cur.USD)) parts.push(_fmtAmt(v, c)); });
+    return parts.length ? parts.join(' + ') : '₱0';
+  }
+  function fundTxt() {
+    var parts = [];
+    ['PHP', 'USD'].forEach(function(c) { var f = s.fund && s.fund[c]; if (f && (f.allocated || f.paid_out || c === 'PHP')) parts.push(_fmtAmt(f.balance, c)); });
+    return parts.join(' + ');
+  }
+  var pn = (cur.PHP ? cur.PHP.pending_n : 0) + (cur.USD ? cur.USD.pending_n : 0);
+  var cards = [
+    { label: 'Net Cost to Agency', sub: 'Paid + absorbed', val: both('net_cost'), icon: '🏢', bg: 'var(--abg)', c: 'var(--amber)' },
+    { label: 'Recoverable from Agents', sub: 'Charged to agents', val: both('recoverable'), icon: '💸', bg: 'var(--rbg)', c: 'var(--red)' },
+    { label: 'Awaiting Payment', sub: pn + ' pending approval', val: both('committed'), icon: '⏳', bg: 'var(--brand-l)', c: 'var(--brand)' },
+    { label: 'Expenses Fund Balance', sub: 'Allocated − paid out', val: fundTxt(), icon: '🏦', bg: 'var(--gbg)', c: 'var(--green)' },
+  ];
+  el.innerHTML = cards.map(function(c) {
+    return '<div class="stat-card"><div class="stat-top"><div class="stat-icon" style="background:' + c.bg + ';color:' + c.c + '">' + c.icon + '</div></div><div class="stat-val" style="font-size:20px">' + c.val + '</div><div class="stat-lbl">' + c.label + '</div><div style="font-size:10.5px;color:var(--dim);margin-top:2px">' + c.sub + '</div></div>';
+  }).join('');
+}
+
+function _renderExpensesTabInner() {
+  var f = _expFilterState;
+  // filter controls
+  var agentF = document.getElementById('exp-agent-filter');
+  if (agentF) {
+    agentF.innerHTML = '<option value="">All Agents</option>' + DB.agents.map(function(a) { return '<option value="' + _eh(a.name) + '">' + _eh(a.name) + '</option>'; }).join('');
+    agentF.value = f.agent || '';
+  }
+  var catF = document.getElementById('exp-cat-filter');
+  if (catF) {
+    var cats = (_expCategories || []).map(function(c) { return c.name; });
+    (DB.expenses || []).forEach(function(e) { if (e.category && cats.indexOf(e.category) === -1) cats.push(e.category); });
+    catF.innerHTML = '<option value="">All Categories</option>' + cats.map(function(c) { return '<option value="' + _eh(c) + '">' + _eh(c) + '</option>'; }).join('');
+    catF.value = f.category || '';
+  }
+  var sF = document.getElementById('exp-status-filter'); if (sF) sF.value = f.status || '';
+  ['from', 'to'].forEach(function(k) { var el = document.getElementById('exp-' + k + '-filter'); if (el && el.value !== (f[k] || '')) el.value = f[k] || ''; });
+  var vb = document.getElementById('exp-voided-btn'); if (vb) { vb.textContent = f.voided ? '← Back to expenses' : '🗑 Voided'; }
+
+  _loadExpSummary().then(_expKpis);
+  _expKpis();
+
+  var list = _expFiltered();
+  var pages = Math.max(1, Math.ceil(list.length / EXP_PAGE_SIZE));
+  if ((f.page || 1) > pages) f.page = pages;
+  var page = f.page || 1;
+  var slice = list.slice((page - 1) * EXP_PAGE_SIZE, page * EXP_PAGE_SIZE);
+
+  var canManage = hasPermission('Manage Expenses'), canApprove = hasPermission('Approve Expenses');
+  var canCharge = hasPermission('Post Ledger Adjustments'), canVoid = hasPermission('Delete Expenses'), canUncharge = hasPermission('Void Accounting Records');
+
+  // inbox strip + bulk bar
+  var pending = (DB.expenses || []).filter(function(e) { return !e.voided && e.status === 'Pending'; });
+  var strip = document.getElementById('exp-inbox');
+  if (strip) {
+    var selIds = Object.keys(_expSel).filter(function(k) { return _expSel[k]; });
+    strip.innerHTML =
+      (pending.length ? '<button class="btn btn-sm ' + (f.status === 'Pending' ? 'btn-p' : 'btn-s') + '" onclick="expSetFilter(\'status\',\'' + (f.status === 'Pending' ? '' : 'Pending') + '\')">📥 ' + pending.length + ' awaiting approval</button>' : '') +
+      (selIds.length ? '<span style="font-size:12px;color:var(--muted);margin-left:8px">' + selIds.length + ' selected</span> ' +
+        (canApprove ? '<button class="btn btn-s btn-sm" onclick="bulkExpenseAction(\'approve\')">✓ Approve</button> <button class="btn btn-s btn-sm" onclick="bulkExpenseAction(\'reject\')">✗ Reject</button> ' : '') +
+        (canManage ? '<button class="btn btn-p btn-sm" onclick="openExpensePay()">💵 Pay selected</button> ' : '') +
+        '<button class="btn btn-ghost btn-sm" onclick="_expSel={};renderExpensesTab()">Clear</button>' : '');
+  }
+
+  var tbody = document.getElementById('expense-tbody'); if (!tbody) return;
+  var pager = document.getElementById('exp-pager');
+  if (!list.length) {
+    tbody.innerHTML = '<tr><td colspan="9"><div class="empty-state"><div class="empty-icon">💸</div><div class="empty-title">' + (f.voided ? 'No voided expenses' : 'No expenses found') + '</div></div></td></tr>';
+    if (pager) pager.innerHTML = '';
+    return;
+  }
+  tbody.innerHTML = slice.map(function(e) {
+    var ag = _expAgentOf(e), app = ag.app, id = _eh(e.id);
+    var voided = !!e.voided;
+    var open = ['Pending', 'Approved'].indexOf(e.status) !== -1;
+    var acts = '';
+    if (voided) {
+      acts = canUncharge ? '<button class="btn btn-ghost btn-xs" onclick="restoreExpense(\'' + id + '\')">↩ Restore</button>' : '';
+    } else {
+      if (app) acts += '<button class="btn btn-ghost btn-xs" onclick="openDrawer(\'' + _eh(app.id) + '\')" title="View applicant">👤</button> ';
+      if (e.status === 'Pending' && canApprove) acts += '<button class="btn btn-ghost btn-xs" style="color:var(--green)" onclick="approveExpense(\'' + id + '\')" title="Approve">✓</button><button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="rejectExpense(\'' + id + '\')" title="Reject">✗</button> ';
+      if (open && canManage) acts += '<button class="btn btn-s btn-xs" onclick="openExpensePay([\'' + id + '\'])">💵 Pay</button> ';
+      if (['Paid', 'Rejected', 'Agency'].indexOf(e.status) !== -1 && canManage) acts += '<button class="btn btn-ghost btn-xs" onclick="reopenExpense(\'' + id + '\')" title="Set back to Pending">↺</button> ';
+      if (e.status !== 'Charged' && canManage) acts += '<button class="btn btn-ghost btn-xs" onclick="openExpenseEdit(\'' + id + '\')" title="Edit">✏️</button> ';
+      acts += '<button class="btn btn-ghost btn-xs" onclick="openExpenseReceipts(\'' + id + '\')" title="Receipts">📎' + (e.receiptCount ? ' ' + e.receiptCount : '') + '</button> ';
+      if (ag.id && e.status !== 'Charged' && e.status !== 'Rejected' && (e.currency || 'PHP') === 'PHP' && canCharge)
+        acts += '<button class="btn btn-sm" style="font-size:11px;background:var(--rbg);color:var(--red);border:1px solid #fca5a5" onclick="chargeExpenseToAgent(\'' + id + '\',\'' + _eh(ag.id) + '\')">Charge Agent</button> ';
+      if (e.status === 'Charged' && canUncharge) acts += '<button class="btn btn-ghost btn-xs" style="font-size:11px" onclick="unchargeExpenseFromAgent(\'' + id + '\')" title="Reverse the charge">↩ Reverse charge</button> ';
+      if (e.status !== 'Charged' && canVoid) acts += '<button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="voidExpense(\'' + id + '\')" title="Void">🗑</button>';
+    }
+    var who = e.applicant ? '<div style="font-size:12.5px;font-weight:700">' + _eh(e.applicant) + '</div>' + (app ? '<div style="font-size:11px;color:var(--muted)">' + _eh(app.displayId || app.id) + ' · ' + pillHtml(app.status) + '</div>' : '')
+                          : '<div style="font-size:12.5px;font-weight:700;color:var(--muted)">Overhead</div>' + (e.costCentre ? '<div style="font-size:11px;color:var(--muted)">' + _eh(e.costCentre) + '</div>' : '');
+    var detail = (e.status === 'Rejected' && e.rejectReason) ? '<div style="font-size:10.5px;color:var(--red)">Rejected: ' + _eh(e.rejectReason) + '</div>' : '';
+    if (voided && e.voidReason) detail = '<div style="font-size:10.5px;color:var(--red)">Voided: ' + _eh(e.voidReason) + '</div>';
+    var pay = (e.status === 'Paid' && (e.paidMethod || e.paidRef)) ? '<div style="font-size:10.5px;color:var(--dim)">' + _eh(e.paidMethod || '') + (e.paidRef ? ' · ' + _eh(e.paidRef) : '') + '</div>' : '';
+    return '<tr' + (voided ? ' style="opacity:.6"' : '') + '>' +
+      '<td style="width:26px">' + ((!voided && e.status !== 'Charged' && (canManage || canApprove)) ? '<input type="checkbox" ' + (_expSel[e.id] ? 'checked' : '') + ' onchange="expToggleSel(\'' + id + '\',this.checked)">' : '') + '</td>' +
+      '<td style="font-size:11.5px;font-family:\'IBM Plex Mono\',monospace;color:var(--muted)">' + _eh(e.date) + '</td>' +
+      '<td>' + who + '</td>' +
+      '<td style="font-size:12.5px;color:var(--text2)">' + _eh(ag.name || '—') + '</td>' +
+      '<td>' + pillHtml(e.category || 'Other', 'category') + '</td>' +
+      '<td style="font-size:12.5px;max-width:200px">' + _eh(e.desc) + (e.ref ? '<div style="font-size:10.5px;color:var(--dim)">Ref: ' + _eh(e.ref) + '</div>' : '') + detail + '</td>' +
+      '<td style="font-weight:800;font-family:\'IBM Plex Mono\',monospace;text-align:right">' + _fmtAmt(e.amount, e.currency) + '</td>' +
+      '<td>' + pillHtml(e.status) + pay + '</td>' +
+      '<td style="text-align:right;white-space:nowrap">' + acts + '</td></tr>';
+  }).join('');
+  if (pager) {
+    pager.innerHTML = pages > 1
+      ? '<div style="display:flex;gap:8px;align-items:center;justify-content:flex-end;padding:10px 16px;font-size:12px;color:var(--muted)">' + list.length + ' expenses · page ' + page + ' of ' + pages +
+        ' <button class="btn btn-s btn-xs" ' + (page <= 1 ? 'disabled' : '') + ' onclick="expPage(' + (page - 1) + ')">‹ Prev</button><button class="btn btn-s btn-xs" ' + (page >= pages ? 'disabled' : '') + ' onclick="expPage(' + (page + 1) + ')">Next ›</button></div>'
+      : '<div style="padding:8px 16px;font-size:12px;color:var(--muted);text-align:right">' + list.length + ' expense' + (list.length !== 1 ? 's' : '') + '</div>';
+  }
+}
+
+function expToggleSel(id, on) { if (on) _expSel[id] = true; else delete _expSel[id]; _renderExpensesTabInner(); }
+function expSelectAll(on) {
+  var f = _expFiltered().slice(((_expFilterState.page || 1) - 1) * EXP_PAGE_SIZE, (_expFilterState.page || 1) * EXP_PAGE_SIZE);
+  f.forEach(function(e) { if (e.status !== 'Charged' && !e.voided) { if (on) _expSel[e.id] = true; else delete _expSel[e.id]; } });
+  _renderExpensesTabInner();
+}
+
+// ── status actions ──────────────────────────────────────────────────────
+async function _expAct(id, body, okMsg) {
+  var e = _expById(id); if (!e) return null;
+  if (_isLiveSession()) {
+    var dbId = e._dbId || e.id;
+    if (!isUUID(dbId)) { toast('This expense is not saved on the server yet', 'error'); return null; }
+    var r = await _acctCall('/expenses/' + dbId, body, 'PATCH');
+    if (!r.ok) { toast(_acctMsg(r, 'Could not update the expense'), 'error'); return r; }
+    _applyExpenseRow(r.data);
+  } else {
+    if (body.status) e.status = body.status;
+    if (body.reject_reason) e.rejectReason = body.reject_reason;
+  }
+  if (okMsg) toast(okMsg, 'success');
+  renderExpensesTab(); if (currentPage === 'accounting') renderAccounting();
+  return { ok: true };
+}
+function approveExpense(id) { if (!hasPermission('Approve Expenses')) { toast('Your role cannot approve expenses', 'error'); return; } return _expAct(id, { status: 'Approved' }, 'Expense approved'); }
+function rejectExpense(id) {
+  if (!hasPermission('Approve Expenses')) { toast('Your role cannot reject expenses', 'error'); return; }
+  var reason = _askReason('Why is this expense rejected?'); if (!reason) return;
+  return _expAct(id, { status: 'Rejected', reject_reason: reason }, 'Expense rejected');
+}
+function reopenExpense(id) { if (!confirm('Set this expense back to Pending?')) return; return _expAct(id, { status: 'Pending' }, 'Expense re-opened'); }
+
+async function bulkExpenseAction(action) {
+  var ids = Object.keys(_expSel).filter(function(k) { return _expSel[k]; });
+  if (!ids.length) return;
+  var body = { action: action, ids: ids.map(function(i) { var e = _expById(i); return e ? (e._dbId || e.id) : i; }).filter(isUUID) };
+  if (action === 'reject') { var reason = _askReason('Why are these ' + ids.length + ' expenses rejected?'); if (!reason) return; body.reason = reason; }
+  if (!_isLiveSession()) { ids.forEach(function(i) { var e = _expById(i); if (e) e.status = action === 'approve' ? 'Approved' : 'Rejected'; }); _expSel = {}; renderExpensesTab(); return; }
+  var r = await _acctCall('/expenses/bulk', body);
+  if (!r.ok) { toast(_acctMsg(r, 'Could not update'), 'error'); return; }
+  (r.data.rows || []).forEach(_applyExpenseRow);
+  _expSel = {};
+  var failed = (r.data.failed || []).length;
+  toast(r.data.updated.length + ' expense(s) ' + (action === 'approve' ? 'approved' : 'rejected') + (failed ? ' · ' + failed + ' skipped: ' + r.data.failed[0].message : ''), failed ? 'info' : 'success');
+  renderExpensesTab(); if (currentPage === 'accounting') renderAccounting();
+}
+
+// ── pay ─────────────────────────────────────────────────────────────────
+var _expPayIds = [];
+function openExpensePay(ids) {
+  if (!hasPermission('Manage Expenses')) { toast('Your role cannot pay expenses', 'error'); return; }
+  _expPayIds = (ids && ids.length ? ids : Object.keys(_expSel).filter(function(k) { return _expSel[k]; }));
+  var list = _expPayIds.map(_expById).filter(function(e) { return e && ['Pending', 'Approved'].indexOf(e.status) !== -1; });
+  if (!list.length) { toast('Select Pending or Approved expenses to pay', 'error'); return; }
+  _expPayIds = list.map(function(e) { return e.id; });
+  var tot = {}; list.forEach(function(e) { var c = e.currency || 'PHP'; tot[c] = (tot[c] || 0) + e.amount; });
+  document.getElementById('xp-sub').textContent = list.length + ' expense' + (list.length !== 1 ? 's' : '') + ' · ' + Object.keys(tot).map(function(c) { return _fmtAmt(tot[c], c); }).join(' + ');
+  document.getElementById('xp-method').value = 'bank';
+  document.getElementById('xp-ref').value = '';
+  document.getElementById('xp-override').value = '';
+  document.getElementById('xp-override-wrap').style.display = 'none';
+  var er = document.getElementById('xp-error'); er.style.display = 'none';
+  var s = _expSummary || _expSummaryLocal(); var f = s.fund && s.fund.PHP;
+  document.getElementById('xp-fund').textContent = f ? 'Expenses Fund (PHP): ' + _fmtAmt(f.balance, 'PHP') + ' available' : '';
+  openOverlay('overlay-expense-pay');
+}
+async function submitExpensePay() {
+  var er = document.getElementById('xp-error'); er.style.display = 'none';
+  var method = document.getElementById('xp-method').value, ref = document.getElementById('xp-ref').value.trim();
+  var override = document.getElementById('xp-override').value.trim();
+  if (!_isLiveSession()) {
+    _expPayIds.forEach(function(i) { var e = _expById(i); if (e) { e.status = 'Paid'; e.paidMethod = method; e.paidRef = ref; } });
+    closeOverlay('overlay-expense-pay'); _expSel = {}; renderExpensesTab(); return;
+  }
+  if (!_acctLock('xpay')) return;
+  try {
+    var ids = _expPayIds.map(function(i) { var e = _expById(i); return e ? (e._dbId || e.id) : i; }).filter(isUUID);
+    var r = await _acctCall('/expenses/bulk', { action: 'pay', ids: ids, method: method, reference: ref || undefined, override_reason: override || undefined });
+    if (!r.ok) { er.textContent = _acctMsg(r, 'Could not pay'); er.style.display = 'block'; return; }
+    (r.data.rows || []).forEach(_applyExpenseRow);
+    var failed = r.data.failed || [];
+    var fundBlocked = failed.filter(function(x) { return x.error === 'insufficient_expense_fund'; });
+    if (fundBlocked.length) {
+      document.getElementById('xp-override-wrap').style.display = 'block';
+      er.textContent = fundBlocked.length + ' expense(s) exceed the Expenses Fund. Add funds, or enter an override reason below and pay again.';
+      er.style.display = 'block'; _expPayIds = fundBlocked.map(function(x) { return x.id; }); renderExpensesTab(); return;
+    }
+    if (failed.length) { er.textContent = failed.length + ' not paid: ' + failed[0].message; er.style.display = 'block'; _expPayIds = failed.map(function(x) { return x.id; }); renderExpensesTab(); return; }
+    toast(r.data.updated.length + ' expense(s) paid', 'success');
+    closeOverlay('overlay-expense-pay'); _expSel = {};
+    renderExpensesTab(); if (currentPage === 'accounting') renderAccounting();
+  } finally { _acctUnlock('xpay'); }
+}
+
+// ── void / restore ──────────────────────────────────────────────────────
+async function voidExpense(id) {
+  if (!hasPermission('Delete Expenses')) { toast('Your role cannot void expenses', 'error'); return; }
+  var e = _expById(id); if (!e) return;
+  if (e.status === 'Charged') { toast('Reverse the charge to the agent first', 'error'); return; }
+  var reason = _askReason('Void "' + e.desc + '" (' + _fmtAmt(e.amount, e.currency) + ')?\nIt stays in the audit history but no longer counts.'); if (!reason) return;
+  if (_isLiveSession()) {
+    var dbId = e._dbId || e.id;
+    if (isUUID(dbId)) {
+      var r = await _acctCall('/expenses/' + dbId + '/void', { reason: reason });
+      if (!r.ok) { toast(_acctMsg(r, 'Could not void the expense'), 'error'); return; }
+    }
+  }
+  DB.expenses = DB.expenses.filter(function(x) { return x !== e; });
+  autosave('expenses'); addAudit('DELETE', 'Expense', 'Voided ' + e.desc + ' — ' + reason);
+  toast('Expense voided', 'success');
+  if (currentDrawerApplicant && currentDrawerApplicant.name === e.applicant) switchDrawerTab('expenses', null);
+  renderExpensesTab(); if (currentPage === 'accounting') renderAccounting();
+}
+async function restoreExpense(id) {
+  var e = _expById(id); if (!e) return;
+  var r = await _acctCall('/expenses/' + (e._dbId || e.id) + '/restore', {});
+  if (!r.ok) { toast(_acctMsg(r, 'Could not restore'), 'error'); return; }
+  _expVoidedRows = (_expVoidedRows || []).filter(function(x) { return x !== e; });
+  _applyExpenseRow(r.data); toast('Expense restored', 'success'); renderExpensesTab();
+}
+
+// ── edit ────────────────────────────────────────────────────────────────
+var _expEditId = null;
+async function openExpenseEdit(id) {
+  if (!hasPermission('Manage Expenses')) { toast('Your role cannot edit expenses', 'error'); return; }
+  var e = _expById(id); if (!e) return;
+  _expEditId = e.id;
+  var cats = await _loadExpCategories();
+  var names = cats.map(function(c) { return c.name; }); if (e.category && names.indexOf(e.category) === -1) names.push(e.category);
+  document.getElementById('xe-category').innerHTML = names.map(function(n) { return '<option>' + _eh(n) + '</option>'; }).join('');
+  document.getElementById('xe-category').value = e.category || 'Other';
+  document.getElementById('xe-desc').value = e.desc || '';
+  document.getElementById('xe-amount').value = e.amount || '';
+  document.getElementById('xe-date').value = e.date || '';
+  document.getElementById('xe-currency').value = e.currency || 'PHP';
+  document.getElementById('xe-cc').value = e.costCentre || '';
+  document.getElementById('xe-ref').value = e.ref || '';
+  document.getElementById('xe-method').value = e.paidMethod || '';
+  document.getElementById('xe-payref').value = e.paidRef || '';
+  var locked = ['Pending', 'Approved', 'Rejected'].indexOf(e.status) === -1;
+  ['xe-amount', 'xe-date', 'xe-currency'].forEach(function(i) { document.getElementById(i).disabled = locked; });
+  document.getElementById('xe-lock').style.display = locked ? 'block' : 'none';
+  document.getElementById('xe-pay-wrap').style.display = e.status === 'Paid' ? 'flex' : 'none';
+  document.getElementById('xe-error').style.display = 'none';
+  openOverlay('overlay-expense-edit');
+}
+async function saveExpenseEdit() {
+  var e = _expById(_expEditId); if (!e) return;
+  var er = document.getElementById('xe-error'); er.style.display = 'none';
+  var body = {
+    description: document.getElementById('xe-desc').value.trim(), category: document.getElementById('xe-category').value,
+    notes: document.getElementById('xe-ref').value.trim() || null, cost_centre: document.getElementById('xe-cc').value.trim() || null,
+  };
+  if (!body.description) { er.textContent = 'Description is required'; er.style.display = 'block'; return; }
+  if (!document.getElementById('xe-amount').disabled) {
+    body.amount = parseFloat(document.getElementById('xe-amount').value) || 0;
+    if (body.amount <= 0) { er.textContent = 'Amount must be greater than zero'; er.style.display = 'block'; return; }
+    body.expense_date = document.getElementById('xe-date').value; body.currency = document.getElementById('xe-currency').value;
+  }
+  if (e.status === 'Paid') { body.paid_method = document.getElementById('xe-method').value || null; body.paid_ref = document.getElementById('xe-payref').value.trim() || null; }
+  if (_isLiveSession()) {
+    var r = await _acctCall('/expenses/' + (e._dbId || e.id), body, 'PATCH');
+    if (!r.ok) { er.textContent = _acctMsg(r, 'Could not save'); er.style.display = 'block'; return; }
+    _applyExpenseRow(r.data);
+  } else {
+    Object.assign(e, { desc: body.description, category: body.category, ref: body.notes, costCentre: body.cost_centre });
+    if (body.amount) Object.assign(e, { amount: body.amount, date: body.expense_date, currency: body.currency });
+  }
+  addAudit('UPDATE', 'Expense', 'Edited ' + body.description);
+  closeOverlay('overlay-expense-edit'); toast('Expense updated', 'success');
+  renderExpensesTab(); if (currentPage === 'accounting') renderAccounting();
+}
+
+// ── receipts ────────────────────────────────────────────────────────────
+var _expReceiptId = null;
+async function openExpenseReceipts(id) {
+  var e = _expById(id); if (!e) return;
+  _expReceiptId = e.id;
+  document.getElementById('xr-title').textContent = e.desc;
+  document.getElementById('xr-file').value = '';
+  openOverlay('overlay-expense-receipts');
+  await _renderReceiptList();
+}
+async function _renderReceiptList() {
+  var el = document.getElementById('xr-list'), e = _expById(_expReceiptId);
+  if (!_isLiveSession()) { el.innerHTML = '<div style="color:var(--muted);font-size:12.5px">Receipts need a connection to the server.</div>'; return; }
+  el.innerHTML = '<div style="color:var(--muted);font-size:12.5px">Loading…</div>';
+  _bustAcctCache();
+  var r = await apiFetch('/expenses/' + (e._dbId || e.id) + '/receipts');
+  var rows = r.ok && Array.isArray(r.data) ? r.data : [];
+  if (e) e.receiptCount = rows.length;
+  el.innerHTML = rows.length ? rows.map(function(x) {
+    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:1px solid var(--border);font-size:12.5px"><span>📎 ' + _eh(x.file_name) + ' <span style="color:var(--dim)">(' + Math.round((x.file_size || 0) / 1024) + ' KB)</span></span><span>' +
+      '<button class="btn btn-s btn-xs" onclick="viewExpenseReceipt(\'' + _eh(x.id) + '\')">View</button> ' +
+      (hasPermission('Manage Expenses') ? '<button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="removeExpenseReceipt(\'' + _eh(x.id) + '\')">Remove</button>' : '') + '</span></div>';
+  }).join('') : '<div style="color:var(--muted);font-size:12.5px">No receipts attached.</div>';
+  renderExpensesTab();
+}
+async function _uploadExpenseReceipt(expenseDbId, file) {
+  var form = new FormData();
+  form.append('file', file, file.name);
+  return apiFetch('/expenses/' + expenseDbId + '/receipts', { method: 'POST', body: form, _noContentType: true });
+}
+async function uploadExpenseReceipt() {
+  var file = (document.getElementById('xr-file').files || [])[0], e = _expById(_expReceiptId);
+  if (!file || !e) { toast('Choose a file first', 'error'); return; }
+  if (!_isLiveSession()) { toast('Receipts need a connection to the server', 'error'); return; }
+  var r = await _uploadExpenseReceipt(e._dbId || e.id, file);
+  _bustAcctCache();
+  if (!r.ok) { toast(_acctMsg(r, 'Upload failed'), 'error'); return; }
+  document.getElementById('xr-file').value = ''; toast('Receipt attached', 'success'); _renderReceiptList();
+}
+async function viewExpenseReceipt(rid) {
+  var e = _expById(_expReceiptId);
+  var r = await apiFetch('/expenses/' + (e._dbId || e.id) + '/receipts/' + rid + '/url');
+  if (!r.ok || !r.data.url) { toast(_acctMsg(r, 'Could not open the receipt'), 'error'); return; }
+  window.open(r.data.url, '_blank', 'noopener');
+}
+async function removeExpenseReceipt(rid) {
+  if (!confirm('Remove this receipt?')) return;
+  var e = _expById(_expReceiptId);
+  var r = await _acctCall('/expenses/' + (e._dbId || e.id) + '/receipts/' + rid, null, 'DELETE');
+  if (!r.ok) { toast(_acctMsg(r, 'Could not remove'), 'error'); return; }
+  _renderReceiptList();
+}
+
+// ── add expense ─────────────────────────────────────────────────────────
+async function openAddExpense(preselect) {
+  ['e-desc', 'e-amount', 'e-ref', 'e-cc'].forEach(function(id) { var el = document.getElementById(id); if (el) el.value = ''; });
+  var dt = document.getElementById('e-date'); if (dt) dt.value = _ymd(new Date());
+  var statEl = document.getElementById('e-status'); if (statEl) statEl.value = 'Paid';
+  var cur = document.getElementById('e-currency'); if (cur) cur.value = 'PHP';
+  var meth = document.getElementById('e-method'); if (meth) meth.value = 'cash';
+  var file = document.getElementById('e-receipt'); if (file) file.value = '';
+  ['e-error', 'e-running-total', 'e-applicant-info'].forEach(function(id) { var el = document.getElementById(id); if (el) el.style.display = 'none'; });
+  var cats = await _loadExpCategories();
+  var catSel = document.getElementById('e-category');
+  if (catSel) catSel.innerHTML = cats.map(function(c) { return '<option value="' + _eh(c.name) + '">' + _expCatIcon(c.name) + ' ' + _eh(c.name) + '</option>'; }).join('');
+  var sel = document.getElementById('e-applicant');
+  if (sel) {
+    sel.innerHTML = '<option value="">— Overhead / no applicant —</option>' + DB.applicants.map(function(a) {
+      var v = a._dbId || a.id;
+      return '<option value="' + _eh(v) + '"' + ((preselect && a.name === preselect) ? ' selected' : '') + '>' + _eh(a.name) + ' (' + _eh(a.displayId || a.id) + ' · ' + _eh(a.status) + ')</option>';
+    }).join('');
+  }
+  onExpenseApplicantChange();
+  openOverlay('overlay-expense');
+  setTimeout(function() { var s = document.getElementById('e-applicant'); if (s) s.focus(); }, 100);
+}
+
+function _expSelectedApplicant() {
+  var sel = document.getElementById('e-applicant'); var v = sel ? sel.value : '';
+  if (!v) return null;
+  return DB.applicants.find(function(a) { return (a._dbId || a.id) === v || a.id === v; }) || null;
+}
+
+function onExpenseApplicantChange() {
+  var app = _expSelectedApplicant();
+  var info = document.getElementById('e-applicant-info'), total = document.getElementById('e-running-total');
+  var ccWrap = document.getElementById('e-cc-wrap');
+  if (ccWrap) ccWrap.style.display = app ? 'none' : 'block';
+  if (!app) { if (info) info.style.display = 'none'; if (total) total.style.display = 'none'; onExpenseCategoryChange(); return; }
+  var initials = app.name.split(' ').map(function(w) { return w[0]; }).join('').toUpperCase().slice(0, 2);
+  var set = function(id, v, html) { var el = document.getElementById(id); if (el) { if (html) el.innerHTML = v; else el.textContent = v; } };
+  set('e-app-avatar', initials); set('e-app-name', app.name);
+  set('e-app-detail', (app.job || 'No job') + ' · Agent: ' + (app.agent || '—'));
+  set('e-app-status-pill', pillHtml(app.status), true);
+  var existing = DB.expenses.filter(function(e) { return !e.voided && (e.applicantId === app.id || e.applicantId === app._dbId || (!e.applicantId && e.applicant === app.name)); })
+    .reduce(function(s, e) { return s + ((e.currency || 'PHP') === 'PHP' ? e.amount : 0); }, 0);
+  set('e-app-total', '₱' + existing.toLocaleString() + ' recorded so far');
+  if (info) info.style.display = 'flex';
+  updateExpenseTotal();
+  if (total) total.style.display = 'flex';
+  onExpenseCategoryChange();
+}
+
+function onExpenseCategoryChange() {
+  var cat = document.getElementById('e-category'), desc = document.getElementById('e-desc');
+  if (!cat || !desc || desc.value) return;
+  var app = _expSelectedApplicant(), who = app ? ' — ' + app.name : '';
+  var s = { 'Medical Exam': 'Medical examination' + who, 'Documentation': 'Document processing' + who, 'Processing Fee': 'POEA processing fee' + who,
+    'Training': 'OFW skills training' + who, 'Visa Fee': 'Visa application fee' + who, 'OWWA Fee': 'OWWA membership fee' + who,
+    'Ticketing': 'Airfare / ticketing' + who, 'Transportation': 'Transportation expense', 'Accommodation': 'Accommodation cost' };
+  if (s[cat.value]) desc.value = s[cat.value];
+}
+
+function updateExpenseTotal() {
+  var app = _expSelectedApplicant(), totalEl = document.getElementById('e-total-val');
+  if (!app || !totalEl) return;
+  var cur = (document.getElementById('e-currency') || {}).value || 'PHP';
+  var existing = DB.expenses.filter(function(e) { return !e.voided && (e.currency || 'PHP') === cur && (e.applicantId === app.id || e.applicantId === app._dbId || (!e.applicantId && e.applicant === app.name)); })
+    .reduce(function(s, e) { return s + e.amount; }, 0);
+  var amt = parseFloat((document.getElementById('e-amount') || {}).value) || 0;
+  totalEl.textContent = _fmtAmt(existing + amt, cur);
+  var sym = document.getElementById('e-cur-sym'); if (sym) sym.textContent = '(' + _curSym(cur) + ')';
+}
+
+// Record an expense. Saved on the server first; if the applicant has already exited (Backout / Repatriated / Rejected)
+// the country expense rule decides whether the agent is charged (the server posts the debit atomically) or the agency absorbs it.
 async function saveExpense() {
   if (!hasPermission('Manage Expenses')) { toast('Your role cannot manage expenses', 'error'); return; }
-  var appName = (document.getElementById('e-applicant').value || '').trim();
-  var desc    = (document.getElementById('e-desc').value     || '').trim();
-  var amt     = parseFloat(document.getElementById('e-amount').value) || 0;
-  var errEl   = document.getElementById('e-error');
-  var btn     = document.getElementById('save-expense-btn');
+  var app = _expSelectedApplicant();
+  var desc = (document.getElementById('e-desc').value || '').trim();
+  var amt = parseFloat(document.getElementById('e-amount').value) || 0;
+  var currency = (document.getElementById('e-currency') || {}).value || 'PHP';
+  var cc = ((document.getElementById('e-cc') || {}).value || '').trim();
+  var errEl = document.getElementById('e-error'), btn = document.getElementById('save-expense-btn');
   if (errEl) errEl.style.display = 'none';
   function fail(msg) { if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; } else toast(msg, 'error'); }
-
-  if (!appName) return fail('Please select an applicant.');
-  if (!desc)    return fail('Description is required.');
+  if (!app && !cc) return fail('Pick an applicant, or enter a cost centre for an overhead expense (e.g. Office, Courier).');
+  if (!desc) return fail('Description is required.');
   if (!amt || amt <= 0) return fail('Amount must be greater than zero.');
 
-  var app = DB.applicants.find(function(a) { return a.name === appName; });
-  var _expAgent = app ? DB.agents.find(function(a) { return a.name === app.agent || a.id === app._agentDbId; }) : null;
+  var agent = app ? DB.agents.find(function(a) { return a.name === app.agent || a.id === app._agentDbId || a._dbId === app._agentDbId; }) : null;
+  var status = document.getElementById('e-status').value || 'Paid';
   var exp = {
-    id:          genId('EXP'),
-    date:        document.getElementById('e-date').value || _ymd(new Date()),
-    desc:        desc,
-    applicant:   appName,
-    applicantId: app ? (app._dbId || app.id) : null,
-    agentName:   _expAgent ? _expAgent.name : (app ? app.agent || '' : ''),
-    agentId:     _expAgent ? (_expAgent._dbId || _expAgent.id) : (app ? app._agentDbId || '' : ''),
-    category:    document.getElementById('e-category').value,
-    amount:      amt,
-    status:      document.getElementById('e-status').value || 'Paid',
-    ref:         (document.getElementById('e-ref') ? document.getElementById('e-ref').value.trim() : '') || null,
-    postedBy:    (window._ramsSessionUser && window._ramsSessionUser.name) || 'System',
+    id: genId('EXP'), date: document.getElementById('e-date').value || _ymd(new Date()), desc: desc,
+    applicant: app ? app.name : '', applicantId: app ? (app._dbId || app.id) : null,
+    agentName: agent ? agent.name : '', agentId: agent ? (agent._dbId || agent.id) : '',
+    category: document.getElementById('e-category').value, amount: amt, currency: currency, status: status,
+    ref: ((document.getElementById('e-ref') || {}).value || '').trim() || null, costCentre: cc || null,
+    paidMethod: status === 'Paid' ? ((document.getElementById('e-method') || {}).value || null) : null,
+    paidRef: status === 'Paid' ? (((document.getElementById('e-ref') || {}).value || '').trim() || null) : null,
+    postedBy: (window._ramsSessionUser && window._ramsSessionUser.name) || 'System',
   };
 
-  // Decide the automatic outcome from the country expense rule — nothing is saved or posted yet
-  var agent = app ? DB.agents.find(function(a) { return a.name === app.agent || a.id === app._agentDbId; }) : null;
+  // Decide the automatic outcome from the country expense rule (PHP expenses only — agent balances are in pesos)
   var plan = { charge: null, status: null };
   var _country = app && app.job ? app.job.split('·').pop().trim() : '';
   if (app && ['Backout', 'Repatriated', 'Rejected'].indexOf(app.status) !== -1) {
     var _rule = DB.countryRules.find(function(r) { return r.country === _country && r.active; });
     var _expRule = _rule ? (_rule.expenseRule || 'full') : 'full';
+    var canBill = !!agent && currency === 'PHP';
     if (_expRule === 'none') plan.status = 'Agency';
-    else if (_expRule === 'medical') { if (exp.category === 'Medical Exam' && agent) plan.charge = { percent: 100, label: 'Auto-charged (medical rule)' }; else plan.status = 'Agency'; }
-    else if (_expRule === 'partial') { if (agent) plan.charge = { percent: 50, label: 'Auto-charged 50% (partial rule)' }; else plan.status = 'Agency'; }
-    else { if (agent) plan.charge = { percent: 100, label: 'Auto-charged' }; else plan.status = 'Agency'; }
-  } else if (exp.status === 'Charged' && agent) {
-    plan.charge = { percent: 100, label: 'Charged' };      // chose "Charged" on the form
+    else if (_expRule === 'medical') { if (exp.category === 'Medical Exam' && canBill) plan.charge = { percent: 100, label: 'Auto-charged (medical rule)' }; else plan.status = 'Agency'; }
+    else if (_expRule === 'partial') { if (canBill) plan.charge = { percent: 50, label: 'Auto-charged 50% (partial rule)' }; else plan.status = 'Agency'; }
+    else { if (canBill) plan.charge = { percent: 100, label: 'Auto-charged' }; else plan.status = 'Agency'; }
+  } else if (exp.status === 'Charged' && agent && currency === 'PHP') {
+    plan.charge = { percent: 100, label: 'Charged' };
   }
-  if (exp.status === 'Charged') exp.status = 'Paid';       // the server only reaches Charged through the charge call
+  if (exp.status === 'Charged') exp.status = 'Paid';
   if (plan.status) exp.status = plan.status;
 
   if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
@@ -15434,19 +15806,38 @@ async function saveExpense() {
     if (btn) { btn.textContent = 'Record Expense'; btn.disabled = false; }
     return fail(_acctMsg(r, 'The expense could not be saved on the server.'));
   }
+  if (r.data && r.data.id) { exp._dbId = r.data.id; if (r.data.status) exp.status = r.data.status; if (r.data.category) exp.category = r.data.category; }
   _bumpExpenseTs();
-  if (r.data && r.data.warning === 'possible_duplicate') toast('⚠️ An expense with the same amount, description, applicant and date already exists — check for a duplicate', 'info');
+
+  // possible duplicate → show it and let the user keep or cancel
+  if (r.data && r.data.warning === 'possible_duplicate' && r.data.duplicate) {
+    var d = r.data.duplicate;
+    if (!confirm('Possible duplicate:\n\n"' + d.description + '" — ' + _fmtAmt(d.amount, currency) + ' on ' + d.date + ' already exists for this applicant.\n\nOK = keep both    Cancel = discard the new one')) {
+      await _acctCall('/expenses/' + r.data.id + '/void', { reason: 'Duplicate of an existing expense' });
+      DB.expenses = DB.expenses.filter(function(x) { return x !== exp; });
+      if (btn) { btn.textContent = 'Record Expense'; btn.disabled = false; }
+      toast('Duplicate discarded', 'info'); renderExpensesTab(); return;
+    }
+  }
+  if (r.data && r.data.held_for_approval) toast('Saved as Pending — this amount needs approval before it can be paid', 'info');
+
+  // optional receipt
+  var rf = document.getElementById('e-receipt');
+  if (rf && rf.files && rf.files[0] && _isLiveSession() && exp._dbId) {
+    var ur = await _uploadExpenseReceipt(exp._dbId, rf.files[0]);
+    if (!ur.ok) toast('Expense saved, but the receipt was not uploaded: ' + _acctMsg(ur, 'upload failed'), 'error'); else exp.receiptCount = 1;
+  }
 
   var chargedNote = '';
-  if (plan.charge) {
-    var label = plan.charge.label + ': ' + exp.category + ' — ' + appName + ' (' + app.status + ')';
+  if (plan.charge && exp.status !== 'Pending') {
+    var label = plan.charge.label + ': ' + exp.category + ' — ' + app.name + ' (' + app.status + ')';
     if (_isLiveSession()) {
       var cres = await _chargeExpenseServer(exp, agent._dbId || agent.id, { percent: plan.charge.percent, description: label });
       if (!cres.ok) toast('Expense saved, but charging the agent failed: ' + cres.error, 'error');
       else {
         var chg = cres.data.ledger_entry ? Math.abs(parseFloat(cres.data.ledger_entry.amount)) : amt;
         chargedNote = ' · ₱' + chg.toLocaleString() + ' charged to ' + agent.name;
-        addAudit('CREATE', 'Expense', 'Auto-charged ₱' + chg.toLocaleString() + ' to ' + agent.name + ' (' + appName + ' is ' + app.status + ')' + (plan.charge.percent < 100 ? ' — partial rule, agency absorbed the rest' : ''));
+        addAudit('CREATE', 'Expense', 'Auto-charged ₱' + chg.toLocaleString() + ' to ' + agent.name + ' (' + app.name + ' is ' + app.status + ')' + (plan.charge.percent < 100 ? ' — partial rule, agency absorbed the rest' : ''));
       }
     } else {
       var share = plan.charge.percent < 100 ? Math.round(amt * plan.charge.percent / 100) : amt;
@@ -15454,17 +15845,75 @@ async function saveExpense() {
       _addLedgerEntryDemo(agent.id, 'expense', label, -share, app.id);
     }
   } else if (plan.status === 'Agency') {
-    addAudit('CREATE', 'Expense', 'Agency absorbed ₱' + amt.toLocaleString() + ' — ' + exp.category + ' for ' + appName + ' (' + (app ? app.status : '') + ', country rule: ' + (_country || 'default') + ')');
+    addAudit('CREATE', 'Expense', 'Agency absorbed ' + _fmtAmt(amt, currency) + ' — ' + exp.category + ' for ' + (app ? app.name : '') + ' (' + (app ? app.status : '') + ', country rule: ' + (_country || 'default') + ')');
   }
   autosave('expenses');
-  addAudit('CREATE', 'Expense', 'Recorded ' + exp.category + ': ₱' + amt.toLocaleString() + ' for ' + appName);
+  addAudit('CREATE', 'Expense', 'Recorded ' + exp.category + ': ' + _fmtAmt(amt, currency) + (app ? ' for ' + app.name : ' (overhead: ' + cc + ')'));
 
   if (btn) { btn.textContent = 'Record Expense'; btn.disabled = false; }
   closeOverlay('overlay-expense');
-  if (currentDrawerApplicant && currentDrawerApplicant.name === appName) switchDrawerTab('expenses', null);
+  if (app && currentDrawerApplicant && currentDrawerApplicant.name === app.name) switchDrawerTab('expenses', null);
   if (currentPage === 'accounting') renderAccounting();
   if (typeof renderExpensesTab === 'function' && currentAccTab === 'expenses') renderExpensesTab();
-  toast('Expense recorded — ₱' + amt.toLocaleString() + ' for ' + appName + chargedNote, chargedNote ? 'info' : 'success');
+  toast('Expense recorded — ' + _fmtAmt(amt, currency) + (app ? ' for ' + app.name : ' (' + cc + ')') + chargedNote, chargedNote ? 'info' : 'success');
+}
+
+// ── export ──────────────────────────────────────────────────────────────
+function exportFilteredExpenses() {
+  var expenses = _expFiltered();
+  if (!expenses.length) { toast('No expenses to export', 'error'); return; }
+  var q = function(v) { return '"' + String(v === undefined || v === null ? '' : v).replace(/"/g, '""') + '"'; };
+  var rows = ['Date,Applicant,Cost centre,Agent,Category,Description,Currency,Amount,Status,Paid by,Payment ref,Reference,Receipts'];
+  expenses.forEach(function(e) {
+    rows.push([q(e.date), q(e.applicant), q(e.costCentre), q(_expAgentOf(e).name), q(e.category), q(e.desc), e.currency || 'PHP', e.amount, q(e.status), q(e.paidMethod), q(e.paidRef), q(e.ref), e.receiptCount || 0].join(','));
+  });
+  _downloadCsv(rows, 'expenses_' + _ymd(new Date()));
+  toast(expenses.length + ' expenses exported', 'success');
+}
+
+// ── categories (Controls tab) ───────────────────────────────────────────
+async function saveExpenseCategories() {
+  var rows = document.querySelectorAll('#xc-list .xc-row'), list = [];
+  rows.forEach(function(r) {
+    var n = r.querySelector('.xc-name').value.trim();
+    if (n) list.push({ name: n, limit: parseFloat(r.querySelector('.xc-limit').value) || 0 });
+  });
+  var r = await _acctCall('/expenses/categories', { categories: list }, 'PUT');
+  if (!r.ok) { toast(_acctMsg(r, 'Could not save categories'), 'error'); return; }
+  _expCategories = r.data.categories; toast('Expense categories saved', 'success'); renderAccControls();
+}
+function addExpenseCategoryRow() {
+  var d = document.createElement('div'); d.className = 'xc-row'; d.style.cssText = 'display:flex;gap:8px;margin-bottom:6px';
+  d.innerHTML = '<input class="f-inp xc-name" placeholder="New category" style="flex:1"><input class="f-inp xc-limit" type="number" min="0" step="100" placeholder="Approval above ₱ (0 = never)" style="width:200px">';
+  document.getElementById('xc-list').appendChild(d);
+}
+
+
+// The server moved an applicant's expenses, ledger entries and commissions to the new agent — adopt its numbers
+function _applyAgentTransfer(t, data) {
+  try {
+    (t.agents || []).forEach(_applyAgentSnapshot);
+    var mv = t.moved || {};
+    _bustAcctCache();
+    Promise.all([fetchExpenses(), apiFetchCommissions(), fetchAgents(), (typeof apiFetchAgentLedger === 'function' ? apiFetchAgentLedger() : Promise.resolve())]).then(function() {
+      if (currentPage === 'accounting') { renderAccounting(); if (typeof renderExpensesTab === 'function') renderExpensesTab(); }
+    }).catch(function() {});
+    var from = DB.agents.find(function(a) { return a.id === t.from || a._dbId === t.from; }), to = DB.agents.find(function(a) { return a.id === t.to || a._dbId === t.to; });
+    if (mv.expenses || mv.ledger || mv.commissions) {
+      addAudit('UPDATE', 'Agent', 'Agent reassigned for ' + (data && data.name || 'applicant') + ': ' + (from ? from.name : '—') + ' → ' + (to ? to.name : '—') + ' (' + mv.expenses + ' expenses, ' + mv.ledger + ' ledger entries, ' + mv.commissions + ' commissions moved)');
+      toast('Agent changed: ' + mv.expenses + ' expense(s), ' + mv.ledger + ' ledger entr' + (mv.ledger === 1 ? 'y' : 'ies') + ' and ' + mv.commissions + ' commission(s) moved to ' + (to ? to.name : 'the new agent'), 'success');
+    }
+  } catch (e) { console.warn('agent transfer', e); }
+}
+
+async function saveExpenseControls() {
+  var r = await _acctCall('/accounting/controls', {
+    expenseFundCheck: document.getElementById('ctl-xfund').checked,
+    receiptRequiredAbove: parseFloat(document.getElementById('ctl-xrcpt').value) || 0,
+    expenseApprovalAbove: parseFloat(document.getElementById('ctl-xappr').value) || 0,
+  }, 'PUT');
+  if (!r.ok) { toast(_acctMsg(r, 'Could not save'), 'error'); return; }
+  await saveExpenseCategories();
 }
 
 function cleanDuplicateCommissions() {
@@ -18543,60 +18992,6 @@ function _createMissingCommissions() {
 }
 
 
-function exportFilteredExpenses() {
-  // Apply same filters as _renderExpensesTabInner
-  var expenses = DB.expenses.slice();
-
-  var _af = _expFilterState.agent;
-  if (_af) {
-    expenses = expenses.filter(function(e) {
-      if (e.agentName === _af) return true;
-      var _a = e.applicantId
-        ? DB.applicants.find(function(a){ return a.id===e.applicantId||a._dbId===e.applicantId; })
-        : (e.applicant ? DB.applicants.find(function(a){ return a.name===e.applicant; }) : null);
-      return _a && _a.agent === _af;
-    });
-  }
-  if (_expFilterState.status) {
-    expenses = expenses.filter(function(e){ return e.status === _expFilterState.status; });
-  }
-  if (_expFilterState.q) {
-    var q = _expFilterState.q.toLowerCase();
-    expenses = expenses.filter(function(e){
-      return (e.desc||'').toLowerCase().includes(q) || (e.applicant||'').toLowerCase().includes(q);
-    });
-  }
-
-  if (!expenses.length) { toast('No expenses to export', 'error'); return; }
-
-  var rows = [['Date','Applicant','Agent','Category','Description','Amount','Status','Reference'].join(',')];
-  expenses.forEach(function(e) {
-    rows.push([
-      e.date || '',
-      '"' + (e.applicant||'').replace(/"/g,'""') + '"',
-      '"' + (e.agentName||'').replace(/"/g,'""') + '"',
-      '"' + (e.category||'').replace(/"/g,'""') + '"',
-      '"' + (e.desc||'').replace(/"/g,'""') + '"',
-      e.amount || 0,
-      e.status || '',
-      '"' + (e.ref||'').replace(/"/g,'""') + '"',
-    ].join(','));
-  });
-
-  var label = [];
-  if (_expFilterState.agent)  label.push(_expFilterState.agent);
-  if (_expFilterState.status) label.push(_expFilterState.status);
-  if (_expFilterState.q)      label.push(_expFilterState.q);
-  var filename = 'expenses' + (label.length ? '_' + label.join('_').replace(/\s+/g,'-').toLowerCase() : '') + '_' + _ymd(new Date()) + '.csv';
-
-  var blob = new Blob([rows.join('\n')], { type: 'text/csv' });
-  var url  = URL.createObjectURL(blob);
-  var lnk  = document.createElement('a');
-  lnk.href = url; lnk.download = filename;
-  lnk.click();
-  URL.revokeObjectURL(url);
-  toast('Exported ' + expenses.length + ' expense' + (expenses.length !== 1 ? 's' : ''), 'success');
-}
 
 function exportAccountingReport() {
   var rows = ['Agent,Commission,Expenses,Balance,Deployed,Backouts'];
@@ -18808,10 +19203,14 @@ function renderOfficeCashCards() {
   setTxt('cash-usd-count', usdCnt);
 
   // Expenses fund = total pending + paid expenses (not yet settled by agents)
-  var phpExpenses    = (DB.expenses||[]).filter(function(e){ return e.status !== 'Rejected' && e.status !== 'Charged'; });
-  var phpExpTotal    = phpExpenses.reduce(function(s,e){ return s+(parseFloat(e.amount)||0); }, 0);
-  var usdExpenses    = (DB.expenses||[]).filter(function(e){ return e.currency === 'USD' && e.status !== 'Rejected' && e.status !== 'Charged'; });
-  var usdExpTotal    = usdExpenses.reduce(function(s,e){ return s+(parseFloat(e.amount)||0); }, 0);
+  // Expenses Fund = allocations − paid out (the same definition as the Expenses tab and the server)
+  var _xs = _expSummary || _expSummaryLocal();
+  var _xf = function(c) { return (_xs.fund && _xs.fund[c]) || { balance: 0, committed: 0 }; };
+  var _xc = function(c) { return (_xs.currencies && _xs.currencies[c]) || { pending_n: 0, approved_n: 0 }; };
+  var phpExpTotal    = _xf('PHP').balance;
+  var usdExpTotal    = _xf('USD').balance;
+  var phpExpenses    = { length: _xc('PHP').pending_n + _xc('PHP').approved_n };
+  var usdExpenses    = { length: _xc('USD').pending_n + _xc('USD').approved_n };
 
   // Office fund = funds added via Add Funds (positive ledger entries)
   var phpAllocated   = phpIn;  // phpIn already excludes expense-allocations
@@ -18819,13 +19218,13 @@ function renderOfficeCashCards() {
   var phpNet         = phpBalance;
   var usdNet         = usdBalance;
 
-  setTxt('cash-php-exp-fund',    '₱' + Math.round(phpExpTotal).toLocaleString());
-  setTxt('cash-php-exp-count',   phpExpenses.length + ' expense' + (phpExpenses.length !== 1 ? 's' : ''));
+  setTxt('cash-php-exp-fund',    (phpExpTotal < 0 ? '-₱' : '₱') + Math.abs(Math.round(phpExpTotal)).toLocaleString());
+  setTxt('cash-php-exp-count',   phpExpenses.length + ' awaiting payment (₱' + Math.round(_xf('PHP').committed).toLocaleString() + ')');
   setTxt('cash-php-office-fund', '₱' + Math.round(phpAllocated).toLocaleString());
   setTxt('cash-php-net',         (phpNet < 0 ? '-₱' : '₱') + Math.abs(Math.round(phpNet)).toLocaleString());
 
-  setTxt('cash-usd-exp-fund',    '$' + usdExpTotal.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}));
-  setTxt('cash-usd-exp-count',   usdExpenses.length + ' expense' + (usdExpenses.length !== 1 ? 's' : ''));
+  setTxt('cash-usd-exp-fund',    (usdExpTotal < 0 ? '-$' : '$') + Math.abs(usdExpTotal).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}));
+  setTxt('cash-usd-exp-count',   usdExpenses.length + ' awaiting payment ($' + _xf('USD').committed.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}) + ')');
   setTxt('cash-usd-office-fund', '$' + usdAllocated.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}));
   setTxt('cash-usd-net',         (usdNet < 0 ? '-$' : '$') + Math.abs(usdNet).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}));
 
@@ -19053,7 +19452,7 @@ function renderOfficeLedger() {
   // Credits IN — only expense-allocation entries from officeLedger
   if (expTypeFilter === 'all' || expTypeFilter === 'allocation') {
     DB.officeLedger
-      .filter(function(e){ return e.type === 'expense-allocation'; })
+      .filter(function(e){ return e.type === 'expense-allocation' && (e.currency || 'PHP') === 'PHP' && !e.voided; })
       .forEach(function(e) {
         expFundEntries.push({
           _type:     'allocation',
@@ -19070,15 +19469,16 @@ function renderOfficeLedger() {
 
   // Debits OUT — only DB.expenses (applicant expenses), never office ledger expenses
   if (expTypeFilter === 'all' || expTypeFilter === 'expense') {
-    var appExps = (DB.expenses || []).filter(function(e){ return e.status !== 'Rejected'; });
+    var appExps = (DB.expenses || []).filter(function(e){ return e.status !== 'Rejected' && !e.voided && (e.currency || 'PHP') === 'PHP'; });
     if (expStatusFilter !== 'all') appExps = appExps.filter(function(e){ return e.status === expStatusFilter; });
     appExps.forEach(function(e) {
       expFundEntries.push({
+        committed: e.status === 'Pending' || e.status === 'Approved',
         _type:  'expense',
         date:   e.date || '',
         ts:     e.date || e.ts || '',
-        label:  e.desc || e.description || '—',
-        sub:    (e.applicant || '') + (e.category ? ' · ' + e.category : ''),
+        label:  _eh(e.desc || e.description || '—'),
+        sub:    _eh((e.applicant || e.costCentre || 'Overhead') + (e.category ? ' · ' + e.category : '')),
         amount: -(parseFloat(e.amount) || 0),  // negative = OUT
         status: e.status,
         id:     e.id,
@@ -19094,14 +19494,14 @@ function renderOfficeLedger() {
   // Sort oldest→newest to compute running balance, then reverse for display
   expFundEntries.sort(function(a, b){ return (a.ts||a.date||'').localeCompare(b.ts||b.date||''); });
   var expRunBal = 0;
-  expFundEntries.forEach(function(e){ expRunBal += e.amount; e._balance = expRunBal; });
+  expFundEntries.forEach(function(e){ if (!e.committed) expRunBal += e.amount; e._balance = expRunBal; });
   expFundEntries.reverse();
 
   // ── Period totals — total allocations IN vs. total expenses OUT (PHP) ──
   var expTotalsEl = document.getElementById('office-expenses-totals');
   if (expTotalsEl) {
     var totalAlloc = expFundEntries.filter(function(e){ return e._type === 'allocation'; }).reduce(function(s,e){ return s + e.amount; }, 0);
-    var totalExp   = expFundEntries.filter(function(e){ return e._type === 'expense'; }).reduce(function(s,e){ return s + Math.abs(e.amount); }, 0);
+    var totalExp   = expFundEntries.filter(function(e){ return e._type === 'expense' && !e.committed; }).reduce(function(s,e){ return s + Math.abs(e.amount); }, 0);
     expTotalsEl.innerHTML = expFundEntries.length ? (
       '<div><span style="font-size:11px;color:var(--muted)">Total Allocations</span><br>'+
       '<span style="font-weight:800;font-family:monospace;color:var(--green)">+₱'+totalAlloc.toLocaleString()+'</span></div>'+
@@ -19377,7 +19777,7 @@ function updateFundsBalance() {
     } else {
       var pendingExps = DB.expenses.filter(function(e){ return e.status === 'Pending'; });
       var pendingAmt  = pendingExps.reduce(function(s,e){ return s + (e.amount||0); }, 0);
-      afterEl.textContent = pendingExps.length + ' pending expense(s) · ₱' + pendingAmt.toLocaleString() + ' total — all will be marked Paid';
+      afterEl.textContent = pendingExps.length + ' pending expense(s) · ₱' + pendingAmt.toLocaleString() + ' total — the oldest ones this allocation covers will be marked Paid';
     }
   }
 }
@@ -19470,12 +19870,12 @@ function exportExpensesFundLedger() {
   var rowsData = [];
 
   if (typeFilter === 'all' || typeFilter === 'allocation') {
-    DB.officeLedger.filter(function(e){ return e.type === 'expense-allocation'; }).forEach(function(e) {
+    DB.officeLedger.filter(function(e){ return e.type === 'expense-allocation' && (e.currency || 'PHP') === 'PHP' && !e.voided; }).forEach(function(e) {
       rowsData.push({ date: e.date || '', type: 'Allocation', status: '', amount: Math.abs(e.amount), desc: e.desc || 'Fund Allocation', ref: e.ref || '' });
     });
   }
   if (typeFilter === 'all' || typeFilter === 'expense') {
-    var appExps = (DB.expenses || []).filter(function(e){ return e.status !== 'Rejected'; });
+    var appExps = (DB.expenses || []).filter(function(e){ return e.status !== 'Rejected' && !e.voided && (e.currency || 'PHP') === 'PHP'; });
     if (statusFilter !== 'all') appExps = appExps.filter(function(e){ return e.status === statusFilter; });
     appExps.forEach(function(e) {
       rowsData.push({ date: e.date || '', type: 'Expense', status: e.status || '', amount: -(parseFloat(e.amount)||0), desc: (e.applicant?e.applicant+' — ':'')+(e.desc||e.description||''), ref: '' });
@@ -20862,7 +21262,7 @@ async function wipeAllServerData() {
   for (var j of allJobs) await apiFetch('/jobs/' + (j._dbId||j.id), { method: 'DELETE' });
 
   toast('Wiping expenses…', 'info');
-  for (var e of allExp) await apiFetch('/expenses/' + (e._dbId||e.id), { method: 'DELETE' });
+  for (var e of allExp) await apiFetch('/expenses/' + (e._dbId||e.id) + '?reason=Full+data+wipe', { method: 'DELETE' });
 
   toast('Wiping other users…', 'info');
   for (var u of allUsers) {
@@ -22481,6 +22881,80 @@ async function loadSharedPermissions() {
 </div>
 
 <!-- Manual Adjustment Modal (office) -->
+<div class="overlay" id="overlay-expense-pay" onclick="closeOverlayIfBg(event,'overlay-expense-pay')" role="dialog" aria-modal="true">
+  <div class="modal modal-sm">
+    <div class="modal-hdr">
+      <div><h2>Pay expenses</h2><p id="xp-sub"></p></div>
+      <button class="close-btn" onclick="closeOverlay('overlay-expense-pay')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="xp-fund" style="font-size:12px;color:var(--muted);margin-bottom:10px"></div>
+      <div class="f-row">
+        <div class="f-grp"><label class="f-lbl">Method</label>
+          <select class="f-inp" id="xp-method"><option value="bank">Bank transfer</option><option value="cash">Cash</option><option value="gcash">GCash / e-wallet</option><option value="cheque">Cheque</option><option value="wire">Wire / remittance</option><option value="other">Other</option></select></div>
+        <div class="f-grp"><label class="f-lbl">Reference no.</label><input class="f-inp" id="xp-ref" type="text" placeholder="Bank ref / receipt no."></div>
+      </div>
+      <div class="f-grp" id="xp-override-wrap" style="display:none"><label class="f-lbl">Override reason (Expenses Fund is short)</label><input class="f-inp" id="xp-override" type="text" placeholder="Why is this being paid anyway?"></div>
+      <div id="xp-error" style="display:none;color:var(--red);font-size:12.5px;margin-top:6px"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-s" onclick="closeOverlay('overlay-expense-pay')">Cancel</button>
+      <button class="btn btn-p" onclick="submitExpensePay()">Mark as paid</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="overlay-expense-edit" onclick="closeOverlayIfBg(event,'overlay-expense-edit')" role="dialog" aria-modal="true">
+  <div class="modal modal-md">
+    <div class="modal-hdr">
+      <div><h2>Edit expense</h2><p>Changes are recorded in the audit trail</p></div>
+      <button class="close-btn" onclick="closeOverlay('overlay-expense-edit')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="xe-lock" style="display:none;font-size:12px;color:var(--amber);background:var(--abg);padding:8px 10px;border-radius:7px;margin-bottom:10px">Amount, date and currency are locked once an expense is paid — use ↺ to set it back to Pending first.</div>
+      <div class="f-grp"><label class="f-lbl">Description</label><input class="f-inp" id="xe-desc" type="text"></div>
+      <div class="f-row">
+        <div class="f-grp"><label class="f-lbl">Category</label><select class="f-inp" id="xe-category"></select></div>
+        <div class="f-grp"><label class="f-lbl">Cost centre</label><input class="f-inp" id="xe-cc" type="text" placeholder="Overhead only"></div>
+      </div>
+      <div class="f-row">
+        <div class="f-grp"><label class="f-lbl">Amount</label><input class="f-inp" id="xe-amount" type="number" min="0" step="0.01"></div>
+        <div class="f-grp"><label class="f-lbl">Currency</label><select class="f-inp" id="xe-currency"><option value="PHP">₱ PHP</option><option value="USD">$ USD</option></select></div>
+      </div>
+      <div class="f-row">
+        <div class="f-grp"><label class="f-lbl">Date</label><input class="f-inp" id="xe-date" type="date"></div>
+        <div class="f-grp"><label class="f-lbl">Receipt / reference</label><input class="f-inp" id="xe-ref" type="text"></div>
+      </div>
+      <div class="f-row" id="xe-pay-wrap">
+        <div class="f-grp"><label class="f-lbl">Paid by</label><select class="f-inp" id="xe-method"><option value="">—</option><option value="bank">Bank transfer</option><option value="cash">Cash</option><option value="gcash">GCash / e-wallet</option><option value="cheque">Cheque</option><option value="wire">Wire / remittance</option><option value="other">Other</option></select></div>
+        <div class="f-grp"><label class="f-lbl">Payment reference</label><input class="f-inp" id="xe-payref" type="text"></div>
+      </div>
+      <div id="xe-error" style="display:none;color:var(--red);font-size:12.5px;margin-top:6px"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-s" onclick="closeOverlay('overlay-expense-edit')">Cancel</button>
+      <button class="btn btn-p" onclick="saveExpenseEdit()">Save changes</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="overlay-expense-receipts" onclick="closeOverlayIfBg(event,'overlay-expense-receipts')" role="dialog" aria-modal="true">
+  <div class="modal modal-sm">
+    <div class="modal-hdr">
+      <div><h2>Receipts</h2><p id="xr-title"></p></div>
+      <button class="close-btn" onclick="closeOverlay('overlay-expense-receipts')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="xr-list" style="margin-bottom:12px"></div>
+      <div class="f-grp"><label class="f-lbl">Attach a file</label><input class="f-inp" id="xr-file" type="file" accept="image/*,application/pdf"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-s" onclick="closeOverlay('overlay-expense-receipts')">Close</button>
+      <button class="btn btn-p" onclick="uploadExpenseReceipt()">Upload</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay" id="overlay-payment" onclick="closeOverlayIfBg(event,'overlay-payment')" role="dialog" aria-modal="true">
   <div class="modal modal-sm">
     <div class="modal-hdr">
