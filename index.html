@@ -3357,6 +3357,20 @@ async function _tryRevalidateSession() {
   }
 }
 
+// Any money write (expense, allocation, payment, commission…) makes the Office Funds cards stale: re-read the
+// server snapshot (cash totals, expenses fund, awaiting payment) shortly after, in one go.
+var _fundsTimer = null;
+function _fundsChanged() {
+  try { Object.keys(_cache || {}).forEach(function(k) { if (/\/(office-funds|expenses\/summary|office-ledger)/.test(k)) delete _cache[k]; }); } catch (e) {}
+  clearTimeout(_fundsTimer);
+  _fundsTimer = setTimeout(function() {
+    if (!_isLiveSession() || typeof apiFetchOfficeFunds !== 'function') return;
+    apiFetchOfficeFunds().then(function() {
+      if (typeof renderOfficeCashCards === 'function' && document.getElementById('cash-php-balance')) { renderOfficeCashCards(); renderOfficeFlowRow(); }
+    }).catch(function() {});
+  }, 250);
+}
+
 async function _fetchFresh(path, headers, opts) {
   opts = opts || {};
   try {
@@ -3397,6 +3411,7 @@ async function _fetchFresh(path, headers, opts) {
     }
     // Return (not throw) for all other HTTP errors so callers can check r.httpStatus
     if (!res.ok) return { ok: false, error: data.error || data.message || 'Server error ['+res.status+']', httpStatus: res.status, data: data };
+    if (String(opts.method || 'GET').toUpperCase() !== 'GET' && /\/(expenses|office|cash-accounts|commissions|payments|accounting|employer-fees|invoices|agent-ledger)/.test(path)) _fundsChanged();
     return { ok: true, data: data, httpStatus: res.status };
   } catch(e) {
     if (e.name === 'AbortError') {
@@ -3893,6 +3908,7 @@ async function apiDeleteEmployerFee(feeId) {
 // ── OFFICE FUNDS API ──────────────────────────────────────────────────
 function mapOfficeFunds(row) {
   return { balancePHP: parseFloat(row.balance_php)||0, balanceUSD: parseFloat(row.balance_usd)||0, fxRate: parseFloat(row.fx_rate)||57.5, fxUpdated: row.fx_updated||'',
+    totals: row.totals || null, expFund: row.expense_fund || null, awaiting: row.awaiting || null,
     accounts: Array.isArray(row.accounts) ? row.accounts.map(function(a) { return { id: a.id, name: a.name, kind: a.kind, currency: a.currency, active: a.active !== false, isDefault: !!a.is_default, balance: parseFloat(a.balance) || 0 }; }) : undefined };
 }
 function mapOfficeLedgerRow(row) {
@@ -20382,8 +20398,14 @@ function renderOfficeCashCards() {
   var phpOut = Math.abs(_of.filter(function(e){ return e.currency==='PHP' && e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0));
   var usdLedgerOut = Math.abs(_of.filter(function(e){ return e.currency==='USD' && e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0));
 
-  var phpBalance = phpIn - phpOut;
-  var usdBalance = usdIn - usdLedgerOut;
+  // Live: every number on the card comes from ONE server snapshot (cash effects, expenses fund, awaiting payment)
+  var _snap = (_isLiveSession() && DB.officeFunds && DB.officeFunds.totals && DB.officeFunds.expFund) ? DB.officeFunds : null;
+  if (_snap) {
+    phpIn = _snap.totals.PHP.money_in; usdIn = _snap.totals.USD.money_in;
+    phpOut = _snap.totals.PHP.money_out; usdLedgerOut = _snap.totals.USD.money_out;
+  }
+  var phpBalance = _snap ? _snap.totals.PHP.balance : phpIn - phpOut;
+  var usdBalance = _snap ? _snap.totals.USD.balance : usdIn - usdLedgerOut;
 
   // Keep stored value in sync — persist to Store + backend
   f.balancePHP = phpBalance;
@@ -20398,6 +20420,7 @@ function renderOfficeCashCards() {
 
   var phpCnt= DB.officeLedger.filter(function(e){ return e.currency==='PHP' && !e.voided && (e.type !== 'expense-allocation' || e.movesCash); }).length;
   var usdCnt= DB.officeLedger.filter(function(e){ return e.currency==='USD' && !e.voided && (e.type !== 'expense-allocation' || e.movesCash); }).length;
+  if (_snap) { phpCnt = _snap.totals.PHP.entries; usdCnt = _snap.totals.USD.entries; }
 
   var phpClass = phpBalance < 0 ? 'cash-balance-negative' : phpBalance < f.lowThresholdPHP ? 'cash-balance-warning' : 'cash-balance-positive';
   var usdClass = usdBalance < 0 ? 'cash-balance-negative' : usdBalance < f.lowThresholdUSD ? 'cash-balance-warning' : 'cash-balance-positive';
@@ -20418,8 +20441,8 @@ function renderOfficeCashCards() {
   // Expenses fund = total pending + paid expenses (not yet settled by agents)
   // Expenses Fund = allocations − paid out (the same definition as the Expenses tab and the server)
   var _xs = _expSummary || _expSummaryLocal();
-  var _xf = function(c) { return (_xs.fund && _xs.fund[c]) || { balance: 0, committed: 0 }; };
-  var _xc = function(c) { return (_xs.currencies && _xs.currencies[c]) || { pending_n: 0, approved_n: 0 }; };
+  var _xf = function(c) { return _snap ? (_snap.expFund[c] || { balance: 0, committed: 0 }) : ((_xs.fund && _xs.fund[c]) || { balance: 0, committed: 0 }); };
+  var _xc = function(c) { return _snap ? { pending_n: ((_snap.awaiting || {})[c] || { count: 0 }).count, approved_n: 0 } : ((_xs.currencies && _xs.currencies[c]) || { pending_n: 0, approved_n: 0 }); };
   var phpExpTotal    = _xf('PHP').balance;
   var usdExpTotal    = _xf('USD').balance;
   var phpExpenses    = { length: _xc('PHP').pending_n + _xc('PHP').approved_n };
@@ -20460,6 +20483,7 @@ function renderOfficeFlowRow() {
   var phpOut = Math.abs(_of2.filter(function(e){ return e.currency==='PHP'&&e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0));
   var usdLedgerOut = Math.abs(_of2.filter(function(e){ return e.currency==='USD'&&e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0));
 
+  if (_isLiveSession() && f.totals) { phpIn = f.totals.PHP.money_in; usdIn = f.totals.USD.money_in; phpOut = f.totals.PHP.money_out; usdLedgerOut = f.totals.USD.money_out; }
   // Total In / Net Balance — consistent with PHP card
   var totalInPHP  = phpIn  + usdIn  * fx;
   var totalOutPHP = phpOut + usdLedgerOut * fx;
