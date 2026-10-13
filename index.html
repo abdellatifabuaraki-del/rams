@@ -1155,10 +1155,13 @@ button[disabled][data-rbac-locked] {
             <div id="notif-foot" style="font-size:11px;color:var(--muted);margin-top:1px"></div>
           </div>
           <div style="display:flex;gap:6px">
+            <button class="btn btn-ghost btn-xs" onclick="composeAnnouncement()" style="font-size:11px" title="Send an announcement">📣</button>
+            <button class="btn btn-ghost btn-xs" onclick="openNotifPrefs()" style="font-size:11px" title="Notification preferences">⚙</button>
             <button class="btn btn-ghost btn-xs" onclick="markAllRead()" style="font-size:11px">Mark all read</button>
             <button class="btn btn-ghost btn-xs" onclick="clearAllNotifs()" style="font-size:11px;color:var(--red)">Clear</button>
           </div>
         </div>
+        <div id="notif-filters" style="display:flex;gap:4px;flex-wrap:wrap;padding:8px 12px;border-bottom:1px solid var(--border)"></div>
         <div id="notif-list" style="max-height:420px;overflow-y:auto"></div>
       </div>
     </div>
@@ -4953,93 +4956,85 @@ function stopPolling() {
   if (window._notifTickTimer) { clearInterval(window._notifTickTimer); window._notifTickTimer = null; }
 }
 
-// ── _notifSync — single source of truth poller for notifications ──────────
-// Fetches from the backend, merges by server-confirmed read state, and
-// preserves any local NTF-* notifications not yet synced (e.g. POST in flight).
-// This is the ONLY place that mutates DB.notifications from a network fetch.
+// ── Notifications (server-generated) ──────────────────────────────────────
+// The server creates, routes and de-duplicates notifications. This page only
+// shows the user's own inbox, listens for live events and edits preferences.
+var _notifF = { cat: '', unread: false }, _notifUnreadTotal = 0, _notifHasMore = false, _notifStreamAbort = null, _notifStreamOk = false;
+var _NOTIF_CATS = { applicant:'Applicants', document:'Documents', job:'Job orders', inquiry:'Inquiries', complaint:'Complaints', accounting:'Accounting', invoice:'Invoices', commission:'Commissions', expense:'Expenses', user:'Team', whatsapp:'WhatsApp', chat:'Chat', announcement:'Announcements', system:'System' };
+function _mapNotifRow(row) {
+  var ts = row.created_at ? new Date(row.created_at).getTime() : 0;
+  return { id: row.id, _dbId: row.id, title: row.title || '', body: row.body || '', type: row.category || row.type || 'system', severity: row.severity || 'info',
+    count: row.count || 1, read: !!row.read, ts: ts, time: ts ? new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '',
+    link: row.link || null, from: row.from || '' };
+}
 async function _notifSync() {
-  if (!window._ramsSessionToken || window._ramsSessionToken === 'demo') return;
+  if (!_isLiveSession()) return;
   try {
-    var r = await apiFetch('/notifications');
-    if (!r || !r.ok || !Array.isArray(r.data)) return;
-
-    var fromServer = r.data.map(function(row) {
-      var lnk = null;
-      try { if (row.link) lnk = typeof row.link === 'string' ? JSON.parse(row.link) : row.link; } catch(e) {}
-      return {
-        id:    row.id,
-        _dbId: row.id,
-        title: row.title || '',
-        body:  row.body  || '',
-        type:  row.type  || 'system',
-        read:  !!row.is_read,          // server is the sole authority on read state
-        time:  row.created_at ? new Date(row.created_at).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }) : '',
-        ts:    row.created_at ? new Date(row.created_at).getTime() : 0,
-        link:  lnk,
-      };
-    });
-
-    // Keep local-only notifications not yet confirmed by the server
-    // (the POST in pushNotif is fire-and-forget, so there's a brief window
-    // where a brand-new notification only exists locally).
-    var serverIds = new Set(fromServer.map(function(n){ return n.id; }));
-    // Content signature — the server assigns its own UUID, so id alone cannot
-    // tell us the server copy and the optimistic local copy are the same event.
-    var sig = function(n){ return (n.title||'') + ' ' + (n.body||''); };
-    var serverSigs = new Set(fromServer.map(sig));
-
-    // When a local copy is dropped in favour of the server's row, hand its
-    // deep-link over first — rows stored before the backend persisted `link`
-    // would otherwise lose their "Open Profile" action.
-    var adoptLink = function(local) {
-      if (!local || !local.link) return;
-      var target = fromServer.find(function(s) {
-        return sig(s) === sig(local) && !s.link &&
-               Math.abs((s.ts || 0) - (local.ts || 0)) < 5 * 60 * 1000;
-      });
-      if (target) target.link = local.link;
-    };
-
-    var localOnly = (DB.notifications || []).filter(function(n) {
-      if (!n.id || n.id.indexOf('NTF-') !== 0) return false;   // already a server row
-      if (serverIds.has(n.id) || serverIds.has(n._dbId)) { adoptLink(n); return false; } // matched by id
-      if (n._unmatched)            { adoptLink(n); return false; } // server stored it, id unknown
-      if (serverSigs.has(sig(n)))  { adoptLink(n); return false; } // same event, different id
-      return true;
-    });
-
-    DB.notifications = fromServer.concat(localOnly)
-      .sort(function(a, b){ return (b.ts || 0) - (a.ts || 0); })
-      .slice(0, 100);
-
-    // Final guard: collapse any same-title+body pairs that land within 60s of
-    // each other, keeping the richer entry (the one that still has a link).
-    var seen = [];
-    DB.notifications = DB.notifications.filter(function(n) {
-      var hit = seen.find(function(s) {
-        return s.sig === sig(n) && Math.abs((s.ts || 0) - (n.ts || 0)) < 60000;
-      });
-      if (hit) {
-        if (!hit.n.link && n.link) hit.n.link = n.link; // preserve the deep-link
-        return false;
-      }
-      seen.push({ sig: sig(n), ts: n.ts || 0, n: n });
-      return true;
-    });
-
+    var r = await apiFetch('/notifications?limit=100&_=' + Date.now());
+    if (!r || !r.ok || !r.data || !Array.isArray(r.data.items)) return;
+    DB.notifications = r.data.items.map(_mapNotifRow);
+    _notifUnreadTotal = r.data.unread || 0; _notifHasMore = !!r.data.has_more;
     autosave('notifications');
     renderNotifications();
-  } catch(e) {}
+  } catch (e) {}
 }
-
-// ── Notification polling ticker — single interval, single fetch path ─────
+async function _notifLoadOlder() {
+  var last = (DB.notifications || [])[(DB.notifications || []).length - 1];
+  if (!last) return;
+  var r = await apiFetch('/notifications?limit=100&before=' + encodeURIComponent(new Date(last.ts).toISOString()) + '&_=' + Date.now());
+  if (r && r.ok && r.data && Array.isArray(r.data.items)) {
+    DB.notifications = (DB.notifications || []).concat(r.data.items.map(_mapNotifRow));
+    _notifHasMore = !!r.data.has_more; renderNotifications();
+  }
+}
+function _notifUpsert(n) {
+  var list = DB.notifications || (DB.notifications = []);
+  var i = list.findIndex(function(x) { return x.id === n.id; });
+  if (i !== -1) list.splice(i, 1);
+  list.unshift(n);
+  list.sort(function(a, b) { return (b.ts || 0) - (a.ts || 0); });
+}
+function _notifIncoming(row) {
+  var n = _mapNotifRow(row);
+  var existed = (DB.notifications || []).some(function(x) { return x.id === n.id && !x.read; });
+  _notifUpsert(n);
+  if (!n.read && !existed) _notifUnreadTotal++;
+  renderNotifications();
+  if (row.push && !n.read && typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.hidden) {
+    try { new Notification('RAMS — ' + n.title, { body: n.body, tag: n.id }); } catch (e) {}
+  }
+  if (n.severity !== 'info' && !document.hidden) toast((n.severity === 'critical' ? '🚨 ' : '⚠️ ') + n.title, n.severity === 'critical' ? 'error' : 'info');
+}
+// Live stream (Server-Sent Events over fetch so the token stays in a header)
+async function _notifStreamStart() {
+  if (!_isLiveSession() || _notifStreamAbort) return;
+  var ctl = new AbortController(); _notifStreamAbort = ctl; _notifStreamOk = false;
+  try {
+    var res = await fetch(RAILWAY_URL + '/api/notifications/stream', { headers: { Authorization: 'Bearer ' + window._ramsSessionToken }, signal: ctl.signal });
+    if (!res.ok || !res.body) throw new Error('no stream');
+    _notifStreamOk = true;
+    var reader = res.body.getReader(), dec = new TextDecoder(), buf = '';
+    for (;;) {
+      var chunk = await reader.read();
+      if (chunk.done) break;
+      buf += dec.decode(chunk.value, { stream: true });
+      var parts = buf.split('\n\n'); buf = parts.pop();
+      parts.forEach(function(p) {
+        var m = p.match(/^event: (\w+)\ndata: (.*)$/m);
+        if (m && m[1] === 'notification') { try { _notifIncoming(JSON.parse(m[2])); } catch (e) {} }
+      });
+    }
+  } catch (e) { /* reconnect below */ }
+  _notifStreamOk = false; _notifStreamAbort = null;
+  if (_isLiveSession()) setTimeout(_notifStreamStart, 5000);
+}
 function _startNotifTicker() {
   if (window._notifTickTimer) clearInterval(window._notifTickTimer);
-  window._notifTickTimer = setInterval(function() {
-    if (document.hidden) return;
-    _notifSync();
-  }, 6000);
-  _notifSync(); // immediate first fetch on start
+  // The stream delivers new items instantly; this slower sync only reconciles read/deleted state from other devices.
+  window._notifTickTimer = setInterval(function() { if (!document.hidden) _notifSync(); }, 45000);
+  document.addEventListener('visibilitychange', function() { if (!document.hidden) _notifSync(); });
+  _notifSync();
+  _notifStreamStart();
 }
 
 
@@ -5839,8 +5834,8 @@ function toggleNotif() {
 function renderNotifications() {
   const list = document.getElementById('notif-list');
   if (!list) return;
-  const typeIcon  = { applicant:'👤', document:'📄', job:'💼', system:'🔒', expense:'💰', complaint:'⚠️', agent:'👥' };
-  const typeColor = { applicant:'var(--brand)', document:'var(--amber)', job:'var(--purple)', system:'var(--muted)', expense:'var(--green)', complaint:'var(--red)', agent:'var(--teal)' };
+  const typeIcon  = { applicant:'👤', document:'📄', job:'💼', system:'🔒', expense:'💰', complaint:'⚠️', agent:'👥', inquiry:'✉️', accounting:'📊', invoice:'🧾', commission:'🏆', user:'🧑‍💼', whatsapp:'💬', chat:'💬', announcement:'📣' };
+  const typeColor = { applicant:'var(--brand)', document:'var(--amber)', job:'var(--purple)', system:'var(--muted)', expense:'var(--green)', complaint:'var(--red)', agent:'var(--teal)', inquiry:'var(--brand)', accounting:'var(--green)', invoice:'var(--green)', commission:'var(--purple)', user:'var(--muted)', whatsapp:'var(--green)', chat:'var(--teal)', announcement:'var(--brand)' };
 
   function _actionLabel(n) {
     if (!n.link) return null;
@@ -5862,76 +5857,133 @@ function renderNotifications() {
     return 'Open';
   }
 
-  var notifs = DB.notifications || [];
+  var all = DB.notifications || [];
+  var notifs = all.filter(function(n) { return (!_notifF.cat || n.type === _notifF.cat) && (!_notifF.unread || !n.read); });
+  var sevColor = { critical: 'var(--red)', warning: 'var(--amber)', info: '' };
+  var E = escapeHtml;
+
+  // filter chips (only categories that exist in the inbox)
+  var chipsEl = document.getElementById('notif-filters');
+  if (chipsEl) {
+    var cats = {}; all.forEach(function(n) { cats[n.type] = 1; });
+    var chip = function(label, active, fn) { return '<button class="btn btn-xs ' + (active ? 'btn-p' : 'btn-ghost') + '" style="font-size:10.5px;padding:2px 8px" onclick="' + fn + '">' + E(label) + '</button>'; };
+    chipsEl.innerHTML = chip('All', !_notifF.cat && !_notifF.unread, "_notifSetFilter('','')") + chip('Unread', _notifF.unread, "_notifSetFilter('', 'unread')") +
+      Object.keys(cats).map(function(c) { return chip(_NOTIF_CATS[c] || c, _notifF.cat === c, "_notifSetFilter('" + E(c) + "','')"); }).join('');
+  }
 
   if (notifs.length === 0) {
     list.innerHTML =
       '<div style="text-align:center;padding:40px 16px;color:var(--muted)">' +
         '<div style="font-size:36px;margin-bottom:10px">🔔</div>' +
         '<div style="font-size:13px;font-weight:700;margin-bottom:4px">All caught up</div>' +
-        '<div style="font-size:11.5px">No notifications yet — activity will appear here</div>' +
+        '<div style="font-size:11.5px">Nothing here — activity will appear as it happens</div>' +
       '</div>';
   } else {
-    list.innerHTML = notifs.slice(0, 30).map(function(n) {
-      var hasLink   = !!(n.link);
+    var act = function(label, fn, title) { return '<button class="btn btn-ghost btn-xs" style="font-size:10px;padding:0 5px" title="' + E(title || label) + '" onclick="event.stopPropagation();' + fn + '">' + label + '</button>'; };
+    list.innerHTML = notifs.slice(0, 100).map(function(n) {
+      var nid = E(n.id);
       var icon      = typeIcon[n.type]  || '🔔';
-      var color     = typeColor[n.type] || 'var(--muted)';
+      var color     = sevColor[n.severity] || typeColor[n.type] || 'var(--muted)';
       var actionLbl = _actionLabel(n);
-      return '<div class="notif-item ' + (n.read ? '' : 'unread') + '" data-nid="' + n.id + '" ' +
-             'onclick="navigateFromNotif(\'' + n.id + '\')" ' +
-             'style="display:flex;align-items:flex-start;gap:10px;padding:11px 14px;' +
-             'border-bottom:1px solid var(--border);' +
-             'cursor:pointer;' +
-             'background:' + (n.read ? 'transparent' : 'var(--brand-l)') + ';' +
-             'transition:background .15s,box-shadow .15s">' +
+      return '<div class="notif-item ' + (n.read ? '' : 'unread') + '" data-nid="' + nid + '" ' +
+             'style="display:flex;align-items:flex-start;gap:10px;padding:11px 14px;border-bottom:1px solid var(--border);cursor:pointer;' +
+             'background:' + (n.read ? 'transparent' : 'var(--brand-l)') + ';' + (n.severity === 'critical' ? 'box-shadow:inset 3px 0 0 var(--red);' : '') + '">' +
         '<div style="width:34px;height:34px;border-radius:50%;background:' + color + '22;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;margin-top:1px">' + icon + '</div>' +
         '<div style="flex:1;min-width:0">' +
-          '<div style="font-size:12.5px;font-weight:' + (n.read ? '500' : '700') + ';color:var(--text);line-height:1.4;margin-bottom:1px">' + n.title + '</div>' +
-          (n.body ? '<div style="font-size:11.5px;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px">' + n.body + '</div>' : '') +
-          '<div style="display:flex;align-items:center;gap:8px;margin-top:5px">' +
-            '<span style="font-size:10.5px;color:var(--dim)">' + (n.time||'') + '</span>' +
-            (hasLink && actionLbl
-              ? '<span style="font-size:10px;font-weight:700;color:' + color + ';background:' + color + '18;padding:1px 7px;border-radius:10px;border:1px solid ' + color + '33">' + actionLbl + ' →</span>'
-              : '') +
+          '<div style="font-size:12.5px;font-weight:' + (n.read ? '500' : '700') + ';color:var(--text);line-height:1.4;margin-bottom:1px">' + E(n.title) +
+            (n.count > 1 ? ' <span style="font-size:10px;font-weight:800;background:var(--s2);border-radius:10px;padding:1px 6px">×' + n.count + '</span>' : '') + '</div>' +
+          (n.body ? '<div style="font-size:11.5px;color:var(--muted);margin-top:1px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">' + E(n.body) + '</div>' : '') +
+          '<div style="display:flex;align-items:center;gap:8px;margin-top:5px;flex-wrap:wrap">' +
+            '<span style="font-size:10.5px;color:var(--dim)">' + E(n.time || '') + (n.from ? ' · ' + E(n.from) : '') + '</span>' +
+            (n.link && actionLbl ? '<span style="font-size:10px;font-weight:700;color:' + color + ';background:' + color + '18;padding:1px 7px;border-radius:10px;border:1px solid ' + color + '33">' + E(actionLbl) + ' →</span>' : '') +
+            '<span style="margin-left:auto;white-space:nowrap">' +
+              act(n.read ? '◯' : '●', "_notifToggleRead('" + nid + "')", n.read ? 'Mark unread' : 'Mark read') +
+              (_isLiveSession() ? act('💤', "_notifSnooze('" + nid + "')", 'Snooze for 4 hours') : '') +
+              act('✕', "_notifDelete('" + nid + "')", 'Delete') +
+            '</span>' +
           '</div>' +
         '</div>' +
         (!n.read ? '<div style="width:7px;height:7px;border-radius:50%;background:var(--brand);flex-shrink:0;margin-top:6px"></div>' : '') +
       '</div>';
-    }).join('');
-
-    // Wire click + hover via delegation
+    }).join('') + (_notifHasMore && _isLiveSession() && !_notifF.cat && !_notifF.unread ? '<div style="text-align:center;padding:10px"><button class="btn btn-s btn-xs" onclick="_notifLoadOlder()">Load older</button></div>' : '');
     list.querySelectorAll('[data-nid]').forEach(function(el) {
       var nid = el.getAttribute('data-nid');
-      var nx  = notifs.find(function(x){ return x.id === nid; });
-      var hasLnk = nx && nx.link;
-      if (hasLnk) {
-        el.addEventListener('mouseenter', function() { el.style.background = 'var(--s2)'; el.style.boxShadow = 'inset 3px 0 0 var(--brand)'; });
-        el.addEventListener('mouseleave', function() { el.style.background = nx && !nx.read ? 'var(--brand-l)' : 'transparent'; el.style.boxShadow = ''; });
-      }
       el.addEventListener('click', function() { navigateFromNotif(nid); });
     });
   }
 
-  // Update badge count
-  var unread = notifs.filter(function(n){ return !n.read; }).length;
+  // Update badge count (server total when live — the list may hold only part of the inbox)
+  var unread = _isLiveSession() ? _notifUnreadTotal : all.filter(function(n){ return !n.read; }).length;
   var dot = document.getElementById('notif-dot');
   if (dot) {
-    if (unread > 0) {
-      dot.style.display = 'block';
-      dot.textContent = unread > 99 ? '99+' : String(unread);
-    } else {
-      dot.style.display = 'none';
-      dot.textContent = '';
-    }
+    if (unread > 0) { dot.style.display = 'block'; dot.textContent = unread > 99 ? '99+' : String(unread); }
+    else { dot.style.display = 'none'; dot.textContent = ''; }
   }
-
-  // Update footer
   var foot = document.getElementById('notif-foot');
-  if (foot) {
-    foot.textContent = unread > 0
-      ? unread + ' unread · ' + notifs.length + ' total'
-      : notifs.length + ' notification' + (notifs.length !== 1 ? 's' : '');
-  }
+  if (foot) foot.textContent = unread > 0 ? unread + ' unread · ' + all.length + ' loaded' : all.length + ' notification' + (all.length !== 1 ? 's' : '');
+}
+function _notifSetFilter(cat, mode) { _notifF.cat = cat || ''; _notifF.unread = mode === 'unread'; renderNotifications(); }
+function _notifById(id) { return (DB.notifications || []).find(function(x) { return x.id === id; }); }
+function _notifToggleRead(id) {
+  var n = _notifById(id); if (!n) return;
+  n.read = !n.read; _notifUnreadTotal = Math.max(_notifUnreadTotal + (n.read ? -1 : 1), 0);
+  renderNotifications(); autosave('notifications');
+  if (_isLiveSession() && isUUID(id)) apiFetch('/notifications/' + id + (n.read ? '/read' : '/unread'), { method: 'PATCH' }).catch(function() {});
+}
+function _notifSnooze(id) {
+  var n = _notifById(id); if (!n) return;
+  DB.notifications = DB.notifications.filter(function(x) { return x.id !== id; });
+  if (!n.read) _notifUnreadTotal = Math.max(_notifUnreadTotal - 1, 0);
+  renderNotifications();
+  apiFetch('/notifications/' + id + '/snooze', { method: 'POST', body: JSON.stringify({ hours: 4 }) }).then(function(r) { toast(r.ok ? 'Snoozed for 4 hours' : 'Could not snooze', r.ok ? 'success' : 'error'); });
+}
+function _notifDelete(id) {
+  var n = _notifById(id); if (!n) return;
+  DB.notifications = DB.notifications.filter(function(x) { return x.id !== id; });
+  if (!n.read) _notifUnreadTotal = Math.max(_notifUnreadTotal - 1, 0);
+  renderNotifications(); autosave('notifications');
+  if (_isLiveSession() && isUUID(id)) apiFetch('/notifications/delete', { method: 'POST', body: JSON.stringify({ ids: [id] }) }).catch(function() {});
+}
+// ── preferences ─────────────────────────────────────────────────────────
+async function openNotifPrefs() {
+  if (!_isLiveSession()) { toast('Notification preferences are saved on the server — sign in to use them', 'info'); return; }
+  var r = await apiFetch('/notifications/prefs?_=' + Date.now());
+  if (!r.ok || !r.data) { toast('Could not load preferences', 'error'); return; }
+  window._notifPrefs = r.data;
+  var d = r.data, E = escapeHtml;
+  var cb = function(id, on, dis) { return '<input type="checkbox" id="' + id + '" ' + (on ? 'checked' : '') + (dis ? ' disabled' : '') + '>'; };
+  document.getElementById('notif-prefs-body').innerHTML =
+    '<table style="width:100%;font-size:12.5px;margin-bottom:12px"><thead><tr style="color:var(--muted);font-size:11px"><th style="text-align:left;padding:4px 6px">Category</th><th>In the bell</th><th>Desktop alert</th><th>E-mail</th></tr></thead><tbody>' +
+    d.categories.map(function(c) { return '<tr style="border-top:1px solid var(--border)"><td style="padding:5px 6px">' + E(c.label) + '</td><td style="text-align:center">' + cb('np-in-' + c.category, c.in_app) + '</td><td style="text-align:center">' + cb('np-push-' + c.category, c.push) + '</td><td style="text-align:center">' + cb('np-mail-' + c.category, c.email, !d.email_available) + '</td></tr>'; }).join('') +
+    '</tbody></table><div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Critical alerts always appear in the bell. ' + (d.email_available ? '' : 'E-mail is not configured on this server (set SMTP_HOST).') + '</div>' +
+    '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:12.5px;margin-bottom:8px">Quiet hours (no desktop alerts / e-mail): <input class="f-inp" type="time" id="np-qs" value="' + E(d.quiet_start) + '" style="width:110px"> to <input class="f-inp" type="time" id="np-qe" value="' + E(d.quiet_end) + '" style="width:110px"></div>' +
+    '<label style="display:flex;gap:6px;align-items:center;font-size:12.5px;margin-bottom:6px">' + cb('np-digest', d.digest, !d.email_available) + ' Send me one daily e-mail digest instead of individual e-mails</label>' +
+    '<label style="display:flex;gap:6px;align-items:center;font-size:12.5px;margin-bottom:10px">' + cb('np-mailwarn', d.email_enabled, !d.email_available) + ' E-mail me warning and critical alerts</label>' +
+    '<button class="btn btn-s btn-sm" onclick="_notifEnableDesktop()">🔔 Enable desktop alerts in this browser</button>';
+  openOverlay('overlay-notif-prefs');
+}
+function _notifEnableDesktop() {
+  if (typeof Notification === 'undefined') { toast('This browser does not support desktop alerts', 'error'); return; }
+  Notification.requestPermission().then(function(p) { toast(p === 'granted' ? 'Desktop alerts enabled' : 'Desktop alerts are blocked in this browser', p === 'granted' ? 'success' : 'info'); });
+}
+async function composeAnnouncement() {
+  if (!hasPermission('Send Notifications')) { toast('Your role cannot send announcements', 'error'); return; }
+  var title = (window.prompt('Announcement title (max 120 characters):', '') || '').trim(); if (!title) return;
+  var body = (window.prompt('Message (optional, max 500 characters):', '') || '').trim();
+  var to = (window.prompt('Send to: type "all", or role names separated by commas (e.g. manager, finance):', 'all') || '').trim().toLowerCase(); if (!to) return;
+  var payload = { title: title, body: body, severity: 'info' };
+  if (to === 'all') payload.all = true; else payload.roles = to.split(',').map(function(x) { return x.trim(); }).filter(Boolean);
+  var r = await apiFetch('/notifications', { method: 'POST', body: JSON.stringify(payload) });
+  toast(r.ok ? 'Announcement sent to ' + r.data.created + ' user(s)' : (r.data && r.data.message) || 'Could not send', r.ok ? 'success' : 'error');
+}
+async function saveNotifPrefs() {
+  var d = window._notifPrefs; if (!d) return;
+  var g = function(id) { var e = document.getElementById(id); return !!(e && e.checked); };
+  var body = { categories: d.categories.map(function(c) { return { category: c.category, in_app: g('np-in-' + c.category), push: g('np-push-' + c.category), email: g('np-mail-' + c.category) }; }),
+    quiet_start: document.getElementById('np-qs').value, quiet_end: document.getElementById('np-qe').value, digest: g('np-digest'), email_enabled: g('np-mailwarn') };
+  var r = await apiFetch('/notifications/prefs', { method: 'PUT', body: JSON.stringify(body) });
+  if (!r.ok) { toast(_acctMsg ? _acctMsg(r, 'Could not save') : 'Could not save', 'error'); return; }
+  toast('Notification preferences saved', 'success'); closeOverlay('overlay-notif-prefs');
 }
 // ── navigateFromNotif — click a notification → mark read + deep-link to resource ─
 function navigateFromNotif(id) {
@@ -5939,6 +5991,7 @@ function navigateFromNotif(id) {
   if (!n) return;
 
   // Mark read locally + sync to backend
+  if (!n.read) _notifUnreadTotal = Math.max(_notifUnreadTotal - 1, 0);
   n.read = true;
   autosave('notifications');
   if (isUUID(n._dbId || n.id)) {
@@ -6052,7 +6105,7 @@ function navigateFromNotif(id) {
 function markRead(id) {
   var n = DB.notifications.find(function(x){ return x.id === id; });
   if (!n || n.read) return;
-  n.read = true;
+  n.read = true; _notifUnreadTotal = Math.max(_notifUnreadTotal - 1, 0);
   renderNotifications(); // optimistic UI update
   autosave('notifications');
   if (isUUID(n._dbId || n.id)) {
@@ -6061,24 +6114,16 @@ function markRead(id) {
 }
 
 function markAllRead() {
-  var ids = [];
-  DB.notifications.forEach(function(n) {
-    if (!n.read) {
-      n.read = true;
-      var dbId = n._dbId || n.id;
-      if (isUUID(dbId)) ids.push(dbId);
-    }
-  });
+  DB.notifications.forEach(function(n) { n.read = true; });
+  _notifUnreadTotal = 0;
   renderNotifications();
   autosave('notifications');
-  if (ids.length) {
-    apiFetch('/notifications/mark-read', { method: 'POST', body: JSON.stringify({ ids: ids }) }).catch(function(){});
-  }
+  if (_isLiveSession()) apiFetch('/notifications/mark-read', { method: 'POST', body: JSON.stringify({ all: true }) }).catch(function(){});
   toast('All notifications marked as read', 'success');
 }
 
 function clearAllNotifs() {
-  DB.notifications = [];
+  DB.notifications = []; _notifUnreadTotal = 0; _notifHasMore = false;
   renderNotifications();
   autosave('notifications');
   apiFetch('/notifications/all', { method: 'DELETE' }).catch(function(){});
@@ -6549,6 +6594,7 @@ function _notifEnabled(label) {
 // ── pushNotif — add to DB.notifications, render bell, browser push ──────
 // link format: { page, id } e.g. { page:'applicants', id:'uuid' } or { page:'accounting' }
 function pushNotif(title, body, type, link) {
+  if (_isLiveSession()) return;   // live sessions: the server creates and routes notifications
   // type: 'applicant' | 'document' | 'job' | 'system'
   var toggleMap = {
     applicant: 'Applicant Updates',
@@ -6628,6 +6674,7 @@ function pushNotif(title, body, type, link) {
 
 // ── _checkStaleApplicants — alert when status unchanged for 7+ days ───────
 function _checkStaleApplicants() {
+  if (_isLiveSession()) return;   // the server runs this check once a day for the right people
   if (!_notifEnabled('Applicant Updates')) return;
   // Guard: don't run more than once per 60 seconds (prevents dual-login-handler double-fire)
   var _now = Date.now();
@@ -6727,6 +6774,7 @@ function _checkStaleApplicants() {
 
 // ── _checkJobDeadlines — run on page load + every 6h ───────────────────
 function _checkJobDeadlines() {
+  if (_isLiveSession()) return;   // server-side now
   if (!_notifEnabled('Job Order Alerts')) return;
   // Guard: don't run more than once per 60 seconds
   var _now2 = Date.now();
@@ -24217,6 +24265,14 @@ async function loadSharedPermissions() {
 <!-- ══════════════════════════════════════
      INVOICE PRINT PREVIEW MODAL
 ══════════════════════════════════════ -->
+<div class="overlay" id="overlay-notif-prefs" onclick="closeOverlayIfBg(event,'overlay-notif-prefs')" role="dialog" aria-modal="true" aria-label="Notification preferences">
+  <div class="modal" style="max-width:600px;width:100%">
+    <div class="modal-hdr"><div><h2>🔔 Notification preferences</h2><p>Choose what reaches you and how</p></div><button class="close-btn" onclick="closeOverlay('overlay-notif-prefs')">✕</button></div>
+    <div class="modal-body" id="notif-prefs-body" style="max-height:70vh;overflow-y:auto"></div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeOverlay('overlay-notif-prefs')">Cancel</button><button class="btn btn-p" onclick="saveNotifPrefs()">Save</button></div>
+  </div>
+</div>
+
 <div class="overlay" id="overlay-invoice-detail" onclick="closeOverlayIfBg(event,'overlay-invoice-detail')" role="dialog" aria-modal="true" aria-label="Invoice details">
   <div class="modal" style="max-width:760px;width:100%">
     <div class="modal-hdr"><div><h2 id="inv-detail-title">Invoice</h2></div><button class="close-btn" onclick="closeOverlay('overlay-invoice-detail')">✕</button></div>
