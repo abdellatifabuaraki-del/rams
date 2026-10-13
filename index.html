@@ -20359,13 +20359,24 @@ function recalcOfficeLedgerBalances() {
   DB.officeFunds.balanceUSD = usdBal;
 }
 
+// What each cash-book entry does to office cash. Money allocated to the expenses fund LEAVES the office cash
+// (the server flags those rows moves_cash); legacy allocations never moved cash. Voided rows count for nothing.
+function _offCash(e) {
+  if (!e || e.voided) return 0;
+  if (e.type === 'expense-allocation') return e.movesCash ? -Math.abs(e.amount) : 0;
+  return e.amount;
+}
+function _offCashEntries() {
+  return (DB.officeLedger || []).map(function(e) { return { currency: e.currency, amount: _offCash(e) }; }).filter(function(e) { return e.amount !== 0; });
+}
+
 // ── CASH CARDS ────────────────────────────────────────────────────────
 function renderOfficeCashCards() {
   var f     = DB.officeFunds;
   var fx    = f.fxRate || 57.5;
 
   // Office Fund only — exclude expense-allocation (belongs to expenses fund)
-  var _of = DB.officeLedger.filter(function(e){ return e.type !== 'expense-allocation'; });
+  var _of = _offCashEntries();
   var phpIn  = _of.filter(function(e){ return e.currency==='PHP' && e.amount>0; }).reduce(function(s,e){ return s+e.amount; },0);
   var usdIn  = _of.filter(function(e){ return e.currency==='USD' && e.amount>0; }).reduce(function(s,e){ return s+e.amount; },0);
   var phpOut = Math.abs(_of.filter(function(e){ return e.currency==='PHP' && e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0));
@@ -20385,8 +20396,8 @@ function renderOfficeCashCards() {
     Store.set('rams:shared:officeFunds:ts', String(Date.now()), true).catch(function(){});
   }
 
-  var phpCnt= DB.officeLedger.filter(function(e){ return e.currency==='PHP'; }).length;
-  var usdCnt= DB.officeLedger.filter(function(e){ return e.currency==='USD'; }).length;
+  var phpCnt= DB.officeLedger.filter(function(e){ return e.currency==='PHP' && !e.voided && (e.type !== 'expense-allocation' || e.movesCash); }).length;
+  var usdCnt= DB.officeLedger.filter(function(e){ return e.currency==='USD' && !e.voided && (e.type !== 'expense-allocation' || e.movesCash); }).length;
 
   var phpClass = phpBalance < 0 ? 'cash-balance-negative' : phpBalance < f.lowThresholdPHP ? 'cash-balance-warning' : 'cash-balance-positive';
   var usdClass = usdBalance < 0 ? 'cash-balance-negative' : usdBalance < f.lowThresholdUSD ? 'cash-balance-warning' : 'cash-balance-positive';
@@ -20443,7 +20454,7 @@ function renderOfficeFlowRow() {
   var fx  = f.fxRate || 57.5;
 
   // Office Fund: allocations IN, office expenses OUT — exclude only expense-allocation
-  var _of2 = DB.officeLedger.filter(function(e){ return e.type !== 'expense-allocation'; });
+  var _of2 = _offCashEntries();
   var phpIn  = _of2.filter(function(e){ return e.currency==='PHP'&&e.amount>0; }).reduce(function(s,e){ return s+e.amount; },0);
   var usdIn  = _of2.filter(function(e){ return e.currency==='USD'&&e.amount>0; }).reduce(function(s,e){ return s+e.amount; },0);
   var phpOut = Math.abs(_of2.filter(function(e){ return e.currency==='PHP'&&e.amount<0; }).reduce(function(s,e){ return s+e.amount; },0));
