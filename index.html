@@ -1857,28 +1857,9 @@ button[disabled][data-rbac-locked] {
     <div class="rules-grid" id="rules-grid"></div>
   </div>
 
-  <!-- REPORTS TAB -->
+  <!-- REPORTS TAB (rendered by renderReports from /reports/run/*) -->
   <div class="acc-section" id="acc-reports">
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
-      <div class="card cp">
-        <div style="font-size:14px;font-weight:800;margin-bottom:14px">Agent Profitability</div>
-        <div id="report-profitability"></div>
-      </div>
-      <div class="card cp">
-        <div style="font-size:14px;font-weight:800;margin-bottom:14px">Outstanding Balances</div>
-        <div id="report-outstanding"></div>
-      </div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-      <div class="card cp">
-        <div style="font-size:14px;font-weight:800;margin-bottom:14px">Repatriation Rate by Agent</div>
-        <div id="report-repatriation"></div>
-      </div>
-      <div class="card cp">
-        <div style="font-size:14px;font-weight:800;margin-bottom:14px">Cost per Deployment</div>
-        <div id="report-cost-deploy"></div>
-      </div>
-    </div>
+    <div id="rpt-root"></div>
   </div>
 
 
@@ -6091,6 +6072,7 @@ function navigateFromNotif(id) {
   // ── Accounting / Expenses ───────────────────────────────────────────
   } else if (lnk.page === 'accounting' || lnk.page === 'expenses') {
     nav('accounting');
+    if (lnk.id === 'reports') setTimeout(function() { switchAccTab('reports', document.querySelector('.acc-tab[onclick*="reports"]')); }, DELAY);
 
   // ── Settings / Users ────────────────────────────────────────────────
   } else if (lnk.page === 'settings' || lnk.page === 'users') {
@@ -8370,9 +8352,11 @@ function bulkDelete() {
   });
 }
 function bulkExport() {
+  if (!hasPermission('Export Applicant Data')) { toast('Your role cannot export applicant data', 'error'); return; }
   const rows = DB.applicants.filter(a => selectedApps.has(a.id));
-  exportCSV(rows, 'selected_applicants');
-  toast(`Exported ${rows.length} applicants`, 'success');
+  const cols = [['id','ID'],['name','Name'],['status','Status'],['position','Position'],['destination','Destination'],['agent','Agent']];
+  if (hasPermission('Export Personal Data')) cols.push(['email','Email'],['phone','Phone'],['passport','Passport']);
+  exportCSV(rows, 'selected_applicants', cols);
   // Update summary counts
   var rc = document.getElementById('repat-count');
   var bc = document.getElementById('backout-count');
@@ -10624,7 +10608,7 @@ function exportAnalyticsCSV() {
     gap(); row('Receivable age', 'Count', 'USD'); m.receivables.buckets.forEach(function(b) { row(b.bucket + ' days', b.count, b.usd); });
   }
   out[0] = '﻿' + out[0];
-  _downloadCsv(out, 'rams_analytics_' + _ymd(new Date()) + '.csv');
+  _downloadCsv(out, 'rams_analytics_' + _ymd(new Date()) + '.csv'); _logExport('Analytics', out.length, 'csv');
 }
 
 // ── PDF — prints exactly what is on screen, section by section ───────
@@ -10645,7 +10629,7 @@ function exportAnalyticsPDF() {
     '<h1>RAMS Analytics Report</h1><div class="sub">' + _anE(subtitle) + ' · Generated ' + _anE(new Date().toLocaleString()) + '</div>' + secs + '</body></html>';
   var w = window.open('', '_blank');
   if (!w) { toast('Pop-up blocked — allow pop-ups to export the PDF', 'error'); return; }
-  w.document.write(html); w.document.close(); w.focus();
+  w.document.write(html); w.document.close(); w.focus(); _logExport('Analytics', 0, 'print');
   setTimeout(function() { w.print(); }, 400);
 }
 
@@ -12196,7 +12180,9 @@ const PERMISSIONS=[
   ['View Analytics',true,true,true,true,true,true],
   ['Manage Accounting',true,false,true,false,true,false],
   ['View Accounting',true,true,true,false,true,false],
-  ['Export Reports',true,true,true,false,true,false],
+  ['View Reports',true,false,true,false,true,false],
+  ['Export Reports',true,false,true,false,true,false],
+  ['Export Personal Data',true,false,true,true,false,false],
   ['Manage Users',true,false,false,false,false,false],
   ['Manage Roles',true,false,false,false,false,false],
   ['View Audit Log',true,false,true,true,false,false],
@@ -12408,18 +12394,13 @@ function resetPermissions() {
 // ════════════════════════════════════════════════════════
 // EXPORT
 // ════════════════════════════════════════════════════════
-function exportCSV(rows, name) {
-  if (!rows.length) { toast('No data to export','error'); return; }
-  const keys = Object.keys(rows[0]);
-  const csv = [keys.join(','), ...rows.map(r=>keys.map(k=>`"${String(r[k]).replace(/"/g,'""')}"`).join(','))].join('\n');
-  const blob = new Blob([csv], {type:'text/csv'});
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${name}_${_ymd(new Date())}.csv`; a.click();
-  addAudit('EXPORT','System',`Exported ${name} (${rows.length} records)`);
-  toast(`Exported ${rows.length} records to CSV`, 'success');
-}
-function exportData(type) {
-  const map = {applicants:()=>exportCSV(DB.applicants,'applicants'), accounting:()=>exportCSV(DB.expenses,'expenses'), audit:()=>exportCSV(DB.auditLog,'audit_log'), jobs:()=>exportCSV(DB.jobs,'job_orders'), roles:()=>exportCSV(DB.auditLog,'roles'),  analytics:()=>exportAnalyticsPDF(), dashboard:()=>exportCSV(DB.applicants,'dashboard_report'), pipeline:()=>exportCSV(DB.applicants,'pipeline'), docs:()=>exportCSV(DB.documents,'documents')};
-  if (map[type]) map[type](); else toast('Export initiated','info');
+function exportCSV(rows, name, cols) {
+  // Explicit columns only; every cell quoted and formula-safe. (Raw object dumps are no longer exported.)
+  if (!rows || !rows.length || !cols || !cols.length) { toast('No data to export', 'error'); return; }
+  var out = [cols.map(function(c) { return _csvCell(c[1]); }).join(',')];
+  rows.forEach(function(r) { out.push(cols.map(function(c) { return _csvCell(r[c[0]]); }).join(',')); });
+  out[0] = '\uFEFF' + out[0];
+  _downloadCsv(out, name + '_' + _ymd(new Date()) + '.csv'); _logExport(name, rows.length, 'csv');
 }
 
 // ════════════════════════════════════════════════════════
@@ -13203,6 +13184,7 @@ function switchAccTab(tab, el) {
     else if (tab === 'employers') hdra.innerHTML = (_r === 'Viewer') ? '' : '<button class="btn btn-s btn-sm" onclick="exportEmployerFees()">⬇ Export</button>';
     else if (tab === 'office') hdra.innerHTML = ((getCurrentRole && getCurrentRole() === 'Admin') ? '<button class="btn btn-ghost btn-sm" style="color:var(--red);border:1px solid var(--red)" onclick="resetOfficeLedger()">↺ Reset</button>' : '') + '<button class="btn btn-s btn-sm" onclick="exportOfficeLedger()">⬇ Export</button><button class="btn btn-s btn-sm" onclick="openAddFunds(\"PHP\")">+ Add Funds</button><button class="btn btn-p btn-sm" onclick="openOfficeExpense(\"PHP\")">− Expense</button>';
     else if (tab === 'invoices') hdra.innerHTML = '<button class="btn btn-p btn-sm" onclick="openNewInvoice()">+ New Invoice</button>';
+    else if (tab === 'reports') hdra.innerHTML = '';
     else hdra.innerHTML = '<button class="btn btn-s btn-sm" onclick="exportAccountingReport()">⬇ Export</button>' + ((getCurrentRole && getCurrentRole() === 'Admin') ? '<button class="btn btn-ghost btn-sm" style="color:var(--red);border:1px solid var(--red)" onclick="resetAllExpenses()">↺ Reset</button>' : '') + '<button class="btn btn-p btn-sm" onclick="openAddExpense()">+ Record Expense</button>';
   }
 
@@ -13790,6 +13772,7 @@ function _downloadCsv(rows, filename){
 }
 
 function exportCommissions() {
+  if (!hasPermission('Export Reports')) { toast('Your role cannot export reports', 'error'); return; }
   var list = _getFilteredCommissions();
   if (!list.length) { toast('No commissions match the current filters', 'error'); return; }
   var fx = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
@@ -13807,11 +13790,12 @@ function exportCommissions() {
   });
   rows.push('');
   rows.push([_csvCell('FX rate used'), _csvCell(fx)].join(','));
-  _downloadCsv(rows, 'commissions_'+_ymd(new Date())+'.csv');
+  _downloadCsv(rows, 'commissions_'+_ymd(new Date())+'.csv'); _logExport('Commissions', list.length, 'csv');
   toast('Exported '+list.length+' commission record(s)','success');
 }
 
 function exportAgentPayouts() {
+  if (!hasPermission('Export Reports')) { toast('Your role cannot export reports', 'error'); return; }
   var rows0 = _buildAgentPayouts(_getFilteredCommissions());
   if (!rows0.length) { toast('No commissions match the current filters', 'error'); return; }
   var rows = [['Agent','Records','Pending (PHP)','In Guarantee (PHP)','Released (PHP)',
@@ -13821,7 +13805,7 @@ function exportAgentPayouts() {
                Math.round(r.released), Math.round(r.reversed), Math.round(r.owed)]
               .map(_csvCell).join(','));
   });
-  _downloadCsv(rows, 'agent_payouts_'+_ymd(new Date())+'.csv');
+  _downloadCsv(rows, 'agent_payouts_'+_ymd(new Date())+'.csv'); _logExport('Agent payouts', rows0.length, 'csv');
   toast('Exported payout summary for '+rows0.length+' agent(s)','success');
 }
 
@@ -16545,70 +16529,360 @@ async function toggleRuleActive(idx) {
 }
 
 // ── REPORTS ───────────────────────────────────────────────────────────
-function renderReports() {
-  var maxBal = Math.max.apply(null, DB.agents.map(function(a){ return Math.abs(a.balance); }));
+// ── REPORTS (server-side) ─────────────────────────────────────────────
+// Every number comes from /reports/run/:key (computed from the database in one currency,
+// with filters). Exports are built and audited on the server; the browser only renders.
+var _rpt = { catalog: null, key: 'agents', data: null, busy: false, seq: 0, timer: null,
+  f: { range: 'ytd', from: '', to: '', currency: 'USD', agent: '', employer: '', country: '', include_archived: false, show_all: false, period: '' } };
+var _RPT_TITLES = { agents: 'Agent contribution & performance', receivables: 'Receivables by employer', liability: 'Commission liability', cash: 'Cash position',
+  expenses: 'Expenses', employers: 'Employer profitability', statement: 'Agent statement', 'month-end': 'Month-end pack' };
+var _RPT_USES = {
+  agents:      ['range', 'currency', 'agent', 'employer', 'country', 'archived'],
+  receivables: ['currency', 'employer', 'country'],
+  liability:   ['currency', 'agent', 'employer', 'country'],
+  cash:        ['range', 'currency'],
+  expenses:    ['range', 'currency', 'agent', 'employer', 'country'],
+  employers:   ['range', 'currency', 'agent', 'employer', 'country'],
+  statement:   ['range', 'agent'],
+  'month-end': ['period', 'currency'],
+};
+var _RPT_RANGES = [['all', 'All time'], ['mtd', 'Month to date'], ['last_month', 'Last month'], ['last_week', 'Last week'], ['last_30', 'Last 30 days'], ['last_90', 'Last 90 days'], ['ytd', 'Year to date'], ['custom', 'Custom dates…']];
 
-  // Profitability
-  var profEl = document.getElementById('report-profitability');
-  if (profEl) {
-    var sorted = DB.agents.slice().sort(function(a,b){ return b.totalDeployed-a.totalDeployed; });
-    profEl.innerHTML = sorted.map(function(a) {
-      var profit = a.totalCommission - a.totalExpenses;
-      return '<div class="report-metric">'+
-        '<div style="min-width:100px;font-size:12.5px;font-weight:700">'+a.name.split(' ')[0]+'</div>'+
-        '<div class="report-bar-wrap"><div class="report-bar" style="width:'+(a.totalDeployed/20*100)+'%;background:'+(profit>=0?'var(--green)':'var(--red)')+'"></div></div>'+
-        '<div style="min-width:80px;text-align:right;font-size:12px;font-weight:800;font-family:\'IBM Plex Mono\',monospace;color:'+(profit>=0?'var(--green)':'var(--red)')+'">'+
-          (profit>=0?'₱':'−₱')+Math.abs(profit).toLocaleString()+
-        '</div>'+
-      '</div>';
-    }).join('');
-  }
+function _rE(s) { return escapeHtml(String(s == null ? '' : s)); }
+function _rMoney(v, cur, dp) {
+  if (v === null || v === undefined || v === '' || isNaN(Number(v))) return '—';
+  var n = Number(v), d = dp === undefined ? 2 : dp;
+  return (n < 0 ? '−' : '') + (cur === 'PHP' ? '₱' : '$') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+function _rCell(v, type) {
+  if (v === null || v === undefined || v === '') return '';
+  if (type === 'money') return Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (type === 'int') return Number(v).toLocaleString('en-US');
+  if (type === 'pct') return Number(v).toFixed(1) + '%';
+  return String(v);
+}
+function _rptLive() { if (!_isLiveSession()) { toast('Reports and exports need a live server session', 'error'); return false; } return true; }
 
-  // Outstanding balances
-  var outEl = document.getElementById('report-outstanding');
-  if (outEl) {
-    var debtors = DB.agents.filter(function(a){ return a.balance<0; }).sort(function(a,b){ return a.balance-b.balance; });
-    outEl.innerHTML = debtors.length ? debtors.map(function(a) {
-      return '<div class="report-metric">'+
-        '<div style="flex:1">'+
-          '<div style="font-size:12.5px;font-weight:700">'+a.name+'</div>'+
-          '<div style="font-size:11px;color:var(--muted)">'+a.code+' · '+a.country+'</div>'+
-        '</div>'+
-        '<div style="font-size:14px;font-weight:800;font-family:\'IBM Plex Mono\',monospace;color:var(--red)">−₱'+Math.abs(a.balance).toLocaleString()+'</div>'+
-      '</div>';
-    }).join('') : '<div class="empty-state" style="padding:20px"><div class="empty-icon">✅</div><div class="empty-title" style="font-size:13px">No outstanding debts</div></div>';
+// ── files from the server (CSV downloads, print-ready HTML) ───────────
+async function _srvFile(path) {
+  var r;
+  try { r = await fetch(RAILWAY_URL + '/api' + path, { headers: { Authorization: 'Bearer ' + (window._ramsSessionToken || '') } }); }
+  catch (e) { return { ok: false, status: 0, message: 'Could not reach the server' }; }
+  if (!r.ok) {
+    var m = 'Export failed (' + r.status + ')';
+    try { var j = await r.json(); m = j.message || j.error || m; } catch (e) {}
+    return { ok: false, status: r.status, message: m };
   }
+  var cd = r.headers.get('Content-Disposition') || '', mm = /filename="([^"]+)"/.exec(cd);
+  return { ok: true, blob: await r.blob(), filename: mm ? mm[1] : 'export.csv' };
+}
+function _saveBlob(blob, name) {
+  var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(function() { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+}
+// kind: 'report' | 'dataset'; fmt: 'csv' | 'html'
+async function _srvExport(kind, key, params, fmt) {
+  if (!_rptLive()) return;
+  fmt = fmt === 'html' ? 'html' : 'csv';
+  var qs = Object.keys(params || {}).filter(function(k) { return params[k] !== '' && params[k] !== null && params[k] !== undefined && params[k] !== false; })
+    .map(function(k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k] === true ? '1' : params[k]); });
+  qs.push('format=' + fmt);
+  var path = '/reports/' + (kind === 'report' ? 'export/' : 'datasets/') + encodeURIComponent(key) + '?' + qs.join('&');
+  var w = null;
+  if (fmt === 'html') { w = window.open('', '_blank'); if (!w) { toast('Pop-up blocked — allow pop-ups to print or save as PDF', 'error'); return; } w.document.write('<p style="font:14px system-ui;padding:20px">Preparing report…</p>'); }
+  var f = await _srvFile(path);
+  if (!f.ok) { if (w) w.close(); toast(f.message, 'error'); return; }
+  if (fmt === 'html') { w.location.href = URL.createObjectURL(f.blob); }
+  else { _saveBlob(f.blob, f.filename); toast('Exported ' + f.filename, 'success'); }
+}
+// Browser-built exports (Analytics, filtered commission screens) still leave a server audit entry.
+function _logExport(name, rows, fmt) {
+  if (!_isLiveSession()) return;
+  apiFetch('/reports/log-export', { method: 'POST', body: JSON.stringify({ name: name, rows: rows || 0, format: fmt || 'csv' }) }).catch(function() {});
+}
 
-  // Repatriation rate
-  var repEl = document.getElementById('report-repatriation');
-  if (repEl) {
-    repEl.innerHTML = DB.agents.map(function(a) {
-      var rate = a.totalDeployed ? Math.round(a.repatriations/a.totalDeployed*100) : 0;
-      return '<div class="report-metric">'+
-        '<div style="min-width:90px;font-size:12.5px;font-weight:700">'+a.name.split(' ')[0]+'</div>'+
-        '<div class="report-bar-wrap"><div class="report-bar" style="width:'+rate+'%;background:'+(rate>=20?'var(--red)':rate>=10?'var(--amber)':'var(--green)')+'"></div></div>'+
-        '<div style="min-width:50px;text-align:right;font-size:12px;font-weight:800;color:'+(rate>=20?'var(--red)':rate>=10?'var(--amber)':'var(--green)')+'">'+rate+'%</div>'+
-      '</div>';
-    }).join('');
-  }
+// ── state / query ─────────────────────────────────────────────────────
+function _rptUses(x) { return (_RPT_USES[_rpt.key] || []).indexOf(x) !== -1; }
+function _rptParams() {
+  var f = _rpt.f, p = {};
+  if (_rptUses('period')) { if (f.period) p.period = f.period; }
+  if (_rptUses('range')) { if (f.range === 'custom') { if (f.from) p.from = f.from; if (f.to) p.to = f.to; } else if (f.range && f.range !== 'all') p.range = f.range; }
+  if (_rptUses('currency') && f.currency) p.currency = f.currency;
+  if (_rptUses('agent') && f.agent) p.agent = f.agent;
+  if (_rptUses('employer') && f.employer) p.employer = f.employer;
+  if (_rptUses('country') && f.country) p.country = f.country;
+  if (_rptUses('archived')) { if (f.include_archived) p.include_archived = '1'; if (f.show_all) p.show_all = '1'; }
+  return p;
+}
+function _rptQS(p) { return Object.keys(p).map(function(k) { return encodeURIComponent(k) + '=' + encodeURIComponent(p[k]); }).join('&'); }
+function _rptSet(field, value) {
+  _rpt.f[field] = value;
+  if (field === 'range' || field === 'include_archived' || field === 'show_all' || field === 'currency' || field === 'agent' || field === 'period') { _rptRender(true); }
+  else { clearTimeout(_rpt.timer); _rpt.timer = setTimeout(_rptRun, 500); }
+}
+function _rptPick(key) { _rpt.key = key; _rpt.data = null; _rptRender(true); }
 
-  // Cost per deployment
-  var costEl = document.getElementById('report-cost-deploy');
-  if (costEl) {
-    costEl.innerHTML = DB.agents.filter(function(a){ return a.totalDeployed>0; }).map(function(a) {
-      var cpd = Math.round(a.totalExpenses/a.totalDeployed);
-      return '<div class="report-metric">'+
-        '<div style="flex:1">'+
-          '<div style="font-size:12.5px;font-weight:700">'+a.name+'</div>'+
-          '<div style="font-size:11px;color:var(--muted)">'+a.totalDeployed+' deployed</div>'+
-        '</div>'+
-        '<div style="text-align:right">'+
-          '<div style="font-size:13px;font-weight:800;font-family:\'IBM Plex Mono\',monospace">₱'+cpd.toLocaleString()+'</div>'+
-          '<div style="font-size:10.5px;color:var(--muted)">per deployment</div>'+
-        '</div>'+
-      '</div>';
-    }).join('');
+// ── main entry ────────────────────────────────────────────────────────
+async function renderReports() {
+  var root = document.getElementById('rpt-root'); if (!root) return;
+  if (!_isLiveSession()) { root.innerHTML = '<div class="card cp"><div class="empty-state"><div class="empty-icon">📈</div><div class="empty-title">Reports need a live session</div><div class="empty-sub">Reports are calculated on the server from the database. Sign in with a real account to use them.</div></div></div>'; return; }
+  if (!_rpt.catalog) {
+    root.innerHTML = '<div class="card cp" style="color:var(--muted)">Loading reports…</div>';
+    var r = await apiFetch('/reports?_=' + Date.now());
+    if (!r.ok) { root.innerHTML = '<div class="card cp" style="color:var(--red)">' + _rE(_acctMsg(r, 'Could not load reports')) + '</div>'; return; }
+    _rpt.catalog = r.data;
   }
+  if (!_rpt.catalog.can_view) { root.innerHTML = '<div class="card cp"><div class="empty-state"><div class="empty-icon">🔒</div><div class="empty-title">No access to reports</div><div class="empty-sub">Your role needs the “View Reports” permission. Ask an administrator.</div></div></div>'; return; }
+  if (!_rpt.f.period) { var d = new Date(); d.setMonth(d.getMonth() - 1); _rpt.f.period = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
+  _rptRender(true);
+}
+
+function _rptSel(id, opts, cur, onchange, w) {
+  return '<select class="f-inp" id="' + id + '" onchange="' + onchange + '" style="width:' + (w || 150) + 'px;font-size:12.5px;padding:6px 8px">' +
+    opts.map(function(o) { return '<option value="' + _rE(o[0]) + '"' + (String(o[0]) === String(cur) ? ' selected' : '') + '>' + _rE(o[1]) + '</option>'; }).join('') + '</select>';
+}
+function _rptToolbar() {
+  var f = _rpt.f, c = _rpt.catalog, h = '';
+  h += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">' + (c.reports || []).map(function(r) {
+    return '<button class="btn ' + (r.key === _rpt.key ? 'btn-p' : 'btn-s') + ' btn-sm" onclick="_rptPick(\'' + r.key + '\')">' + _rE(_RPT_TITLES[r.key] || r.title) + '</button>'; }).join('') + '</div>';
+  h += '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">';
+  if (_rptUses('period')) h += '<label style="font-size:12px;color:var(--muted)">Month <input class="f-inp" type="month" value="' + _rE(f.period) + '" onchange="_rptSet(\'period\',this.value)" style="font-size:12.5px;padding:5px 8px"></label>';
+  if (_rptUses('range')) {
+    h += _rptSel('rpt-range', _RPT_RANGES, f.range, "_rptSet('range',this.value)", 150);
+    if (f.range === 'custom') h += '<input class="f-inp" type="date" value="' + _rE(f.from) + '" onchange="_rptSet(\'from\',this.value)" style="font-size:12.5px;padding:5px 8px"> → <input class="f-inp" type="date" value="' + _rE(f.to) + '" onchange="_rptSet(\'to\',this.value)" style="font-size:12.5px;padding:5px 8px">';
+  }
+  if (_rptUses('currency')) h += _rptSel('rpt-cur', [['USD', 'USD ($)'], ['PHP', 'PHP (₱)']], f.currency, "_rptSet('currency',this.value)", 100);
+  if (_rptUses('agent')) {
+    var ags = (DB.agents || []).filter(function(a) { return isUUID(a._dbId || a.id); });
+    h += _rptSel('rpt-agent', [['', _rpt.key === 'statement' ? '— Choose agent —' : 'All agents']].concat(ags.map(function(a) { return [a._dbId || a.id, a.name + (a.code ? ' (' + a.code + ')' : '')]; })), f.agent, "_rptSet('agent',this.value)", 190);
+  }
+  if (_rptUses('employer')) h += '<input class="f-inp" placeholder="Employer…" value="' + _rE(f.employer) + '" oninput="_rptSet(\'employer\',this.value)" style="width:130px;font-size:12.5px;padding:6px 8px">';
+  if (_rptUses('country')) h += '<input class="f-inp" placeholder="Country…" value="' + _rE(f.country) + '" oninput="_rptSet(\'country\',this.value)" style="width:120px;font-size:12.5px;padding:6px 8px">';
+  if (_rptUses('archived')) h += '<label style="font-size:12px;color:var(--muted)"><input type="checkbox"' + (f.include_archived ? ' checked' : '') + ' onchange="_rptSet(\'include_archived\',this.checked)"> archived agents</label>' +
+    '<label style="font-size:12px;color:var(--muted)"><input type="checkbox"' + (f.show_all ? ' checked' : '') + ' onchange="_rptSet(\'show_all\',this.checked)"> inactive rows</label>';
+  h += '</div><div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px">';
+  var pre = (c.presets || []).filter(function(p) { return p.report_key === _rpt.key; });
+  h += '<select class="f-inp" id="rpt-preset" onchange="_rptLoadPreset(this.value)" style="width:150px;font-size:12.5px;padding:6px 8px"><option value="">Saved views…</option>' + pre.map(function(p) { return '<option value="' + _rE(p.id) + '">' + _rE(p.name) + '</option>'; }).join('') + '</select>';
+  h += '<button class="btn btn-ghost btn-sm" onclick="_rptSavePreset()" title="Save the current filters">💾 Save view</button>';
+  if (pre.length) h += '<button class="btn btn-ghost btn-sm" onclick="_rptDeletePreset()" title="Delete the selected saved view">🗑</button>';
+  h += '<span style="flex:1"></span>';
+  if (c.can_export) h += '<button class="btn btn-s btn-sm" onclick="_rptExport(\'csv\')">⬇ CSV</button><button class="btn btn-s btn-sm" onclick="_rptExport(\'html\')">🖨 Print / PDF</button><button class="btn btn-s btn-sm" onclick="openReportSchedules()">⏰ Schedules</button>';
+  h += '</div>';
+  return h;
+}
+function _rptRender(run) {
+  var root = document.getElementById('rpt-root'); if (!root || !_rpt.catalog) return;
+  root.innerHTML = '<div class="card cp" style="margin-bottom:16px">' + _rptToolbar() + '</div><div id="rpt-result"></div>';
+  if (run) _rptRun();
+}
+
+async function _rptRun() {
+  var box = document.getElementById('rpt-result'); if (!box) return;
+  if (_rpt.key === 'statement' && !_rpt.f.agent) { box.innerHTML = '<div class="card cp" style="color:var(--muted)">Choose an agent to see their statement.</div>'; return; }
+  var seq = ++_rpt.seq;
+  box.innerHTML = '<div class="card cp" style="color:var(--muted)">Calculating…</div>';
+  var r = await apiFetch('/reports/run/' + _rpt.key + '?' + _rptQS(_rptParams()) + '&_=' + Date.now());
+  if (seq !== _rpt.seq) return;                      // a newer request superseded this one
+  box = document.getElementById('rpt-result'); if (!box) return;
+  if (!r.ok || !r.data) { box.innerHTML = '<div class="card cp" style="color:var(--red)">' + _rE(_acctMsg(r, 'Could not run the report')) + '</div>'; return; }
+  _rpt.data = r.data;
+  box.innerHTML = _rptBody(r.data);
+}
+
+// ── rendering ─────────────────────────────────────────────────────────
+function _rptTile(label, value, color, sub) {
+  return '<div class="card cp" style="flex:1;min-width:150px"><div style="font-size:11.5px;color:var(--muted);font-weight:700">' + _rE(label) + '</div>' +
+    '<div style="font-size:20px;font-weight:800;font-family:\'IBM Plex Mono\',monospace;color:' + (color || 'var(--text)') + '">' + _rE(value) + '</div>' + (sub ? '<div style="font-size:11px;color:var(--muted)">' + _rE(sub) + '</div>' : '') + '</div>';
+}
+function _rptTiles(rep) {
+  var cur = rep.currency, t = rep.sections[0] && rep.sections[0].totals || {}, M = function(v) { return _rMoney(v, cur, 0); }, k = [];
+  if (rep.key === 'agents') k = [['Fees settled', M(t.fees)], ['Commissions (net)', M((t.commissions || 0) - (t.commissions_reversed || 0))], ['Agency expenses', M(t.agency_expenses)], ['Contribution', M(t.contribution), (t.contribution || 0) >= 0 ? 'var(--green)' : 'var(--red)'], ['Placements', String(t.deployed || 0), '', (t.repatriation_rate == null ? '' : t.repatriation_rate + '% repatriated')]];
+  else if (rep.key === 'receivables') k = [['Total receivable', M(t.total_receivable)], ['Overdue', M(t.overdue), (t.overdue || 0) > 0 ? 'var(--red)' : ''], ['Not yet due', M(t.current)], ['Unbilled fees', M(t.unbilled_fees)]];
+  else if (rep.key === 'liability') k = [['Total liability', M(t.total)], ['Awaiting release', M(t.pending)], ['In guarantee', M(t.guarantee)], ['Ready to release', M(t.ready), (t.ready || 0) > 0 ? 'var(--amber)' : '']];
+  else if (rep.key === 'cash') k = [['Closing cash (' + cur + ')', M(t.closing_converted)]].concat((rep.sections[1] ? rep.sections[1].rows : []).map(function(r) { return ['Closing ' + r.currency, _rMoney(r.closing, r.currency, 0)]; }));
+  else if (rep.key === 'expenses') k = [['Total expenses', M(t.total)], ['Agency cost', M(t.agency_cost)], ['Items', String(t.count || 0)]];
+  else if (rep.key === 'employers') k = [['Fees settled', M(t.fees)], ['Net', M(t.net), (t.net || 0) >= 0 ? 'var(--green)' : 'var(--red)'], ['Margin', t.margin == null ? '—' : t.margin + '%'], ['Outstanding now', M(t.outstanding)]];
+  else if (rep.key === 'statement' && rep.summary) k = [['Opening', _rMoney(rep.summary.opening, 'PHP', 0)], ['Credits', _rMoney(rep.summary.credits, 'PHP', 0)], ['Debits', _rMoney(rep.summary.debits, 'PHP', 0)], ['Closing', _rMoney(rep.summary.closing, 'PHP', 0), rep.summary.closing < 0 ? 'var(--red)' : 'var(--green)']];
+  else if (rep.key === 'month-end') { var pl = {}; (rep.sections[0].rows || []).forEach(function(r) { pl[r.item.trim()] = r.value; }); k = [['Fees settled', M(pl['Employer fees settled'])], ['Commissions (net)', M((pl['Commissions released'] || 0) + (pl['Commissions reversed (recovered)'] || 0))], ['Agency expenses', M(pl['Agency-borne expenses'])], ['Net result', M(pl['Net result']), (pl['Net result'] || 0) >= 0 ? 'var(--green)' : 'var(--red)']]; }
+  return '<div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:16px">' + k.map(function(x) { return _rptTile(x[0], x[1], x[2], x[3]); }).join('') + '</div>';
+}
+// horizontal bars scaled to the largest value in the list
+function _rptBars(rows, valFn, labelFn, subFn, fmt, colorFn, empty) {
+  if (!rows.length) return '<div style="color:var(--muted);font-size:12.5px;padding:10px 0">' + _rE(empty || 'No data for these filters') + '</div>';
+  var max = Math.max.apply(null, rows.map(function(r) { return Math.abs(valFn(r) || 0); }).concat([0.0001]));
+  return rows.map(function(r) {
+    var v = valFn(r) || 0, w = Math.max(2, Math.round(Math.abs(v) / max * 100)), col = colorFn ? colorFn(r, v) : 'var(--brand)';
+    return '<div class="report-metric"><div style="min-width:130px;max-width:170px"><div style="font-size:12.5px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + labelFn(r) + '</div>' + (subFn ? '<div style="font-size:10.5px;color:var(--muted)">' + subFn(r) + '</div>' : '') + '</div>' +
+      '<div class="report-bar-wrap"><div class="report-bar" style="width:' + w + '%;background:' + col + '"></div></div>' +
+      '<div style="min-width:90px;text-align:right;font-size:12px;font-weight:800;font-family:\'IBM Plex Mono\',monospace;color:' + col + '">' + _rE(fmt(v, r)) + '</div></div>';
+  }).join('');
+}
+function _rptAgentLabel(r) { return r.agent_id ? '<a href="#" onclick="_rptDrill(\'agent\',\'' + _rE(r.agent_id) + '\');return false" style="color:inherit;text-decoration:none">' + _rE(r.agent) + '</a>' : _rE(r.agent); }
+function _rptAgentWidgets(rep) {
+  var cur = rep.currency, rows = rep.sections[0].rows, card = function(title, note, inner) { return '<div class="card cp"><div style="font-size:14px;font-weight:800">' + title + '</div><div style="font-size:11px;color:var(--muted);margin:2px 0 8px">' + note + '</div>' + inner + '</div>'; };
+  var named = function(r) { return _rptAgentLabel(r); }, sub = function(r) { return _rE(r.code || '') + (r.low_sample && r.deployed ? ' · low sample' : ''); };
+  var contrib = rows.filter(function(r) { return r.fees || r.commissions || r.agency_expenses || r.commissions_reversed; });
+  var owe = rows.filter(function(r) { return r.owed_by_agent > 0; }).sort(function(a, b) { return b.owed_by_agent - a.owed_by_agent; });
+  var due = rows.filter(function(r) { return r.owed_to_agent > 0; }).sort(function(a, b) { return b.owed_to_agent - a.owed_to_agent; });
+  var rep_ = rows.filter(function(r) { return r.deployed || r.backouts; });
+  var cost = rows.filter(function(r) { return r.cost_per_placement != null; }).sort(function(a, b) { return b.cost_per_placement - a.cost_per_placement; });
+  var rateColor = function(r, v) { return v >= 20 ? 'var(--red)' : v >= 10 ? 'var(--amber)' : 'var(--green)'; };
+  var balList = function(list, key, color, empty) { return list.length ? list.map(function(r) { return '<div class="report-metric"><div style="flex:1"><div style="font-size:12.5px;font-weight:700">' + named(r) + '</div><div style="font-size:11px;color:var(--muted)">' + _rE(r.code) + (r.country ? ' · ' + _rE(r.country) : '') + '</div></div><div style="font-size:14px;font-weight:800;font-family:\'IBM Plex Mono\',monospace;color:' + color + '">' + _rE(_rMoney(r[key], cur, 0)) + '</div></div>'; }).join('') : '<div style="color:var(--muted);font-size:12.5px;padding:8px 0">' + empty + '</div>'; };
+  return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:16px;margin-bottom:16px">' +
+    card('Agent contribution', 'Fees settled − commissions + reversed − agency expenses (' + cur + ')', _rptBars(contrib, function(r) { return r.contribution; }, named, sub, function(v) { return _rMoney(v, cur, 0); }, function(r, v) { return v >= 0 ? 'var(--green)' : 'var(--red)'; })) +
+    card('Balances', 'Agent ledger balances in ' + cur + '. Owed by agents / owed to agents.', '<div style="font-size:11.5px;font-weight:800;margin:4px 0">Owed by agents</div>' + balList(owe, 'owed_by_agent', 'var(--red)', '✅ No agent owes the agency') + '<div style="font-size:11.5px;font-weight:800;margin:10px 0 4px">Owed to agents</div>' + balList(due, 'owed_to_agent', 'var(--amber)', 'Nothing owed to agents')) +
+    card('Repatriation & backout rate', 'Per placement deployed in the period. Red ≥ 20%, amber ≥ 10%.', _rptBars(rep_, function(r) { return r.repatriation_rate || 0; }, named, function(r) { return r.repatriated + ' of ' + r.deployed + ' repatriated · ' + r.backouts + ' backout' + (r.backouts === 1 ? '' : 's') + (r.low_sample ? ' · low sample' : ''); }, function(v) { return v + '%'; }, rateColor)) +
+    card('Cost per placement', 'All expenses linked to the agent’s applicants ÷ placements', _rptBars(cost, function(r) { return r.cost_per_placement; }, named, function(r) { return r.deployed + ' deployed'; }, function(v) { return _rMoney(v, cur, 0); }, function() { return 'var(--brand)'; })) +
+    '</div>';
+}
+function _rptDrillCell(col, row, rep) {
+  var raw = row[col.key], txt = _rE(_rCell(raw, col.type));
+  if (col.key === 'agent' && row.agent_id) return '<a href="#" onclick="_rptDrill(\'agent\',\'' + _rE(row.agent_id) + '\');return false" style="color:var(--brand);text-decoration:none">' + txt + '</a>';
+  if (col.key === 'employer' && raw && raw[0] !== '—') return '<a href="#" data-emp="' + _rE(raw) + '" onclick="_rptDrill(\'employer\',this.getAttribute(\'data-emp\'));return false" style="color:var(--brand);text-decoration:none">' + txt + '</a>';
+  if (col.key === 'number' && row.invoice_id) return '<a href="#" onclick="_rptDrill(\'invoice\',\'' + _rE(row.invoice_id) + '\');return false" style="color:var(--brand);text-decoration:none">' + txt + '</a>';
+  if (rep.key === 'expenses' && col.key === 'name') return '<a href="#" onclick="_rptDrill(\'expenses\');return false" style="color:var(--brand);text-decoration:none">' + txt + '</a>';
+  return txt;
+}
+function _rptTable(sec, rep) {
+  if (!sec.columns.length) return '';
+  var right = function(c) { return c.type === 'money' || c.type === 'int' || c.type === 'pct'; };
+  var h = '<div class="card cp" style="margin-bottom:16px;overflow-x:auto"><div style="font-size:14px;font-weight:800;margin-bottom:4px">' + _rE(sec.title) + '</div>' + (sec.note ? '<div style="font-size:11px;color:var(--muted);margin-bottom:6px">' + _rE(sec.note) + '</div>' : '') +
+    '<table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr>' + sec.columns.map(function(c) { return '<th style="text-align:' + (right(c) ? 'right' : 'left') + ';padding:6px 8px;border-bottom:2px solid var(--border);white-space:nowrap;color:var(--muted);font-size:11.5px">' + _rE(c.label) + '</th>'; }).join('') + '</tr></thead><tbody>';
+  if (!sec.rows.length) h += '<tr><td colspan="' + sec.columns.length + '" style="padding:14px 8px;color:var(--muted)">No rows for these filters</td></tr>';
+  sec.rows.forEach(function(r) {
+    h += '<tr>' + sec.columns.map(function(c) {
+      var neg = c.type === 'money' && Number(r[c.key]) < 0;
+      return '<td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:' + (right(c) ? 'right' : 'left') + ';' + (right(c) ? 'font-family:\'IBM Plex Mono\',monospace;' : '') + (neg ? 'color:var(--red);' : '') + '">' + _rptDrillCell(c, r, rep) + '</td>'; }).join('') + '</tr>';
+  });
+  if (sec.totals) h += '<tr style="font-weight:800;background:var(--s2)">' + sec.columns.map(function(c) { return '<td style="padding:6px 8px;text-align:' + (right(c) ? 'right' : 'left') + ';' + (right(c) ? 'font-family:\'IBM Plex Mono\',monospace;' : '') + '">' + _rE(_rCell(sec.totals[c.key], c.type)) + '</td>'; }).join('') + '</tr>';
+  return h + '</tbody></table></div>';
+}
+function _rptBody(rep) {
+  var h = '<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">' + _rE(rep.title) + ' · ' + _rE(rep.period) + (rep.currency ? ' · ' + _rE(rep.currency) : '') + (rep.fx_rate ? ' · 1 USD = ' + _rE(rep.fx_rate) + ' PHP (current rate; each commission and expense uses the rate recorded when it was created)' : '') + '</div>';
+  h += _rptTiles(rep);
+  if (rep.key === 'agents') h += _rptAgentWidgets(rep);
+  rep.sections.forEach(function(s) { h += _rptTable(s, rep); });
+  if (rep.definitions) h += '<div class="card cp" style="font-size:11.5px;color:var(--muted)"><div style="font-weight:800;margin-bottom:4px;color:var(--text)">How these numbers are calculated</div>' +
+    Object.keys(rep.definitions).map(function(k) { return '<div style="margin:2px 0"><b>' + _rE(k.replace(/_/g, ' ')) + ':</b> ' + _rE(rep.definitions[k]) + '</div>'; }).join('') + '</div>';
+  return h;
+}
+
+// ── drill-down ────────────────────────────────────────────────────────
+function _rptDrill(kind, id) {
+  var tab = function(name) { return document.querySelector('.acc-tab[onclick*="\'' + name + '\'"]'); };
+  if (kind === 'agent') {
+    if (_rpt.key === 'liability') { switchAccTab('commissions', tab('commissions')); setTimeout(function() { var s = document.getElementById('comm-filter-agent'); if (s) { var a = (DB.agents || []).find(function(x) { return (x._dbId || x.id) === id; }); if (a) { s.value = a.id; renderCommissions(); } } }, 60); return; }
+    var ag = (DB.agents || []).find(function(x) { return (x._dbId || x.id) === id; });
+    currentLedgerAgent = ag ? ag.id : id; switchAccTab('ledger', tab('ledger'));
+  } else if (kind === 'employer') { switchAccTab('invoices', tab('invoices')); setTimeout(function() { if (typeof _invSetFilter === 'function') _invSetFilter('employer', id); }, 60); }
+  else if (kind === 'invoice') { switchAccTab('invoices', tab('invoices')); setTimeout(function() { if (typeof viewInvoice === 'function') viewInvoice(id); }, 400); }
+  else if (kind === 'expenses') switchAccTab('expenses', tab('expenses'));
+}
+
+// ── exports / presets ─────────────────────────────────────────────────
+function _rptExport(fmt) {
+  if (_rpt.key === 'statement' && !_rpt.f.agent) { toast('Choose an agent first', 'error'); return; }
+  _srvExport('report', _rpt.key, _rptParams(), fmt);
+}
+async function _rptSavePreset() {
+  var name = window.prompt('Name for this view (filters are saved, not data):', '');
+  if (!name || !name.trim()) return;
+  var r = await apiFetch('/reports/presets', { method: 'POST', body: JSON.stringify({ name: name.trim(), report_key: _rpt.key, params: _rptParams() }) });
+  if (!r.ok) { toast(_acctMsg(r, 'Could not save the view'), 'error'); return; }
+  _rpt.catalog.presets = (_rpt.catalog.presets || []).filter(function(p) { return !(p.report_key === r.data.report_key && p.name.toLowerCase() === r.data.name.toLowerCase()); }).concat([r.data]);
+  toast('View saved', 'success'); _rptRender(false); _rptRun();
+}
+function _rptLoadPreset(id) {
+  var p = (_rpt.catalog.presets || []).find(function(x) { return x.id === id; }); if (!p) return;
+  var q = p.params || {}, f = _rpt.f;
+  f.range = q.from || q.to ? 'custom' : (q.range || 'all'); f.from = q.from || ''; f.to = q.to || ''; f.currency = q.currency || 'USD'; f.agent = q.agent || ''; f.employer = q.employer || ''; f.country = q.country || '';
+  f.include_archived = !!q.include_archived; f.show_all = !!q.show_all; if (q.period) f.period = q.period;
+  _rptRender(true);
+  var s = document.getElementById('rpt-preset'); if (s) s.value = id;
+}
+async function _rptDeletePreset() {
+  var s = document.getElementById('rpt-preset'); if (!s || !s.value) { toast('Pick a saved view first', 'error'); return; }
+  var r = await apiFetch('/reports/presets/' + s.value, { method: 'DELETE' });
+  if (!r.ok) { toast(_acctMsg(r, 'Could not delete the view'), 'error'); return; }
+  _rpt.catalog.presets = (_rpt.catalog.presets || []).filter(function(p) { return p.id !== s.value; });
+  toast('View deleted', 'success'); _rptRender(false); _rptRun();
+}
+
+// ── scheduled reports ─────────────────────────────────────────────────
+var _rptSched = [];
+var _RPT_DAYS = [[1, 'Monday'], [2, 'Tuesday'], [3, 'Wednesday'], [4, 'Thursday'], [5, 'Friday'], [6, 'Saturday'], [7, 'Sunday']];
+async function openReportSchedules() {
+  if (!_rptLive()) return;
+  openOverlay('overlay-rpt-schedules');
+  var body = document.getElementById('rpt-sched-body'); if (body) body.innerHTML = '<div style="color:var(--muted)">Loading…</div>';
+  var r = await apiFetch('/reports/schedules?_=' + Date.now());
+  if (!r.ok) { if (body) body.innerHTML = '<div style="color:var(--red)">' + _rE(_acctMsg(r, 'Could not load schedules')) + '</div>'; return; }
+  _rptSched = r.data || []; _rptSchedRender();
+}
+function _rptSchedWhen(s) { return s.frequency === 'weekly' ? 'Every ' + (_RPT_DAYS.find(function(d) { return d[0] === s.run_day; }) || [0, '?'])[1] : 'Monthly on day ' + s.run_day; }
+function _rptSchedRender() {
+  var body = document.getElementById('rpt-sched-body'); if (!body) return;
+  var users = (DB.users || []).filter(function(u) { return isUUID(u.id) && u.email; });
+  var h = _rptSched.length ? '<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:14px"><thead><tr><th style="text-align:left;padding:5px 6px">Name</th><th style="text-align:left;padding:5px 6px">Report</th><th style="text-align:left;padding:5px 6px">When</th><th style="text-align:left;padding:5px 6px">Last run</th><th></th></tr></thead><tbody>' +
+    _rptSched.map(function(s, i) { return '<tr style="border-top:1px solid var(--border)"><td style="padding:6px">' + _rE(s.name) + (s.active ? '' : ' <span style="color:var(--muted)">(paused)</span>') + '<div style="font-size:11px;color:var(--muted)">' + s.recipients.length + ' recipient(s)' + (s.send_email ? ' · e-mail' : ' · in-app only') + '</div></td><td style="padding:6px">' + _rE(_RPT_TITLES[s.report_key] || s.report_key) + '</td><td style="padding:6px">' + _rE(_rptSchedWhen(s)) + '</td><td style="padding:6px;font-size:11.5px">' + (s.last_run_at ? _rE(new Date(s.last_run_at).toLocaleString()) : '—') + '<div style="color:var(--muted)">' + _rE(s.last_status || '') + '</div></td>' +
+      '<td style="padding:6px;white-space:nowrap"><button class="btn btn-ghost btn-xs" onclick="_rptSchedRun(' + i + ')">Run now</button> <button class="btn btn-ghost btn-xs" onclick="_rptSchedToggle(' + i + ')">' + (s.active ? 'Pause' : 'Resume') + '</button> <button class="btn btn-danger btn-xs" onclick="_rptSchedDelete(' + i + ')">✕</button></td></tr>'; }).join('') + '</tbody></table>'
+    : '<div style="color:var(--muted);margin-bottom:14px">No scheduled reports yet.</div>';
+  h += '<div style="border-top:1px solid var(--border);padding-top:12px"><div style="font-weight:800;margin-bottom:8px">New schedule — ' + _rE(_RPT_TITLES[_rpt.key] || _rpt.key) + ' with the current filters</div>' +
+    '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px"><input class="f-inp" id="rs-name" placeholder="Name (e.g. Weekly receivables)" style="flex:1;min-width:200px">' +
+    '<select class="f-inp" id="rs-freq" onchange="_rptSchedFreq()" style="width:110px"><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select><select class="f-inp" id="rs-day" style="width:130px"></select></div>' +
+    '<div style="font-size:11.5px;color:var(--muted);margin-bottom:4px">Recipients (people with View Reports get an in-app notice; e-mail needs SMTP set up on the server)</div>' +
+    '<select class="f-inp" id="rs-rec" multiple size="5" style="width:100%">' + users.map(function(u) { return '<option value="' + _rE(u.id) + '">' + _rE(u.name || u.email) + ' — ' + _rE(u.email) + '</option>'; }).join('') + '</select>' +
+    '<label style="font-size:12px;display:block;margin:8px 0"><input type="checkbox" id="rs-mail" checked> Send e-mail with the CSV attached</label>' +
+    '<button class="btn btn-p btn-sm" onclick="_rptSchedCreate()">Create schedule</button></div>';
+  body.innerHTML = h; _rptSchedFreq();
+}
+function _rptSchedFreq() {
+  var f = document.getElementById('rs-freq'), d = document.getElementById('rs-day'); if (!f || !d) return;
+  d.innerHTML = f.value === 'weekly' ? _RPT_DAYS.map(function(x) { return '<option value="' + x[0] + '"' + (x[0] === 1 ? ' selected' : '') + '>' + x[1] + '</option>'; }).join('')
+    : Array.from({ length: 28 }, function(_, i) { return '<option value="' + (i + 1) + '">Day ' + (i + 1) + '</option>'; }).join('');
+}
+async function _rptSchedCreate() {
+  var name = (document.getElementById('rs-name').value || '').trim(); if (!name) { toast('Give the schedule a name', 'error'); return; }
+  if (_rpt.key === 'statement' && !_rpt.f.agent) { toast('Choose an agent for a statement schedule', 'error'); return; }
+  var rec = Array.from(document.getElementById('rs-rec').selectedOptions).map(function(o) { return o.value; });
+  var p = _rptParams(); delete p.period;
+  var r = await apiFetch('/reports/schedules', { method: 'POST', body: JSON.stringify({ name: name, report_key: _rpt.key, params: p, frequency: document.getElementById('rs-freq').value, run_day: parseInt(document.getElementById('rs-day').value), recipients: rec, send_email: document.getElementById('rs-mail').checked }) });
+  if (!r.ok) { toast(_acctMsg(r, 'Could not create the schedule'), 'error'); return; }
+  toast('Schedule created', 'success'); openReportSchedules();
+}
+async function _rptSchedRun(i) { var s = _rptSched[i]; var r = await apiFetch('/reports/schedules/' + s.id + '/run', { method: 'POST', body: '{}' }); toast(r.ok ? 'Report sent: ' + r.data.status : _acctMsg(r, 'Run failed'), r.ok ? 'success' : 'error'); openReportSchedules(); }
+async function _rptSchedToggle(i) { var s = _rptSched[i]; var r = await apiFetch('/reports/schedules/' + s.id, { method: 'PUT', body: JSON.stringify({ active: !s.active }) }); if (!r.ok) toast(_acctMsg(r, 'Could not update'), 'error'); openReportSchedules(); }
+async function _rptSchedDelete(i) { var s = _rptSched[i]; if (!window.confirm('Delete the schedule “' + s.name + '”?')) return; var r = await apiFetch('/reports/schedules/' + s.id, { method: 'DELETE' }); if (!r.ok) toast(_acctMsg(r, 'Could not delete'), 'error'); openReportSchedules(); }
+
+// ── dataset exports (server-built, permission-checked, audited) ───────
+function exportData(type) {
+  var map = { applicants: 'applicants', dashboard: 'applicants', pipeline: 'applicants', accounting: 'expenses', audit: 'audit-log', jobs: 'jobs', docs: 'documents' };
+  if (type === 'analytics') return exportAnalyticsPDF();
+  if (type === 'roles') return exportRolesMatrix();
+  if (!map[type]) { toast('That export is not available', 'error'); return; }
+  _srvExport('dataset', map[type], {}, 'csv');
+}
+function exportRolesMatrix() {
+  var head = ['Permission', 'Admin', 'Recruiter', 'Manager', 'Compliance', 'Finance', 'Viewer'];
+  var rows = [head.map(_csvCell).join(',')].concat((PERMISSIONS || []).map(function(r) { return [r[0]].concat(r.slice(1, 7).map(function(v) { return v ? 'Yes' : 'No'; })).map(_csvCell).join(','); }));
+  rows[0] = '﻿' + rows[0];
+  _downloadCsv(rows, 'roles_permissions_' + _ymd(new Date()) + '.csv'); _logExport('Roles matrix', rows.length - 1, 'csv');
+}
+function exportAccountingReport() { _srvExport('report', 'agents', { show_all: '1' }, 'csv'); }
+function exportLedger() {
+  var sel = document.getElementById('ledger-agent-select'), id = sel ? sel.value : '';
+  if (!id) { toast('Select an agent first', 'error'); return; }
+  var ag = (DB.agents || []).find(function(a) { return a.id === id; }), uid = ag ? (ag._dbId || ag.id) : id;
+  var p = { agent: uid }, fr = document.getElementById('ledger-date-from'), to = document.getElementById('ledger-date-to');
+  if (fr && fr.value) p.from = fr.value; if (to && to.value) p.to = to.value;
+  _srvExport('dataset', 'agent-ledger', p, 'csv');
+}
+function exportEmployerFees() { if (isViewerRole()) { toast('Your role has read-only access to Employers', 'error'); return; } _srvExport('dataset', 'employer-fees', {}, 'csv'); }
+function exportComplaints() { _srvExport('dataset', 'complaints', {}, 'csv'); }
+function exportOfficeLedger() {
+  var r = _resolvePeriodRange('office-fund'), p = {};
+  if (r) { if (r.from && r.from > '0001') p.from = r.from; if (r.to && r.to < '9999') p.to = r.to; }
+  _srvExport('dataset', 'office-ledger', p, 'csv');
 }
 
 // ── BUSINESS LOGIC — TRIGGERS ─────────────────────────────────────────
@@ -17714,21 +17988,6 @@ function _efKpi(icon, label, val, color) {
 
 
 
-
-function exportEmployerFees() {
-  if (isViewerRole()) { toast('Your role has read-only access to Employers','error'); return; }
-  var rows = ['ID,Applicant,Employer,Position,Country,Fee USD,PHP Equiv,Status,Settled By,Settled Date,Created'];
-  var fx = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
-  getScopedEmployerFees().forEach(function(f) {
-    rows.push([f.id, f.applicantName, f.employer, f.jobTitle, f.country,
-      f.feeUSD, Math.round((f.feeUSD||0)*fx), f.status, f.settledBy||'', f.settledAt||'', f.createdAt||''].join(','));
-  });
-  var blob = new Blob([rows.join('\n')], { type: 'text/csv' });
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'employer_fees_' + _ymd(new Date()) + '.csv';
-  a.click();
-}
 
 // ── Manual Add Fee ────────────────────────────────────────────────────
 function openManualFee(applicantId) {
@@ -18985,19 +19244,6 @@ function submitComplaint() {
   renderComplaints();
 }
 
-function exportComplaints() {
-  var rows=['ID,Applicant,Type,Priority,Status,Reported,Resolved,Assigned,Description'];
-  getScopedComplaints().forEach(function(c){
-    rows.push([c.id,c.applicantName,c.type,c.priority,c.status,
-      c.reportedDate,c.resolvedDate||'',c.assignedTo||'',
-      '"'+(c.description||'').replace(/"/g,'""')+'"'].join(','));
-  });
-  var a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob([rows.join('\n')],{type:'text/csv'}));
-  a.download='complaints_'+_today()+'.csv';
-  a.click();
-}
-
 // ── APPLICANT DRAWER: Complaints tab ─────────────────────────────────
 function renderDrawerComplaintsTab(applicantId) {
   var panel = document.getElementById('dtab-complaints');
@@ -19919,36 +20165,6 @@ function _createMissingCommissions() {
 
 
 
-function exportAccountingReport() {
-  var rows = ['Agent,Commission,Expenses,Balance,Deployed,Backouts'];
-  DB.agents.forEach(function(a){
-    rows.push([a.name,a.totalCommission,a.totalExpenses,a.balance,a.totalDeployed,a.backouts].join(','));
-  });
-  var blob = new Blob([rows.join('\n')],{type:'text/csv'});
-  var url  = URL.createObjectURL(blob);
-  var lnk  = document.createElement('a');
-  lnk.href = url; lnk.download = 'agent_accounting_'+_ymd(new Date())+'.csv';
-  lnk.click();
-  toast('Report exported','success');
-}
-
-function exportLedger() {
-  var agentId = document.getElementById('ledger-agent-select') ? document.getElementById('ledger-agent-select').value : '';
-  if (!agentId) { toast('Select an agent first','error'); return; }
-  var agent   = DB.agents.find(function(a){ return a.id===agentId; });
-  var entries = DB.agentLedger.filter(function(e){ return e.agentId===agentId; });
-  var rows    = ['Date,Type,Description,Amount,Balance'];
-  entries.forEach(function(e){
-    rows.push([e.date,e.type,'"'+e.desc+'"',e.amount,e.runningBalance].join(','));
-  });
-  var blob = new Blob([rows.join('\n')],{type:'text/csv'});
-  var url  = URL.createObjectURL(blob);
-  var lnk  = document.createElement('a');
-  lnk.href = url; lnk.download = (agent?agent.name:'agent')+'_ledger_'+_ymd(new Date())+'.csv';
-  lnk.click();
-  toast('Ledger exported','success');
-}
-
 // ── PATCH saveApplicant to trigger accounting logic ───────────────────
 var _origSaveApplicant = saveApplicant;
 saveApplicant = function() {
@@ -20780,32 +20996,6 @@ function openOfficeAdjustment() {
 
 
 // ── EXPORT ────────────────────────────────────────────────────────────
-function exportOfficeLedger() {
-  var currFilter = (document.getElementById('office-ledger-currency') || {}).value || 'all';
-  var typeFilter = (document.getElementById('office-ledger-type')     || {}).value || 'all';
-  var catFilter  = (document.getElementById('office-ledger-category') || {}).value || 'all';
-  var range      = _resolvePeriodRange('office-fund');
-
-  var entries = DB.officeLedger.slice()
-    .filter(function(e){ return e.type !== 'expense-allocation' || e.movesCash; })
-    .sort(function(a,b){ return (b.ts||'').localeCompare(a.ts||''); });
-  if (currFilter !== 'all') entries = entries.filter(function(e){ return e.currency === currFilter; });
-  if (typeFilter !== 'all') entries = entries.filter(function(e){ return e.type === typeFilter; });
-  if (catFilter  !== 'all') entries = entries.filter(function(e){ return e.category === catFilter; });
-  if (range) entries = entries.filter(function(e){ return _inRange(e.date, range); });
-
-  var rows = ['Date,Type,Currency,Amount,Balance,Category,Description,Reference,Posted By'];
-  entries.forEach(function(e){
-    rows.push([_csvCell(e.date),_csvCell(e.type),_csvCell(e.currency),e.amount,e.balance||'',_csvCell(e.category||''),_csvCell(e.desc),_csvCell(e.ref||''),_csvCell(e.postedBy||'')].join(','));
-  });
-  var blob = new Blob([rows.join('\n')],{type:'text/csv'});
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'office_fund_ledger_'+_ymd(new Date())+'.csv';
-  a.click();
-  toast('Office Fund ledger exported (' + entries.length + ' entries)', 'success');
-}
-
 function exportExpensesFundLedger() {
   var typeFilter   = (document.getElementById('office-exp-type-filter')   || {}).value || 'all';
   var statusFilter = (document.getElementById('office-exp-status-filter') || {}).value || 'all';
@@ -20829,15 +21019,13 @@ function exportExpensesFundLedger() {
   if (range) rowsData = rowsData.filter(function(r){ return _inRange(r.date, range); });
   rowsData.sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
 
-  var rows = ['Date,Type,Status,Amount,Description,Reference'];
+  if (!hasPermission('Export Reports')) { toast('Your role cannot export reports', 'error'); return; }
+  var rows = ['\uFEFF' + ['Date','Type','Status','Amount','Description','Reference'].map(_csvCell).join(',')];
   rowsData.forEach(function(r){
-    rows.push([r.date, r.type, r.status, r.amount, '"'+(r.desc||'').replace(/"/g,'""')+'"', r.ref].join(','));
+    rows.push([r.date, r.type, r.status, r.amount, r.desc, r.ref].map(_csvCell).join(','));
   });
-  var blob = new Blob([rows.join('\n')], { type: 'text/csv' });
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'expenses_fund_ledger_'+_ymd(new Date())+'.csv';
-  a.click();
+  _downloadCsv(rows, 'expenses_fund_ledger_'+_ymd(new Date())+'.csv');
+  _logExport('Expenses fund ledger', rowsData.length, 'csv');
   toast('Expenses Fund ledger exported (' + rowsData.length + ' entries)', 'success');
 }
 
@@ -21659,7 +21847,11 @@ function _gateButtons() {
     ['[onclick*="openAddApplicant"]',     'Create Applicants',    'Your role cannot create applicants'],
     ['[onclick*="editApplicant"]',        'Edit Applicants',      'Your role cannot edit applicants'],
     ['[onclick*="confirmDelete"][onclick*="applicant"]', 'Delete Applicants', 'Your role cannot delete applicants'],
-    ['[onclick*="exportData"]',           'Export Applicant Data','Your role cannot export data'],
+    ['[onclick*="exportData(\'applicants\')"], [onclick*="exportData(\'dashboard\')"], [onclick*="exportData(\'pipeline\')"], [onclick*="exportData(\'docs\')"]', 'Export Applicant Data','Your role cannot export data'],
+    ['[onclick*="exportData(\'audit\')"]',  'View Audit Log',       'Your role cannot export the audit log'],
+    ['[onclick*="exportData(\'jobs\')"]',   'View Job Orders',      'Your role cannot export job orders'],
+    ['[onclick*="exportData(\'roles\')"]',  'Manage Roles',         'Your role cannot export roles'],
+    ['[onclick*="exportData(\'accounting\')"], [onclick*="exportAccountingReport"], [onclick*="exportLedger"], [onclick*="exportEmployerFees"], [onclick*="exportOfficeLedger"], [onclick*="exportExpensesFundLedger"], [onclick*="exportCommissions"], [onclick*="exportAgentPayouts"], [onclick*="exportComplaints"]', 'Export Reports', 'Your role cannot export accounting data'],
     // Jobs
     ['[onclick*="openAddJob"]',           'Manage Job Orders',    'Your role cannot manage job orders'],
     ['[onclick*="editJob"]',              'Manage Job Orders',    'Your role cannot manage job orders'],
@@ -24265,6 +24457,13 @@ async function loadSharedPermissions() {
 <!-- ══════════════════════════════════════
      INVOICE PRINT PREVIEW MODAL
 ══════════════════════════════════════ -->
+<div class="overlay" id="overlay-rpt-schedules" onclick="closeOverlayIfBg(event,'overlay-rpt-schedules')" role="dialog" aria-modal="true" aria-label="Scheduled reports">
+  <div class="modal" style="max-width:760px;width:100%">
+    <div class="modal-hdr"><div><h2>⏰ Scheduled reports</h2><p>Reports are run on the server and delivered by notification and (optionally) e-mail</p></div><button class="close-btn" onclick="closeOverlay('overlay-rpt-schedules')">✕</button></div>
+    <div class="modal-body" id="rpt-sched-body" style="max-height:72vh;overflow-y:auto"></div>
+  </div>
+</div>
+
 <div class="overlay" id="overlay-notif-prefs" onclick="closeOverlayIfBg(event,'overlay-notif-prefs')" role="dialog" aria-modal="true" aria-label="Notification preferences">
   <div class="modal" style="max-width:600px;width:100%">
     <div class="modal-hdr"><div><h2>🔔 Notification preferences</h2><p>Choose what reaches you and how</p></div><button class="close-btn" onclick="closeOverlay('overlay-notif-prefs')">✕</button></div>
