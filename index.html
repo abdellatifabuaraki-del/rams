@@ -3976,6 +3976,8 @@ function mapCommission(row) {
     phpAmount:       row.php_amount != null ? parseFloat(row.php_amount) : null,
     fxRate:          row.fx_rate != null ? parseFloat(row.fx_rate) : null,
     reverseReason:   row.reverse_reason || '',
+    reissuedAs:      row.reissued_as || null,
+    repricedAt:      row.repriced_at || null,
   };
 }
 async function apiFetchCommissions() {
@@ -14047,13 +14049,22 @@ function renderCommissions() {
               });
               var _roleOk2 = typeof getCurrentRole==='function' && (getCurrentRole()==='Admin'||getCurrentRole()==='Finance');
               if (!_roleOk2) return '<span style="font-size:10px;color:var(--muted)">Finance/Admin</span>';
-              if (_prevBlocked2) return '<span style="font-size:10px;color:var(--amber)">🔒 T'+(c.tranche-1)+' first</span>';
+              var _repriceBtn = (c.tranche >= 1 && c.tranche <= 3 && hasPermission('Release/Reverse Commissions'))
+                ? '<button class="btn btn-sm" style="font-size:11px;margin-right:4px" title="Recalculate this unpaid tranche from the current commission rate" onclick="repriceCommission(\''+c.id+'\')">↻ Re-price</button>' : '';
+              if (_prevBlocked2) {
+                var _prevRev = DB.commissions.find(function(x){ return x.tranche===(c.tranche-1) && x.status==='Reversed' && !x.reissuedAs && ((x.applicantId && x.applicantId===c.applicantId) || (x.applicantName && c.applicantName && x.applicantName.toLowerCase().trim()===c.applicantName.toLowerCase().trim())); });
+                return _repriceBtn + '<span style="font-size:10px;color:var(--amber)" title="'+(_prevRev ? 'T'+(c.tranche-1)+' was reversed. Use ↻ Re-issue on that row, release it, then release this one.' : 'Release the previous tranche first')+'">🔒 T'+(c.tranche-1)+(_prevRev ? ' reversed — re-issue it' : ' first')+'</span>';
+              }
               var _gEnded = c.status === 'In Guarantee' && c.guaranteeEnd && String(c.guaranteeEnd).slice(0, 10) > _ymd(new Date());
               if (_gEnded && !hasPermission('Void Accounting Records')) return '<span style="font-size:10px;color:var(--brand)">🛡 Guarantee</span>';
-              return '<button class="btn btn-sm" style="font-size:11px;background:var(--gbg);color:var(--green);border:1px solid #86efac" onclick="releaseCommission(\''+c.id+'\')" >'+(_gEnded ? 'Release early' : 'Release')+'</button>';
+              return _repriceBtn + '<button class="btn btn-sm" style="font-size:11px;background:var(--gbg);color:var(--green);border:1px solid #86efac" onclick="releaseCommission(\''+c.id+'\')" >'+(_gEnded ? 'Release early' : 'Release')+'</button>';
             }
             if (c.status === 'Released') {
               return '<button class="btn btn-sm" style="font-size:11px;background:var(--rbg);color:var(--red);border:1px solid #fca5a5" onclick="reverseCommission(\''+c.id+'\')">Reverse</button>';
+            }
+            if (c.status === 'Reversed' && c.tranche >= 1 && c.tranche <= 3 && !c.reissuedAs && hasPermission('Release/Reverse Commissions')) {
+              var _hasActive = DB.commissions.some(function(x){ return x.id !== c.id && x.tranche === c.tranche && x.status !== 'Reversed' && ((x.applicantId && x.applicantId===c.applicantId) || (x.applicantName && c.applicantName && x.applicantName.toLowerCase().trim()===c.applicantName.toLowerCase().trim())); });
+              if (!_hasActive) return '<button class="btn btn-sm" style="font-size:11px;background:var(--bbg, #e0e7ff);color:var(--brand);border:1px solid #a5b4fc" title="Create a fresh '+(c.trancheLabel ? '' : '')+'T'+c.tranche+' at the current rate so it (and the next tranche) can be released" onclick="reissueCommission(\''+c.id+'\')">↻ Re-issue</button>';
             }
             return '';
           })()+
@@ -14339,6 +14350,53 @@ async function reverseCommission(commId, presetReason) {
     if (!presetReason) renderCommissions();
     return true;
   } finally { _acctUnlock('rev:' + dbId); }
+}
+
+
+// Unpaid tranche → recalculate from today's rate (rates are snapshotted, so a corrected rate never changes old rows by itself)
+async function repriceCommission(commId) {
+  if (!hasPermission('Release/Reverse Commissions')) { toast('Your role cannot re-price commissions', 'error'); return; }
+  var c = DB.commissions.find(function(x) { return x.id === commId; }); if (!c) return;
+  var dbId = c._dbId || c.id;
+  if (!isUUID(dbId)) { toast('This commission is not saved on the server yet', 'error'); return; }
+  if (!_acctLock('rep:' + dbId)) return;
+  try {
+    var pre = await _acctCall('/commissions/' + dbId + '/reprice', { dry_run: true });
+    if (!pre.ok) { toast(_acctMsg(pre, 'Could not check the current rate'), 'error'); return; }
+    var d = pre.data, f = d.from, t = d.to;
+    if (d.unchanged) { toast('T' + c.tranche + ' already matches the current rate (' + (t.currency === 'USD' ? '$' : '₱') + Number(t.amount).toLocaleString() + ')', 'info'); return; }
+    var sym = function(cur) { return cur === 'USD' ? '$' : '₱'; };
+    if (!confirm('Re-price T' + c.tranche + ' for ' + c.applicantName + '?\n\nNow:  ' + sym(f.currency) + Number(f.amount).toLocaleString() + ' of ' + sym(f.currency) + Number(f.total).toLocaleString() +
+        '\nNew:  ' + sym(t.currency) + Number(t.amount).toLocaleString() + ' of ' + sym(t.currency) + Number(t.total).toLocaleString() + '  (' + t.split_pct + '%, ' + t.rate_source + ' rate)\n\nNothing has been paid on this tranche, so no ledger entry changes.')) return;
+    var reason = _askReason('Why is this commission being re-priced?'); if (!reason) return;
+    var r = await _acctCall('/commissions/' + dbId + '/reprice', { reason: reason });
+    if (!r.ok) { toast(_acctMsg(r, 'Could not re-price this commission'), 'error'); return; }
+    _applyCommissionRow(r.data.commission);
+    addAudit('UPDATE', 'Commission', 'Re-priced T' + c.tranche + ' for ' + c.applicantName + ' — ' + reason);
+    toast('T' + c.tranche + ' re-priced to ' + sym(t.currency) + Number(t.amount).toLocaleString(), 'success');
+    renderCommissions();
+  } finally { _acctUnlock('rep:' + dbId); }
+}
+
+// Reversed tranche → create a fresh one at today's rate (this unblocks the next tranche)
+async function reissueCommission(commId) {
+  if (!hasPermission('Release/Reverse Commissions')) { toast('Your role cannot re-issue commissions', 'error'); return; }
+  var c = DB.commissions.find(function(x) { return x.id === commId; }); if (!c) return;
+  var dbId = c._dbId || c.id;
+  if (!isUUID(dbId)) { toast('This commission is not saved on the server yet', 'error'); return; }
+  if (!confirm('Re-issue T' + c.tranche + ' for ' + c.applicantName + '?\n\nA new T' + c.tranche + ' is created at the CURRENT commission rate and appears as Pending Release. The reversed record stays in the history.')) return;
+  var reason = _askReason('Why is T' + c.tranche + ' being re-issued?'); if (!reason) return;
+  if (!_acctLock('reis:' + dbId)) return;
+  try {
+    var r = await _acctCall('/commissions/' + dbId + '/reissue', { reason: reason });
+    if (!r.ok) { toast(_acctMsg(r, 'Could not re-issue this commission'), 'error'); return; }
+    _applyCommissionRow(r.data.commission);
+    var orig = DB.commissions.find(function(x) { return x.id === commId; }); if (orig) orig.reissuedAs = r.data.commission.id;
+    addAudit('UPDATE', 'Commission', 'Re-issued T' + c.tranche + ' for ' + c.applicantName + ' — ' + reason);
+    toast('T' + c.tranche + ' re-issued at ' + (r.data.commission.currency === 'USD' ? '$' : '₱') + Number(r.data.commission.amount).toLocaleString() + ' — ready to release', 'success');
+    try { _triggerImmediateSync(); } catch (e) {}
+    renderCommissions();
+  } finally { _acctUnlock('reis:' + dbId); }
 }
 
 // Reverse every unreversed commission of an applicant (backout / rejection / repatriation)
