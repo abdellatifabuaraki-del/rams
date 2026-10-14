@@ -1572,47 +1572,23 @@ button[disabled][data-rbac-locked] {
 
   <!-- Tab Navigation -->
   <div class="acc-tabs" role="tablist">
-    <button class="acc-tab active" onclick="switchAccTab('overview',this)" role="tab">📊 Overview</button>
-    <button class="acc-tab" onclick="switchAccTab('agents',this)" role="tab">👥 Agents</button>
-    <button class="acc-tab" onclick="switchAccTab('ledger',this)" role="tab">📒 Ledger</button>
-    <button class="acc-tab" onclick="switchAccTab('expenses',this)" role="tab">💸 Expenses</button>
-    <button class="acc-tab" onclick="switchAccTab('commissions',this)" role="tab">🏆 Commissions</button>
-    <button class="acc-tab" id="acc-tab-employers" onclick="switchAccTab('employers',this)" role="tab">🏢 Employers</button>
-    <button class="acc-tab" onclick="switchAccTab('rules',this)" role="tab">⚙ Country Rules</button>
-    <button class="acc-tab" onclick="switchAccTab('reports',this)" role="tab">📈 Reports</button>
-    <button class="acc-tab" onclick="switchAccTab('office',this)" role="tab">🏢 Office Funds</button>
-    <button class="acc-tab" onclick="switchAccTab('invoices',this)" role="tab">🧾 Invoices</button>
-    <button class="acc-tab" id="acc-tab-controls" onclick="switchAccTab('controls',this)" role="tab">🛡 Controls</button>
+    <button class="acc-tab active" data-tab="overview" onclick="switchAccTab('overview',this)" role="tab">📊 Overview</button>
+    <button class="acc-tab" data-tab="agents" onclick="switchAccTab('agents',this)" role="tab">👥 Agents</button>
+    <button class="acc-tab" data-tab="ledger" onclick="switchAccTab('ledger',this)" role="tab">📒 Ledger</button>
+    <button class="acc-tab" data-tab="expenses" onclick="switchAccTab('expenses',this)" role="tab">💸 Expenses</button>
+    <button class="acc-tab" data-tab="commissions" onclick="switchAccTab('commissions',this)" role="tab">🏆 Commissions</button>
+    <button class="acc-tab" id="acc-tab-employers" data-tab="employers" onclick="switchAccTab('employers',this)" role="tab">🏢 Employers</button>
+    <button class="acc-tab" data-tab="rules" onclick="switchAccTab('rules',this)" role="tab">⚙ Country Rules</button>
+    <button class="acc-tab" data-tab="reports" onclick="switchAccTab('reports',this)" role="tab">📈 Reports</button>
+    <button class="acc-tab" data-tab="office" onclick="switchAccTab('office',this)" role="tab">🏢 Office Funds</button>
+    <button class="acc-tab" data-tab="invoices" onclick="switchAccTab('invoices',this)" role="tab">🧾 Invoices</button>
+    <button class="acc-tab" id="acc-tab-controls" data-tab="controls" onclick="switchAccTab('controls',this)" role="tab">🛡 Controls</button>
   </div>
 
   <!-- OVERVIEW TAB -->
   <div class="acc-section active" id="acc-overview">
-    <div class="stat-grid" id="accounting-stats"></div>
-
-    <!-- Pending Actions strip -->
-    <div id="acc-pending-actions" style="margin-bottom:16px"></div>
-
-    <div style="display:grid;grid-template-columns:2fr 1fr;gap:16px">
-      <div>
-        <div style="font-size:14px;font-weight:800;margin-bottom:12px">⚠ Active Alerts</div>
-        <div id="acc-alerts"></div>
-      </div>
-      <div>
-        <div style="font-size:14px;font-weight:800;margin-bottom:12px">Top Agents by Balance</div>
-        <div id="acc-top-agents"></div>
-      </div>
-    </div>
-
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
-      <div class="card cp">
-        <div style="font-size:14px;font-weight:800;margin-bottom:14px">💰 Cash Flow Snapshot</div>
-        <div id="acc-cashflow"></div>
-      </div>
-      <div class="card cp">
-        <div style="font-size:14px;font-weight:800;margin-bottom:14px">📋 Recent Activity</div>
-        <div id="acc-recent-activity"></div>
-      </div>
-    </div>
+    <div id="accounting-stats" style="display:none"></div>
+    <div id="ov-root"></div>
   </div>
 
   <!-- AGENTS TAB -->
@@ -3362,6 +3338,7 @@ async function _tryRevalidateSession() {
 var _fundsTimer = null;
 function _fundsChanged() {
   try { Object.keys(_cache || {}).forEach(function(k) { if (/\/(office-funds|expenses\/summary|office-ledger)/.test(k)) delete _cache[k]; }); } catch (e) {}
+  if (typeof _ovChanged === 'function') _ovChanged();
   clearTimeout(_fundsTimer);
   _fundsTimer = setTimeout(function() {
     if (!_isLiveSession() || typeof apiFetchOfficeFunds !== 'function') return;
@@ -13168,6 +13145,8 @@ var editingRuleIdx        = -1;
 // ── ACCOUNTING TAB SWITCH ────────────────────────────────────────────
 function switchAccTab(tab, el) {
   var _r = getCurrentRole();
+  // always highlight the button that belongs to this tab — never trust a numeric position
+  el = document.querySelector('.acc-tab[data-tab="' + tab + '"]') || el;
 
   // Viewers get the Employers tab only — every other accounting tab exposes
   // agency-wide financials that are out of their scope.
@@ -13180,9 +13159,9 @@ function switchAccTab(tab, el) {
     toast('Your role cannot view accounting controls', 'error');
     return;
   } else if (tab === 'employers') {
-    // Employers tab — Admin and Finance only (plus scoped Viewers, above)
-    if (_r !== 'Admin' && _r !== 'Finance') {
-      toast('Only Admin and Finance can view Employers', 'error');
+    // Employers tab — follows the permission matrix (plus scoped Viewers, above)
+    if (!_ovCanEmployers()) {
+      toast('Your role cannot view Employers', 'error');
       return;
     }
   }
@@ -13255,29 +13234,8 @@ function renderAccounting() {
 
   // Hide Employers tab for non-Admin/Finance roles
   if (_empTab) {
-    _empTab.style.display = (_r === 'Admin' || _r === 'Finance') ? '' : 'none';
+    _empTab.style.display = _ovCanEmployers() ? '' : 'none';
   }
-  // Update main KPIs
-  var totalExp  = DB.expenses.reduce(function(s,e){ return s+e.amount; }, 0);
-  var paid      = DB.expenses.filter(function(e){ return e.status==='Paid'; }).reduce(function(s,e){ return s+e.amount; }, 0);
-  var pendingExp= DB.expenses.filter(function(e){ return e.status==='Pending'; }).reduce(function(s,e){ return s+e.amount; }, 0);
-  var pendingBal= DB.agents.reduce(function(s,a){ return s + (a.balance<0?Math.abs(a.balance):0); }, 0);
-  var receivable= DB.agents.reduce(function(s,a){ return s + (a.balance>0?a.balance:0); }, 0);
-  var totalComm = DB.agents.reduce(function(s,a){ return s+a.totalCommission; }, 0);
-  var pendingFees = getComputableFees(DB.employerFees).filter(function(f){ return f.status==='Pending'; }).reduce(function(s,f){ return s+(f.feeUSD||0); }, 0);
-  var releasedComm = DB.commissions.filter(function(c){ return c.status==='Released'; }).reduce(function(s,c){ return s+c.amount; }, 0);
-  var pendingRelease = DB.commissions.filter(function(c){ return c.status==='Pending Release' || c.status==='In Guarantee'; }).reduce(function(s,c){ return s+c.amount; }, 0);
-
-  var statsEl = document.getElementById('accounting-stats');
-  if (statsEl) statsEl.innerHTML = [
-    { label:'Total Commissions',  val:'₱'+totalComm.toLocaleString(),   icon:'🏆', bg:'var(--gbg)',     c:'var(--green)',  sub:'₱'+releasedComm.toLocaleString()+' released' },
-    { label:'Total Expenses',     val:'₱'+totalExp.toLocaleString(),    icon:'📊', bg:'var(--brand-l)', c:'var(--brand)',  sub:'₱'+pendingExp.toLocaleString()+' pending' },
-    { label:'Outstanding Debt',   val:'₱'+pendingBal.toLocaleString(),  icon:'⚠',  bg:'var(--rbg)',     c:'var(--red)',    sub:'₱'+receivable.toLocaleString()+' receivable' },
-    { label:'Active Agents',      val:DB.agents.filter(function(a){ return a.status==='Active'; }).length, icon:'👥', bg:'var(--pbg)', c:'var(--purple)', sub:DB.agents.length+' total' },
-  ].map(function(s) {
-    return '<div class="stat-card"><div class="stat-top"><div class="stat-icon" style="background:'+s.bg+';color:'+s.c+'">'+s.icon+'</div></div><div class="stat-val">'+s.val+'</div><div class="stat-lbl">'+s.label+'</div>'+(s.sub?'<div style="font-size:10.5px;color:var(--muted);margin-top:3px">'+s.sub+'</div>':'')+'</div>';
-  }).join('');
-
   renderAccOverview();
   if (typeof recalcOfficeLedgerBalances === 'function') recalcOfficeLedgerBalances();
   // Update Employers tab badge
@@ -13292,161 +13250,175 @@ function renderAccounting() {
   if (currentAccTab === 'employers') renderEmployerFees();
 }
 
-// ── OVERVIEW ─────────────────────────────────────────────────────────
-function renderAccOverview() {
-  // Alerts
-  var alerts = [];
-  var today = new Date();
+// ── OVERVIEW (server-side snapshot) ──────────────────────────────────
+// The browser only renders: every number comes from GET /accounting/overview — one consistent snapshot
+// with cash, receivables, commission liability, period result, alerts, the actions this user may take
+// and a recent-activity feed. Nothing here is computed from the local cache.
+var _ov = { period: 'mtd', currency: 'PHP', data: null, err: null, loading: false, seq: 0, at: 0, timer: null };
+var _OV_TAB = { funds: 'office', office: 'office' };
 
-  // Negative balance agents
-  DB.agents.forEach(function(a) {
-    if (a.balance < 0) {
-      alerts.push({ icon:'🔴', type:'danger', title:'Negative Balance: '+a.name, sub:'Outstanding debt of ₱'+Math.abs(a.balance).toLocaleString()+' — collection required.', action:'viewLedger', agentId:a.id });
-    }
-  });
-
-  // High risk agents (frequent backouts)
-  DB.agents.forEach(function(a) {
-    if (_isLiveSession() ? a.highRisk : (a.backouts >= 3 || a.repatriations >= 2)) {
-      alerts.push({ icon:'⚠', type:'warning', title:'High-Risk Agent: '+a.name, sub:a.backouts+' backouts, '+a.repatriations+' repatriations. Consider review.', action:'viewAgent', agentId:a.id });
-    }
-  });
-
-  // Commissions approaching guarantee end (within 30 days)
-  DB.commissions.forEach(function(c) {
-    if (c.guaranteeEnd && c.status==='In Guarantee') {
-      var end = new Date(c.guaranteeEnd);
-      var daysLeft = Math.ceil((end - today) / (1000*60*60*24));
-      if (daysLeft > 0 && daysLeft <= 30) {
-        var agent = DB.agents.find(function(a){ return a.id===c.agentId; });
-        alerts.push({ icon:'⏰', type:'warning', title:'Guarantee Ending Soon: '+c.applicantName, sub:(agent?agent.name:'Agent')+' — '+daysLeft+' days until guarantee expires. Commission: ₱'+c.amount.toLocaleString(), action:'viewCommission', commId:c.id });
-      }
-    }
-  });
-
-  var alertsEl = document.getElementById('acc-alerts');
-  if (alertsEl) {
-    alertsEl.innerHTML = alerts.length ? alerts.map(function(a) {
-      return '<div class="alert-card '+(a.type==='danger'?'danger':'')+'" style="margin-bottom:8px">'+
-        '<div class="alert-icon">'+a.icon+'</div>'+
-        '<div class="alert-body">'+
-          '<div class="alert-title">'+a.title+'</div>'+
-          '<div class="alert-sub">'+a.sub+'</div>'+
-          (a.action==='viewLedger'?'<button class="alert-action" onclick="viewAgentLedger(\''+a.agentId+'\')">View Ledger →</button>':
-           a.action==='viewAgent'?'<button class="alert-action" onclick="switchAccTab(\'agents\',document.querySelectorAll(\'.acc-tab\')[1])">View Agent →</button>':
-           '<button class="alert-action" onclick="switchAccTab(\'commissions\',document.querySelectorAll(\'.acc-tab\')[4])">View Commissions →</button>')+
-        '</div></div>';
-    }).join('') : '<div class="empty-state" style="padding:24px"><div class="empty-icon">✅</div><div class="empty-title">No Alerts</div><div class="empty-sub">All agent accounts are in good standing.</div></div>';
+function _ovTabName(t) { return _OV_TAB[t] || t; }
+function _ovGo(tab, opts) {
+  opts = opts || {};
+  tab = _ovTabName(tab);
+  if (tab === 'reports' && opts.pack && _ov.data && _ov.data.previous_period && typeof _rpt !== 'undefined') {
+    _rpt.key = 'month-end'; _rpt.data = null;
+    if (_rpt.f) _rpt.f.period = _ov.data.previous_period.period;
   }
-
-  // Top agents
-  var topEl = document.getElementById('acc-top-agents');
-  if (topEl) {
-    var sorted = DB.agents.slice().sort(function(a,b){ return b.balance - a.balance; }).slice(0,5);
-    topEl.innerHTML = sorted.map(function(a) {
-      var risk = (a.backouts>=3||a.repatriations>=2)?'high':a.backouts>=1?'med':'low';
-      return '<div class="report-metric" style="padding:10px 0;border-bottom:1px solid var(--border)">'+
-        '<div style="display:flex;align-items:center;gap:10px;flex:1">'+
-          '<div class="agent-avatar" style="width:32px;height:32px;font-size:11px">'+a.name.split(' ').map(function(n){return n[0];}).join('')+'</div>'+
-          '<div><div style="font-size:13px;font-weight:700">'+a.name+'</div>'+
-          '<span class="risk-badge risk-'+risk+'">'+(risk==='high'?'High Risk':risk==='med'?'Watch':'Good')+'</span></div>'+
-        '</div>'+
-        '<div style="text-align:right">'+
-          '<div style="font-size:14px;font-weight:800;font-family:\'IBM Plex Mono\',monospace;color:'+(a.balance>=0?'var(--green)':'var(--red)')+'">'+
-            (a.balance>=0?'₱':'−₱')+Math.abs(a.balance).toLocaleString()+
-          '</div>'+
-          '<div style="font-size:10.5px;color:var(--muted)">'+(a.balance>=0?'Receivable':'Payable')+'</div>'+
-        '</div>'+
-      '</div>';
-    }).join('');
-  }
-
-  // ── Pending Actions strip ──────────────────────────────────────────
-  var actionsEl = document.getElementById('acc-pending-actions');
-  if (actionsEl) {
-    var pendingExpCount  = DB.expenses.filter(function(e){ return e.status==='Pending'; }).length;
-    var pendingFeeCount  = getComputableFees(DB.employerFees).filter(function(f){ return f.status==='Pending'; }).length;
-    var pendingRelCount  = DB.commissions.filter(function(c){ return c.status==='Pending Release' || c.status==='In Guarantee'; }).length;
-    var pendingInvCount  = (DB.invoices||[]).filter(function(i){ return i.status==='issued' && (i.balance||0) > 0.005; }).length;
-
-    var _accRole = getCurrentRole();
-    var _canSeeEmp = (_accRole === 'Admin' || _accRole === 'Finance');
-    var actions = [
-      { count: pendingExpCount, label: 'Pending Expenses', icon:'\ud83d\udcb8', color:'var(--amber)', tab:'expenses', tabIdx:3 },
-      { count: (_canSeeEmp ? pendingFeeCount : 0), label: 'Pending Employer Fees', icon:'\ud83c\udfe2', color:'var(--red)', tab:'employers', tabIdx:6 },
-      { count: pendingRelCount, label: 'Commissions Ready to Release', icon:'\ud83c\udfc6', color:'var(--green)', tab:'commissions', tabIdx:4 },
-      { count: pendingInvCount, label: 'Unpaid Invoices', icon:'\ud83d\udcc4', color:'var(--brand)', tab:'invoices', tabIdx:9 },
-    ].filter(function(a){ return a.count > 0; });
-
-    actionsEl.innerHTML = actions.length ? (
-      '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
-      actions.map(function(a) {
-        return '<div onclick="switchAccTab(\''+a.tab+'\',document.querySelectorAll(\'.acc-tab\')['+a.tabIdx+'])" ' +
-          'style="cursor:pointer;flex:1;min-width:180px;display:flex;align-items:center;gap:10px;padding:12px 16px;background:var(--card);border:1px solid var(--border);border-left:3px solid '+a.color+';border-radius:10px;transition:transform .15s" ' +
-          'onmouseover="this.style.transform=\'translateY(-2px)\'" onmouseout="this.style.transform=\'\'">' +
-          '<div style="font-size:20px">'+a.icon+'</div>' +
-          '<div><div style="font-size:18px;font-weight:800;color:'+a.color+'">'+a.count+'</div>' +
-          '<div style="font-size:11px;color:var(--muted)">'+a.label+'</div></div>' +
-        '</div>';
-      }).join('') +
-      '</div>'
-    ) : '';
-  }
-
-  // ── Cash Flow Snapshot ────────────────────────────────────────────
-  var cfEl = document.getElementById('acc-cashflow');
-  if (cfEl) {
-    var fx2     = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
-    // Released commissions are paid OUT to agents \u2014 an outflow, not income.
-    // They were previously added to the net position, which overstated it by
-    // twice the commission total (counted as + instead of \u2212).
-    var commOut = DB.commissions.filter(function(c){ return c.status==='Released'; }).reduce(function(s,c){ return s+(c.currency==='USD'?Math.round(c.amount*fx2):c.amount); },0);
-    var expOut  = DB.expenses.reduce(function(s,e){ return s+e.amount; },0);
-    var feesIn  = (DB.employerFees||[]).filter(function(f){ return f.status==='Settled'; }).reduce(function(s,f){ return s+Math.round((f.feeUSD||0)*fx2); },0);
-    var net     = feesIn - expOut - commOut;
-
-    cfEl.innerHTML =
-      '<div style="display:flex;flex-direction:column;gap:10px">' +
-      [
-        { label:'Employer Fees Settled', val: feesIn,  color:'var(--green)', sign:'+' },
-        { label:'Commissions Released',  val: commOut, color:'var(--red)',   sign:'\u2212' },
-        { label:'Total Expenses',        val: expOut,  color:'var(--red)',   sign:'\u2212' },
-      ].map(function(r) {
-        return '<div style="display:flex;justify-content:space-between;align-items:center;padding-bottom:8px;border-bottom:1px solid var(--border)">' +
-          '<span style="font-size:12.5px;color:var(--text2)">'+r.label+'</span>' +
-          '<span style="font-size:13.5px;font-weight:800;font-family:monospace;color:'+r.color+'">'+r.sign+'\u20b1'+r.val.toLocaleString()+'</span>' +
-        '</div>';
-      }).join('') +
-      '<div style="display:flex;justify-content:space-between;align-items:center;padding-top:4px">' +
-        '<span style="font-size:13px;font-weight:800">Net Position</span>' +
-        '<span style="font-size:16px;font-weight:800;font-family:monospace;color:'+(net>=0?'var(--green)':'var(--red)')+'">'+(net>=0?'\u20b1':'\u2212\u20b1')+Math.abs(net).toLocaleString()+'</span>' +
-      '</div>' +
-      '</div>';
-  }
-
-  // ── Recent Activity (last financial events) ──────────────────────
-  var raEl = document.getElementById('acc-recent-activity');
-  if (raEl) {
-    var events = [];
-    DB.expenses.slice(-30).forEach(function(e) {
-      events.push({ ts: e.date||'', icon:'\ud83d\udcb8', text: (e.applicant||'Expense')+' \u2014 '+(e.desc||e.category||''), amt:'-\u20b1'+e.amount.toLocaleString(), color:'var(--red)' });
-    });
-    DB.commissions.filter(function(c){ return c.status==='Released'; }).slice(-15).forEach(function(c) {
-      events.push({ ts: c.releaseDate||c.date||'', icon:'\ud83c\udfc6', text: 'Commission released \u2014 '+(c.applicantName||''), amt:'-'+(c.currency==='USD'?'$':'\u20b1')+c.amount.toLocaleString(), color:'var(--red)' });
-    });
-    events.sort(function(a,b){ return (b.ts||'').localeCompare(a.ts||''); });
-    events = events.slice(0, 8);
-
-    raEl.innerHTML = events.length ? events.map(function(e) {
-      return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">' +
-        '<div style="font-size:16px">'+e.icon+'</div>' +
-        '<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+e.text+'</div>' +
-        '<div style="font-size:10.5px;color:var(--muted)">'+(e.ts||'\u2014')+'</div></div>' +
-        '<div style="font-size:12.5px;font-weight:800;font-family:monospace;color:'+e.color+';white-space:nowrap">'+e.amt+'</div>' +
-      '</div>';
-    }).join('') : '<div style="color:var(--muted);font-size:12px;padding:12px 0">No recent activity</div>';
-  }
+  switchAccTab(tab);
 }
+function _ovLedger(agentId) { viewAgentLedger(agentId); }
+function _ovM(v, cur, dp) { return _rMoney(v, cur || _ov.currency, dp === undefined ? 0 : dp); }
+function _ovSet(field, value) { _ov[field] = value; _ov.data = null; renderAccOverview(true); }
+
+function _ovCanEmployers() {
+  var r = getCurrentRole();
+  return r === 'Admin' || r === 'Finance' || hasPermission('Manage Employer Fees') || hasPermission('Settle Employer Fees');
+}
+
+async function _ovLoad() {
+  if (!_isLiveSession()) return;
+  var seq = ++_ov.seq; _ov.loading = true;
+  var r = await apiFetch('/accounting/overview?period=' + encodeURIComponent(_ov.period) + '&currency=' + _ov.currency + '&_=' + Date.now());
+  if (seq !== _ov.seq) return;                          // superseded by a newer request
+  _ov.loading = false;
+  if (!r.ok || !r.data) { _ov.err = _acctMsg(r, 'Could not load the overview'); }
+  else { _ov.data = r.data; _ov.err = null; _ov.at = Date.now(); }
+  if (document.getElementById('ov-root')) _ovPaint();
+}
+function _ovChanged() {                                 // called after any accounting write
+  if (typeof currentPage === 'undefined' || currentPage !== 'accounting' || currentAccTab !== 'overview') { _ov.at = 0; return; }
+  clearTimeout(_ov.timer); _ov.timer = setTimeout(_ovLoad, 400);
+}
+
+function renderAccOverview(force) {
+  var root = document.getElementById('ov-root'); if (!root) return;
+  if (!_isLiveSession()) {
+    root.innerHTML = '<div class="card cp" style="color:var(--muted)">The Overview is calculated on the server. Sign in to a live session to see it.</div>';
+    return;
+  }
+  var fresh = _ov.data && (Date.now() - _ov.at) < 20000;
+  _ovPaint();
+  if (force === true || !fresh) _ovLoad();
+}
+
+function _ovKpi(label, value, color, sub, go, hint) {
+  return '<div class="stat-card" style="cursor:' + (go ? 'pointer' : 'default') + '" ' + (go ? 'onclick="' + go + '" ' : '') + (hint ? 'title="' + escapeHtml(hint) + '"' : '') + '>' +
+    '<div class="stat-val" style="color:' + (color || 'var(--text)') + ';font-size:22px">' + value + '</div>' +
+    '<div class="stat-lbl">' + escapeHtml(label) + '</div>' +
+    (sub ? '<div style="font-size:10.5px;color:var(--muted);margin-top:3px">' + sub + '</div>' : '') + '</div>';
+}
+function _ovDelta(d, cur, goodWhenUp) {
+  if (!d) return '';
+  var up = d.change > 0, good = goodWhenUp ? up : !up;
+  if (Math.abs(d.change) < 0.005) return '<span style="color:var(--muted)">no change</span>';
+  return '<span style="color:' + (good ? 'var(--green)' : 'var(--red)') + '">' + (up ? '▲ ' : '▼ ') + _ovM(Math.abs(d.change), cur) + (d.pct === null ? '' : ' (' + Math.abs(d.pct) + '%)') + '</span>';
+}
+
+function _ovPaint() {
+  var root = document.getElementById('ov-root'); if (!root) return;
+  var d = _ov.data, cur = _ov.currency, h = '';
+  var sel = function(id, val, opts, fn) {
+    return '<select class="f-inp" id="' + id + '" style="width:auto" onchange="' + fn + '(this.value)">' + opts.map(function(o) { return '<option value="' + o[0] + '"' + (o[0] === val ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>';
+  };
+  h += '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">' +
+    sel('ov-period', _ov.period, [['mtd', 'Month to date'], ['last_month', 'Last month'], ['ytd', 'Year to date'], ['all', 'All time']], '_ovSetPeriod') +
+    sel('ov-cur', _ov.currency, [['PHP', '₱ PHP'], ['USD', '$ USD']], '_ovSetCur') +
+    '<button class="btn btn-s btn-sm" onclick="renderAccOverview(true)">↻ Refresh</button>' +
+    '<span style="font-size:11.5px;color:var(--muted)">' + (_ov.loading ? 'Updating…' : (d ? 'As of ' + escapeHtml(new Date(d.as_of).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) + ' · FX ₱' + escapeHtml(String(d.fx_rate)) + '/$' : '')) + '</span></div>';
+
+  if (_ov.err && !d) { root.innerHTML = h + '<div class="card cp" style="color:var(--red)">' + escapeHtml(_ov.err) + '</div>'; return; }
+  if (!d) {
+    var sk = '<div class="stat-card" style="opacity:.5"><div class="stat-val">…</div><div class="stat-lbl">Loading</div></div>';
+    root.innerHTML = h + '<div class="stat-grid">' + sk + sk + sk + sk + '</div>'; return;
+  }
+  var K = d.kpis, C = d.cash, rc = d.receivables, cl = d.commission_liability, dl = K.deltas || {};
+  if (_ov.err) h += '<div class="card cp" style="color:var(--red);margin-bottom:10px">' + escapeHtml(_ov.err) + ' — showing the last snapshot.</div>';
+  if (d.previous_period && d.previous_period.open) {
+    h += '<div class="alert-card" style="margin-bottom:12px"><div class="alert-icon">📅</div><div class="alert-body"><div class="alert-title">' + escapeHtml(d.previous_period.period) + ' has not been closed</div>' +
+      '<div class="alert-sub">Review the month-end pack, then close the period so it can no longer change.</div>' +
+      '<button class="alert-action" onclick="_ovGo(\'reports\',{pack:true})">Open month-end pack →</button></div></div>';
+  }
+
+  var resColor = K.result >= 0 ? 'var(--green)' : 'var(--red)';
+  h += '<div class="stat-grid" style="opacity:' + (_ov.loading ? '.6' : '1') + '">' +
+    _ovKpi('Cash on hand', '₱' + Number(C.PHP.balance).toLocaleString(undefined, { maximumFractionDigits: 0 }) + (Math.abs(C.USD.balance) > 0.005 ? '<span style="font-size:13px;color:var(--muted)"> · $' + Number(C.USD.balance).toLocaleString(undefined, { maximumFractionDigits: 0 }) + '</span>' : ''), C.PHP.balance < 0 ? 'var(--red)' : 'var(--text)',
+      'Expenses fund ₱' + Number(C.expense_fund.PHP.balance).toLocaleString(undefined, { maximumFractionDigits: 0 }) + (C.awaiting.PHP.count ? ' · ' + C.awaiting.PHP.count + ' awaiting payment' : ''), "_ovGo('office')", d.definitions.cash) +
+    _ovKpi('Net result · ' + d.period.label, _ovM(K.result), resColor, (dl.result ? _ovDelta(dl.result, cur, true) + ' vs ' + escapeHtml(d.period.compare_label || '') : 'fees − commissions − expenses'), "_ovGo('reports',{pack:true})", d.definitions.result) +
+    _ovKpi('Receivables', _ovM(rc.total), rc.overdue.count ? 'var(--red)' : 'var(--text)', rc.employer_fees.count + ' fee(s) · ' + rc.invoices.count + ' invoice(s)' + (rc.overdue.count ? ' · <b style="color:var(--red)">' + rc.overdue.count + ' overdue</b>' : ''), "_ovGo('invoices')", d.definitions.receivables) +
+    _ovKpi('Commissions owed', _ovM(cl.ready_to_release.amount + cl.in_guarantee.amount), 'var(--text)', _ovM(cl.ready_to_release.amount) + ' ready · ' + _ovM(cl.in_guarantee.amount) + ' in guarantee', "_ovGo('commissions')", 'Commissions not yet released') +
+    _ovKpi('Agent balances', _ovM(cl.owed_to_agents.amount), 'var(--text)', 'we owe agents · ' + _ovM(d.agents_owed.amount) + ' agents owe us', "_ovGo('agents')", d.definitions.payable) +
+    '</div>';
+
+  // pending actions this user can take
+  if (d.actions.length) {
+    h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin:16px 0">' + d.actions.map(function(a) {
+      var col = a.severity === 'warning' ? 'var(--amber)' : 'var(--brand)';
+      return '<div onclick="_ovGo(\'' + escapeHtml(a.tab) + '\')" style="cursor:pointer;flex:1;min-width:190px;padding:12px 16px;background:var(--card);border:1px solid var(--border);border-left:3px solid ' + col + ';border-radius:10px">' +
+        '<div style="font-size:18px;font-weight:800;color:' + col + '">' + a.count + (a.amount !== null ? '<span style="font-size:12px;color:var(--muted);font-weight:600"> · ' + _ovM(a.amount, a.currency) + '</span>' : '') + '</div>' +
+        '<div style="font-size:11px;color:var(--muted)">' + escapeHtml(a.label) + '</div></div>';
+    }).join('') + '</div>';
+  }
+
+  // alerts + agents
+  var sevIcon = { critical: '🔴', warning: '🟠', info: 'ℹ️' };
+  var alertsH = d.alerts.length ? d.alerts.map(function(a) {
+    var items = (a.items || []).slice(0, 3).map(function(i) {
+      return a.key === 'debt_limit' && i.id ? '<a href="#" onclick="_ovLedger(\'' + escapeHtml(String(i.id)) + '\');return false" style="color:var(--brand)">' + escapeHtml(i.name) + '</a>' : escapeHtml(i.name);
+    }).join(' · ');
+    return '<div class="alert-card ' + (a.severity === 'critical' ? 'danger' : '') + '" style="margin-bottom:8px"><div class="alert-icon">' + sevIcon[a.severity] + '</div><div class="alert-body">' +
+      '<div class="alert-title">' + escapeHtml(a.title) + '</div><div class="alert-sub">' + escapeHtml(a.detail) + (items ? '<br>' + items + (a.count > 3 ? ' · +' + (a.count - 3) + ' more' : '') : '') + '</div>' +
+      '<button class="alert-action" onclick="_ovGo(\'' + escapeHtml(a.tab) + '\')">Open →</button></div></div>';
+  }).join('') : '<div class="empty-state" style="padding:24px"><div class="empty-icon">✅</div><div class="empty-title">Nothing needs attention</div><div class="empty-sub">The books reconcile and no deadlines are due.</div></div>';
+
+  var agentRows = function(list, title, note) {
+    return '<div style="font-size:12px;font-weight:800;margin:10px 0 4px">' + title + ' <span style="font-weight:500;color:var(--muted)">' + note + '</span></div>' +
+      (list.length ? list.map(function(a) {
+        return '<div class="report-metric" style="padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="_ovLedger(\'' + escapeHtml(String(a.id)) + '\')">' +
+          '<div style="display:flex;align-items:center;gap:10px;flex:1"><div class="agent-avatar" style="width:28px;height:28px;font-size:10px">' + escapeHtml((a.name || '?').trim().split(/\s+/).map(function(n) { return n.charAt(0); }).join('').slice(0, 2).toUpperCase() || '?') + '</div>' +
+          '<div><div style="font-size:12.5px;font-weight:700">' + escapeHtml(a.name) + '</div>' +
+          '<span class="risk-badge risk-' + (a.high_risk ? 'high' : 'low') + '">' + (a.high_risk ? 'High Risk' : 'Good') + '</span></div></div>' +
+          '<div style="font-size:13px;font-weight:800;font-family:\'IBM Plex Mono\',monospace">₱' + Math.abs(a.balance).toLocaleString() + '</div></div>';
+      }).join('') : '<div style="color:var(--muted);font-size:11.5px;padding:6px 0">None</div>');
+  };
+
+  h += '<div style="display:grid;grid-template-columns:2fr 1fr;gap:16px"><div><div style="font-size:14px;font-weight:800;margin-bottom:12px">⚠ Needs attention' +
+    (d.alert_counts.critical ? ' <span class="risk-badge risk-high">' + d.alert_counts.critical + ' critical</span>' : '') + (d.alert_counts.warning ? ' <span class="risk-badge risk-med">' + d.alert_counts.warning + ' warning</span>' : '') + '</div>' + alertsH + '</div>' +
+    '<div><div style="font-size:14px;font-weight:800;margin-bottom:4px">Agents</div>' +
+    agentRows(d.agents.we_owe, 'We owe them', '(positive balance)') + agentRows(d.agents.owe_us, 'They owe us', '(negative balance)') + '</div></div>';
+
+  // period summary + ageing
+  var line = function(l, v, c, sign) { return '<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border)"><span style="font-size:12.5px;color:var(--text2)">' + l + '</span><span style="font-family:monospace;font-weight:800;color:' + (c || 'var(--text)') + '">' + (sign || '') + _ovM(v) + '</span></div>'; };
+  var ag = function(o) { o = o || {}; return [o.b0_30, o.b31_60, o.b61_90, o.b90_plus].map(function(v) { return '<td style="text-align:right;padding:4px 6px">' + (v ? '$' + Number(v).toLocaleString() : '—') + '</td>'; }).join(''); };
+  h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">' +
+    '<div class="card cp"><div style="font-size:14px;font-weight:800;margin-bottom:6px" title="' + escapeHtml(d.definitions.result) + '">💰 Period result · ' + escapeHtml(d.period.label) + '</div>' +
+    line('Employer fees settled', K.fees_settled, 'var(--green)', '+') + line('Commissions released', K.commissions, 'var(--red)', '−') +
+    (K.reversed ? line('Commissions reversed', K.reversed, 'var(--green)', '+') : '') + line('Expenses (approved, paid, agency)', K.expenses, 'var(--red)', '−') +
+    '<div style="display:flex;justify-content:space-between;padding-top:10px"><span style="font-weight:800">Net result</span><span style="font-family:monospace;font-weight:800;font-size:16px;color:' + resColor + '">' + _ovM(K.result) + '</span></div>' +
+    (K.charged_back ? '<div style="font-size:11px;color:var(--muted);margin-top:6px">Charged back to agents (recovered, not a cost): ' + _ovM(K.charged_back) + '</div>' : '') +
+    (dl.fees_settled ? '<div style="font-size:11px;color:var(--muted);margin-top:6px">Fees ' + _ovDelta(dl.fees_settled, cur, true) + ' · Expenses ' + _ovDelta(dl.expenses, cur, false) + ' vs ' + escapeHtml(d.period.compare_label || '') + '</div>' : '') +
+    '</div>' +
+    '<div class="card cp"><div style="font-size:14px;font-weight:800;margin-bottom:6px">🧾 Receivables ageing (USD)</div>' +
+    '<table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr style="color:var(--muted)"><th style="text-align:left;padding:4px 6px"></th><th style="text-align:right;padding:4px 6px">0–30</th><th style="text-align:right;padding:4px 6px">31–60</th><th style="text-align:right;padding:4px 6px">61–90</th><th style="text-align:right;padding:4px 6px">90+</th></tr></thead><tbody>' +
+    '<tr><td style="padding:4px 6px">Employer fees</td>' + ag(rc.ageing.employer_fees_usd) + '</tr><tr><td style="padding:4px 6px">Invoices</td>' + ag(rc.ageing.invoices_usd) + '</tr></tbody></table>' +
+    '<div style="font-size:11px;color:var(--muted);margin-top:8px">' + (rc.overdue.count ? '<b style="color:var(--red)">' + rc.overdue.count + ' overdue invoice(s), $' + Number(rc.overdue.usd).toLocaleString() + '</b>' : 'No overdue invoices') + '</div></div></div>';
+
+  // recent activity
+  var act = d.activity || [];
+  h += '<div class="card cp" style="margin-top:16px"><div style="font-size:14px;font-weight:800;margin-bottom:10px">📋 Recent activity</div>' +
+    (act.length ? act.map(function(e) {
+      var col = e.direction === 'in' ? 'var(--green)' : e.direction === 'out' ? 'var(--red)' : 'var(--muted)';
+      return '<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="_ovGo(\'' + escapeHtml(e.tab) + '\')">' +
+        '<div style="width:8px;height:8px;border-radius:50%;background:' + col + ';margin-top:5px;flex:none"></div>' +
+        '<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:700">' + escapeHtml(e.label) + ' <span style="font-weight:500;color:var(--muted)">· ' + escapeHtml(e.who) + '</span></div>' +
+        '<div style="font-size:11.5px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(e.detail) + '</div></div>' +
+        '<div style="font-size:10.5px;color:var(--muted);white-space:nowrap">' + escapeHtml(new Date(e.at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })) + '</div></div>';
+    }).join('') : '<div style="color:var(--muted);font-size:12px;padding:12px 0">No recent activity</div>') + '</div>';
+
+  root.innerHTML = h;
+}
+function _ovSetPeriod(v) { _ovSet('period', v); }
+function _ovSetCur(v) { _ovSet('currency', v); }
 
 // ── AGENT GRID ────────────────────────────────────────────────────────
 function renderAgentGrid(query) {
@@ -13517,7 +13489,7 @@ function filterAgents(q) { renderAgentGrid(q || ''); }
 
 function viewAgentLedger(agentId) {
   currentLedgerAgent = agentId;
-  switchAccTab('ledger', document.querySelectorAll('.acc-tab')[2]);
+  switchAccTab('ledger');
   var sel = document.getElementById('ledger-agent-select');
   if (sel) sel.value = agentId;
   renderLedger();
@@ -21895,11 +21867,11 @@ function applyRBAC() {
   // 1b. Employers tab — Admin and Finance only
   var empTab = document.getElementById('acc-tab-employers');
   if (empTab) {
-    var canSeeEmployers = (role === 'Admin' || role === 'Finance');
+    var canSeeEmployers = _ovCanEmployers();
     empTab.style.display = canSeeEmployers ? '' : 'none';
     // If currently on the employers tab but no longer allowed, redirect to overview
     if (!canSeeEmployers && typeof currentAccTab !== 'undefined' && currentAccTab === 'employers') {
-      switchAccTab('overview', document.querySelectorAll('.acc-tab')[0]);
+      switchAccTab('overview');
     }
   }
 
