@@ -1225,6 +1225,7 @@ button[disabled][data-rbac-locked] {
             <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             CSV Export
           </button>
+          <button id="app-import-btn" class="btn btn-s btn-sm" onclick="_apOpenImport()">⬆ Import CSV</button>
           <button id="app-new-btn" class="btn btn-p btn-sm" onclick="openAddApplicant()">
             <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             New Applicant
@@ -1234,7 +1235,7 @@ button[disabled][data-rbac-locked] {
       <div class="filter-bar">
         <div class="filter-search">
           <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input type="text" id="app-search" placeholder="Search by name, ID, contact…" oninput="filterApplicants()" aria-label="Search applicants">
+          <input type="text" id="app-search" placeholder="Search name, APP-ID, passport, phone…" oninput="clearTimeout(window._apQT);window._apQT=setTimeout(filterApplicants,300)" aria-label="Search applicants">
         </div>
         <!-- Multi-select status filter. The hidden input holds a comma-separated
              list of selected statuses and keeps the id `app-status-filter`, so
@@ -1264,10 +1265,10 @@ button[disabled][data-rbac-locked] {
         </select>
         <select class="filter-select" id="app-medical-filter" onchange="filterApplicants()" aria-label="Filter by medical">
           <option value="">All Medical</option>
-          <option>Passed</option><option>Pending</option><option>Failed</option>
+          <option>Pending</option><option>Passed</option><option>Failed</option><option>Exempted</option>
         </select>
         <select class="filter-select" id="app-joborder-filter" onchange="filterApplicants()" aria-label="Filter by job order" style="max-width:200px">
-          <option value="">All Job Orders</option>
+          <option value="">All Employers</option>
         </select>
         <select class="filter-select" id="app-country-filter" onchange="filterApplicants()" aria-label="Filter by country" style="max-width:170px">
           <option value="">All Countries</option>
@@ -1276,6 +1277,9 @@ button[disabled][data-rbac-locked] {
           <option value="">All Categories</option>
           <option value="Skilled">Skilled</option>
           <option value="Household">Household</option>
+        </select>
+        <select class="filter-select" id="app-archived-filter" onchange="filterApplicants()" aria-label="Active or archived" style="max-width:190px">
+          <option value="0">Active applicants</option><option value="1">Archived</option><option value="all">Active + archived</option><option value="retention">Past retention date</option>
         </select>
         <div style="display:flex;gap:6px;margin-left:auto">
           <button class="btn btn-ghost btn-sm" onclick="clearFilters()" style="font-size:11.5px">Clear</button>
@@ -1314,8 +1318,7 @@ button[disabled][data-rbac-locked] {
               <span>Show</span>
               <select id="per-page-select" onchange="setPerPage(this.value)"
                 style="border:1px solid var(--border);border-radius:6px;padding:3px 6px;font-size:12px;background:var(--surface);color:var(--text);cursor:pointer">
-                <option value="8">8</option>
-                <option value="15">15</option>
+                <option value="10">10</option>
                 <option value="25">25</option>
                 <option value="50">50</option>
                 <option value="100">100</option>
@@ -2573,71 +2576,55 @@ button[disabled][data-rbac-locked] {
       <button class="close-btn" onclick="closeOverlay('overlay-applicant')" aria-label="Close">✕</button>
     </div>
     <div class="modal-body">
+      <div id="a-error" style="display:none;margin-bottom:10px;padding:10px 12px;background:var(--rbg);border:1px solid #fca5a5;border-radius:8px;font-size:12.5px;color:var(--red)"></div>
+      <div id="a-dup" style="display:none;margin-bottom:10px;padding:10px 12px;background:var(--abg);border:1px solid var(--amber);border-radius:8px;font-size:12.5px"></div>
+      <div id="a-masked-note" style="display:none;margin-bottom:10px;font-size:12px;color:var(--muted)">🔒 Personal data (phone, email, passport, date of birth) is hidden for your role and cannot be changed here.</div>
       <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Full Name <span class="req">*</span></label>
-          <input type="text" class="form-input" id="a-name" placeholder="Juan dela Cruz" aria-required="true">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Applicant ID <span class="req">*</span></label>
-          <input type="text" class="form-input" id="a-id" placeholder="Auto-generated" readonly style="background:var(--s2);color:var(--muted)">
-        </div>
+        <div class="form-group"><label class="form-label">First Name <span class="req">*</span></label><input type="text" class="form-input" id="a-first" maxlength="80" placeholder="Juan" aria-required="true" autocomplete="off"></div>
+        <div class="form-group"><label class="form-label">Middle Name</label><input type="text" class="form-input" id="a-middle" maxlength="80" placeholder="Santos" autocomplete="off"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Last Name</label><input type="text" class="form-input" id="a-last" maxlength="80" placeholder="dela Cruz" autocomplete="off"></div>
+        <div class="form-group"><label class="form-label">Applicant ID</label><input type="text" class="form-input" id="a-id" readonly style="background:var(--s2);color:var(--muted)"></div>
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label">Status <span class="req">*</span></label>
+          <label class="form-label">Status</label>
           <select class="form-input" id="a-status">
             <option>For Selection</option><option>Applied</option><option>Screening</option>
             <option>Interview</option><option>Selected</option><option>Medical</option>
             <option>Processing</option><option>Visa</option><option>OWWA</option>
-            <option>Deployed</option><option>Repatriated</option><option>Backout</option><option>Rejected</option><option>With Complaint</option>
+            <option>Deployed</option><option>With Complaint</option><option>Backout</option><option>Repatriated</option><option>Rejected</option>
           </select>
         </div>
         <div class="form-group">
-          <label class="form-label">Assigned Agent <span class="req">*</span></label>
-          <select class="form-input" id="a-agent" onchange="_onAgentSelectChange()">
-            <option value="">-- Select Agent --</option>
-          </select>
+          <label class="form-label">Assigned Agent</label>
+          <select class="form-input" id="a-agent" onchange="_onAgentSelectChange()"><option value="">-- Select Agent --</option></select>
           <input type="hidden" id="a-agent-uuid" value="">
         </div>
       </div>
       <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Contact Number</label>
-          <input type="text" class="form-input" id="a-contact" placeholder="+63 9XX XXX XXXX">
-        </div>
-        <div class="form-group" style="display:none">
-          <input type="email" class="form-input" id="a-email" placeholder="juan@email.com">
-        </div>
+        <div class="form-group"><label class="form-label">Contact Number</label><input type="tel" class="form-input" id="a-contact" maxlength="25" placeholder="+63 9XX XXX XXXX"></div>
+        <div class="form-group"><label class="form-label">Email</label><input type="email" class="form-input" id="a-email" maxlength="255" placeholder="juan@email.com"></div>
       </div>
       <div class="form-row">
         <div class="form-group">
           <label class="form-label">Gender <span class="req">*</span></label>
-          <select class="form-input" id="a-gender">
-            <option value="">— Select —</option>
-            <option>Male</option><option>Female</option>
-          </select>
+          <select class="form-input" id="a-gender"><option value="">— Select —</option><option>Male</option><option>Female</option></select>
         </div>
         <div class="form-group">
           <label class="form-label">Category <span class="req">*</span></label>
           <select class="form-input" id="a-category" onchange="_populateJobOrderSelect(document.getElementById('a-job-order-id').value)">
-            <option value="">— Select —</option>
-            <option value="Skilled">Skilled</option>
-            <option value="Household">Household</option>
+            <option value="">— Select —</option><option value="Skilled">Skilled</option><option value="Household">Household</option>
           </select>
         </div>
       </div>
       <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Passport Number</label>
-          <input type="text" class="form-input" id="a-passport" placeholder="e.g. P1234567A" style="font-family:'IBM Plex Mono',monospace;letter-spacing:.05em">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Date of Birth <span class="req">*</span></label>
-          <input type="date" class="form-input" id="a-dob" max="">
-        </div>
+        <div class="form-group"><label class="form-label">Passport Number</label><input type="text" class="form-input" id="a-passport" maxlength="20" placeholder="e.g. P1234567A" style="font-family:'IBM Plex Mono',monospace;letter-spacing:.05em;text-transform:uppercase"></div>
+        <div class="form-group"><label class="form-label">Date of Birth <span class="req">*</span></label><input type="date" class="form-input" id="a-dob" max=""></div>
       </div>
       <div class="form-row">
+        <div class="form-group"><label class="form-label">Nationality</label><input type="text" class="form-input" id="a-nationality" maxlength="80" placeholder="Filipino"></div>
         <div class="form-group">
           <label class="form-label">Destination Country</label>
           <select class="form-input" id="a-destination" onchange="_onDestinationChange()">
@@ -2655,30 +2642,30 @@ button[disabled][data-rbac-locked] {
       <div class="form-row">
         <div class="form-group">
           <label class="form-label">Job Order</label>
-          <select class="form-input" id="a-job-order" onchange="_onJobOrderSelect(); document.getElementById('a-job-order-id').value=this.value;">
-            <option value="">— Select Job Order —</option>
-          </select>
+          <select class="form-input" id="a-job-order" onchange="_onJobOrderSelect(); document.getElementById('a-job-order-id').value=this.value;"><option value="">— Select Job Order —</option></select>
           <input type="hidden" id="a-job-order-id" value="">
-          <input type="text" class="form-input" id="a-job" placeholder="Or type manually…" style="margin-top:6px;font-size:12px">
+          <input type="text" class="form-input" id="a-job" maxlength="120" placeholder="Position (or type manually…)" style="margin-top:6px;font-size:12px">
           <div id="a-job-info" style="display:none;margin-top:6px;padding:8px 10px;background:var(--brand-l);border:1px solid var(--brand);border-radius:7px;font-size:12px;color:var(--brand)"></div>
         </div>
         <div class="form-group">
           <label class="form-label">Medical Status</label>
-          <select class="form-input" id="a-medical">
-            <option>Pending</option><option>Passed</option><option>Failed</option><option>Exempted</option>
-          </select>
+          <select class="form-input" id="a-medical"><option>Pending</option><option>Passed</option><option>Failed</option><option>Exempted</option></select>
         </div>
       </div>
       <div class="form-row">
+        <div class="form-group"><label class="form-label">Consent date <span style="font-weight:400;color:var(--muted)">(data-privacy consent signed)</span></label><input type="date" class="form-input" id="a-consent"></div>
+        <div class="form-group"><label class="form-label">Keep personal data until</label><input type="date" class="form-input" id="a-retention"></div>
+      </div>
+      <div class="form-row">
         <div class="form-group" style="grid-column:1/-1">
-          <label class="form-label">Notes</label>
-          <textarea class="form-input" id="a-notes" rows="2" placeholder="Any additional notes…" style="resize:vertical"></textarea>
+          <label class="form-label">Summary note</label>
+          <textarea class="form-input" id="a-notes" rows="2" maxlength="4000" placeholder="Short summary — dated notes go in the Timeline tab" style="resize:vertical"></textarea>
         </div>
       </div>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="closeOverlay('overlay-applicant')">Cancel</button>
-      <button class="btn btn-p" onclick="saveApplicant()">Save Applicant</button>
+      <button class="btn btn-p" id="a-save-btn" onclick="saveApplicant()">Save Applicant</button>
     </div>
   </div>
 </div>
@@ -3047,7 +3034,7 @@ button[disabled][data-rbac-locked] {
       <button class="dtab" onclick="switchDrawerTab('docs',this)" role="tab" aria-selected="false">Documents</button>
       <button class="dtab" onclick="switchDrawerTab('expenses',this)" role="tab" aria-selected="false">Expenses</button>
       <button class="dtab" onclick="switchDrawerTab('agent',this)" role="tab" aria-selected="false">Agent Account</button>
-      <button class="dtab" onclick="switchDrawerTab('history',this)" role="tab" aria-selected="false">History</button>
+      <button class="dtab" onclick="switchDrawerTab('history',this)" role="tab" aria-selected="false">Timeline</button>
       <button class="dtab" onclick="switchDrawerTab('complaints',this)" role="tab" aria-selected="false" id="dtab-complaints-btn">⚠️ Complaints</button>
     </div>
     <div class="dtab-panel active" id="dtab-overview"></div>
@@ -3438,18 +3425,21 @@ function mapApplicant(row) {
   return {
     id:          row.id,
     displayId:   row.display_id || '',
-    name:        (row.first_name || '') + ' ' + (row.last_name || ''),
+    name:        row.full_name || [row.first_name, row.middle_name, (row.last_name === '.' ? '' : row.last_name)].filter(Boolean).join(' '),
+    firstName:   row.first_name || '', middleName: row.middle_name || '', lastName: row.last_name === '.' ? '' : (row.last_name || ''),
+    nationality: row.nationality || '', archived: !!row.archived_at, piiMasked: !!row.pii_masked, age: row.age === undefined ? null : row.age,
+    consentDate: row.consent_date ? String(row.consent_date).slice(0, 10) : '', retentionUntil: row.retention_until ? String(row.retention_until).slice(0, 10) : '',
     status:      row.status || 'Applied',
     agent:       _agentName,
     _agentId:    _agentDbId,
     _agentDbId:  _agentDbId,
     contact:     row.phone || '',
     email:       row.email || '',
-    job:         (row.position || '') + (row.destination ? ' · ' + row.destination : ''),
+    job:         (row.position || row.job_title || '') + (row.destination ? ' · ' + row.destination : ''),
     medical:     row.medical_status || 'Pending',
     date:        (row.created_at || '').slice(0, 10),
     notes:       row.notes || '',
-    gender:      row.nationality || '',
+    gender:      row.gender || '',
     passport:    row.passport_number || '',
     dob:         row.date_of_birth ? String(row.date_of_birth).slice(0,10) : '',
     destination: row.destination || '',
@@ -3568,60 +3558,9 @@ function placeholderEmail(name) {
 // ══════════════════════════════════════════════════════════════════════
 // APPLICANT API FUNCTIONS
 // ══════════════════════════════════════════════════════════════════════
-async function apiCreateApplicant(data) {
-  if (window._ramsSessionToken === 'demo') return { ok: true };
-  var nameParts = (data.name || '').trim().split(' ');
-  var safeEmail = (data.email && !data.email.includes('no-email@example'))
-    ? data.email : placeholderEmail(data.name);
-  var payload = {
-    first_name:     nameParts[0] || data.name,
-    last_name:      nameParts.slice(1).join(' ') || '.',
-    email:          safeEmail,
-    phone:          data.contact || null,
-    status:         toServerStatus(data.status),
-    position:       (data.job || '').split('·')[0].trim() || null,
-    destination:    data.destination || ((data.job || '').split('·')[1] ? (data.job || '').split('·')[1].trim() : '') || null,
-    medical_status: ['Passed','Failed','Exempted'].indexOf(data.medical) !== -1 ? data.medical : 'Pending',
-    notes:          data.notes || null,
-    nationality:    data.gender || null,
-    passport_number: data.passport || null,
-    date_of_birth:   data.dob || null,
-    job_order_id:   data._jobOrderId || null,
-    agent_id:       (data._agentDbId && isUUID(data._agentDbId)) ? data._agentDbId : null,
-    category:       data.category || null,
-  };
-  var r = await apiFetch('/applicants', { method: 'POST', body: JSON.stringify(payload) });
-  if (r.ok) { data._dbId = r.data.id; data.id = r.data.id; }
-  return r;
-}
 
-async function apiUpdateApplicant(data) {
-  if (window._ramsSessionToken === 'demo') return { ok: true };
-  var dbId = data._dbId || data.id;
-  var nameParts = (data.name || '').trim().split(' ');
-  var payload = {
-    first_name:      nameParts[0] || data.name,
-    last_name:       nameParts.slice(1).join(' ') || '.',
-    phone:           data.contact,
-    status:          toServerStatus(data.status),
-    position:        (data.job || '').split('·')[0].trim(),
-    destination:     data.destination || ((data.job || '').split('·')[1] ? (data.job || '').split('·')[1].trim() : ''),
-    medical_status:  ['Passed','Failed','Exempted'].indexOf(data.medical) !== -1 ? data.medical : 'Pending',
-    notes:           data.notes || null,
-    nationality:     data.gender || '',
-    passport_number: data.passport || null,
-    date_of_birth:   data.dob || null,
-    job_order_id:    data._jobOrderId || null,
-    agent_id:        (data._agentDbId && isUUID(data._agentDbId)) ? data._agentDbId : null,
-    category:        data.category || null,
-  };
-  if (!isUUID(dbId)) {
-    var r2 = await apiFetch('/applicants', { method: 'POST', body: JSON.stringify(Object.assign({}, payload, { email: placeholderEmail(data.name) })) });
-    if (r2.ok) { data._dbId = r2.data.id; data.id = r2.data.id; }
-    return r2;
-  }
-  return await apiFetch('/applicants/' + dbId, { method: 'PATCH', body: JSON.stringify(payload) });
-}
+
+
 
 async function apiDeleteApplicant(dbId) {
   if (!dbId || !isUUID(dbId) || window._ramsSessionToken === 'demo') return { ok: true };
@@ -4268,7 +4207,7 @@ async function fetchApplicants() {
   Store.set('rams:shared:applicants:ts', String(Date.now()), true).catch(function(){});
   if (changed.length) _showSyncBadge(changed.length + ' applicant' + (changed.length > 1 ? 's' : '') + ' updated by another user');
   // Render the current page with fresh data
-  if (currentPage === 'applicants') renderApplicants();
+  if (currentPage === 'applicants') renderApplicants(true);
   else if (currentPage === 'pipeline')  renderKanban();
   else if (currentPage === 'dashboard') renderDashboard();
   else if (currentPage === 'documents') renderDocs();
@@ -4368,7 +4307,7 @@ function _resolveAgentNames() {
   });
   if (changed) {
     _reapplyFiltersIfActive();
-    if (currentPage === 'applicants') renderApplicants();
+    if (currentPage === 'applicants') renderApplicants(true);
     else if (currentPage === 'pipeline') renderKanban();
   }
 }
@@ -4608,7 +4547,7 @@ function startPolling() {
                   viewerScopes = parsed;
                   Store.set('rams:db:viewerScopes', viewerScopes); // sync to private too
                   _reapplyFiltersIfActive();
-                  if (currentPage === 'applicants') renderApplicants();
+                  if (currentPage === 'applicants') renderApplicants(true);
                   if (currentPage === 'pipeline')   renderKanban();
                   if (currentPage === 'dashboard')  renderDashboard();
                 }
@@ -4725,7 +4664,7 @@ function startPolling() {
                   return !window._deletedApplicantIds.has(a.id) && !window._deletedApplicantIds.has(a._dbId);
                 });
                 _reapplyFiltersIfActive();
-                if (currentPage === 'applicants') renderApplicants();
+                if (currentPage === 'applicants') renderApplicants(true);
               }
             } catch(e) {}
           }).catch(function(){});
@@ -6794,7 +6733,7 @@ function openDrawer(appId, initialTab) {
   }
 
   document.getElementById('drawer-meta').innerHTML = `
-    <span style="font-family:monospace">${app.displayId || app.id}</span> · ${app.job}
+    <span style="font-family:monospace">${escapeHtml(app.displayId || '')}</span> · ${escapeHtml(app.job || '')}${app.piiMasked ? ' · <span title="Personal data is hidden for your role">🔒</span>' : ''}
   `;
 
   // Hide restricted tabs from Viewers
@@ -6844,36 +6783,36 @@ function switchDrawerTab(tab, btn) {
     // Viewers only see status, medical, position and pipeline — no agent/contact/email
     var _infoFields = _isViewer
       ? [['Status',pillHtml(app.status)],['Medical',pillHtml(app.medical,'medical')],
-         ['Position',`<span style="font-size:13px">${(app.job||'').split('·')[0]||'—'}</span>`],
-         ['Destination',app.destination || ((app.job||'').split('·')[1]||'—').trim()],
-         ['Category', app.category ? '<span style="background:var(--brand-l);color:var(--brand);padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700">' + app.category + '</span>' : '—'],
-         ['Gender',app.gender||'—'],
-         ['Passport',`<span style="font-family:monospace;font-size:12px">${app.passport||'—'}</span>`],
+         ['Position',`<span style="font-size:13px">${escapeHtml((app.job||'').split('·')[0]||'—')}</span>`],
+         ['Destination',escapeHtml(app.destination || ((app.job||'').split('·')[1]||'—').trim())],
+         ['Category', app.category ? '<span style="background:var(--brand-l);color:var(--brand);padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700">' + escapeHtml(app.category) + '</span>' : '—'],
+         ['Gender',escapeHtml(app.gender||'—')],['Nationality',escapeHtml(app.nationality||'—')],
+         ['Passport',`<span style="font-family:monospace;font-size:12px">${escapeHtml(app.passport||'—')}</span>`],
          ['Age / DOB',`${(function(dob){
-  if (!dob) return '—';
+  if (!dob) return (typeof app !== 'undefined' && app && app.age != null) ? app.age + ' yrs' : '—';
   var b = new Date(dob), n = new Date();
   var age = n.getFullYear() - b.getFullYear();
   if (n.getMonth() < b.getMonth() || (n.getMonth() === b.getMonth() && n.getDate() < b.getDate())) age--;
   return age + ' yrs <span style="font-size:11px;color:var(--muted);">(' + dob + ')</span>';
 })(app.dob)}`]]
       : [['Status',pillHtml(app.status)],['Medical',pillHtml(app.medical,'medical')],
-         ['Agent',`<span style="font-weight:700">${app.agent||'Unassigned'}</span>`],
-         ['Applied',`<span style="font-family:monospace;font-size:12px">${app.date}</span>`],
+         ['Agent',`<span style="font-weight:700">${escapeHtml(app.agent||'Unassigned')}</span>`],
+         ['Applied',`<span style="font-family:monospace;font-size:12px">${escapeHtml(app.date||'')}</span>`],
          ['Deployed',app.deploymentDate
            ? `<span style="font-family:monospace;font-size:12px;color:var(--green);font-weight:700">${app.deploymentDate}</span>`
            : `<span style="color:var(--muted);font-size:12px">—</span>`],
-         ['Contact',app.contact],['Email',app.email],
-         ['Category', app.category ? '<span style="background:var(--brand-l);color:var(--brand);padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700">' + app.category + '</span>' : '—'],
-         ['Gender',app.gender||'—'],
-         ['Passport',`<span style="font-family:monospace;font-size:12px">${app.passport||'—'}</span>`],
+         ['Contact',escapeHtml(app.contact||'—')],['Email',escapeHtml(app.email||'—')],
+         ['Category', app.category ? '<span style="background:var(--brand-l);color:var(--brand);padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700">' + escapeHtml(app.category) + '</span>' : '—'],
+         ['Gender',escapeHtml(app.gender||'—')],['Nationality',escapeHtml(app.nationality||'—')],
+         ['Passport',`<span style="font-family:monospace;font-size:12px">${escapeHtml(app.passport||'—')}</span>`],
          ['Age / DOB',`${(function(dob){
-  if (!dob) return '—';
+  if (!dob) return (typeof app !== 'undefined' && app && app.age != null) ? app.age + ' yrs' : '—';
   var b = new Date(dob), n = new Date();
   var age = n.getFullYear() - b.getFullYear();
   if (n.getMonth() < b.getMonth() || (n.getMonth() === b.getMonth() && n.getDate() < b.getDate())) age--;
   return age + ' yrs <span style="font-size:11px;color:var(--muted);">(' + dob + ')</span>';
 })(app.dob)}`],
-         ['Destination',app.destination||'—']];
+         ['Destination',escapeHtml(app.destination||'—')],['Consent / keep until',escapeHtml((app.consentDate||'—') + ' / ' + (app.retentionUntil||'—'))]];
     panel.innerHTML = `
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
         ${_infoFields.map(([k,v])=>`<div style="padding:10px;background:var(--s2);border:1px solid var(--border);border-radius:8px"><div style="font-size:10.5px;color:var(--muted);font-weight:700;margin-bottom:4px">${k}</div><div style="font-size:13px">${v}</div></div>`).join('')}
@@ -6890,15 +6829,15 @@ function switchDrawerTab(tab, btn) {
         var slotsLeft = (linkedJob.slots||0) - (linkedJob.filled||0);
         return `<div style="padding:10px 14px;background:var(--brand-l);border:1px solid var(--brand);border-radius:8px;margin-bottom:14px">
           <div style="font-size:10.5px;font-weight:700;color:var(--brand);margin-bottom:4px">LINKED JOB ORDER</div>
-          <div style="font-size:13px;font-weight:700">${linkedJob.title}</div>
-          <div style="font-size:11.5px;color:var(--muted)">${linkedJob.employer||''} · ${linkedJob.country||''} · ${linkedJob.salary||''}</div>
+          <div style="font-size:13px;font-weight:700">${escapeHtml(linkedJob.title)}</div>
+          <div style="font-size:11.5px;color:var(--muted)">${escapeHtml(linkedJob.employer||'')} · ${escapeHtml(linkedJob.country||'')} · ${escapeHtml(linkedJob.salary||'')}</div>
           <div style="font-size:11px;margin-top:4px;color:${slotsLeft>0?'var(--green)':'var(--red)'}">
             ${linkedJob.status} · ${slotsLeft>0?slotsLeft+' slots left':'Full'}
           </div>
         </div>`;
       })()}
       ${_isViewer
-        ? (app.notes ? `<div style="padding:10px 12px;background:var(--abg);border:1px solid var(--abd);border-radius:8px;font-size:12.5px;color:var(--text2)"><strong>Notes:</strong> ${app.notes}</div>` : '')
+        ? (app.notes ? `<div style="padding:10px 12px;background:var(--abg);border:1px solid var(--abd);border-radius:8px;font-size:12.5px;color:var(--text2)"><strong>Notes:</strong> ${escapeHtml(app.notes)}</div>` : '')
         : `<div style="margin-bottom:14px">
             <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:6px;display:flex;align-items:center;justify-content:space-between">
               NOTES
@@ -6914,8 +6853,8 @@ function switchDrawerTab(tab, btn) {
           </div>`
       }
       ${_isViewer ? '' : `<div style="margin-top:16px;display:flex;gap:8px">
-        <button class="btn btn-p btn-sm" onclick="editApplicant('${app.id}')">Edit Applicant</button>
-        <button class="btn btn-danger btn-sm" onclick="confirmDelete('applicant','${app.id}')">Delete</button>
+        ${hasPermission('Edit Applicants') && !app.archived ? `<button class="btn btn-p btn-sm" onclick="editApplicant('${escapeHtml(app._dbId || app.id)}')">Edit Applicant</button>` : ''}
+        ${hasPermission('Delete Applicants') ? `<button class="btn btn-danger btn-sm" onclick="archiveApplicant('${escapeHtml(app._dbId || app.id)}')">Archive</button>` : ''}
       </div>`}
       ${app.status==='Repatriated'?`<div style="margin-bottom:10px;padding:10px 14px;background:var(--rbg);border:1px solid #fca5a5;border-radius:8px;display:flex;align-items:center;gap:8px"><span style="font-size:18px">⚠</span><div><div style="font-size:13px;font-weight:700;color:var(--red)">Repatriated</div><div style="font-size:11.5px;color:var(--muted)">Agent charged for all expenses. Commission reversed if applicable.</div></div></div>`:''}${app.status==='Backout'?`<div style="margin-bottom:10px;padding:10px 14px;background:var(--abg);border:1px solid var(--abd);border-radius:8px;display:flex;align-items:center;gap:8px"><span style="font-size:18px">↩</span><div><div style="font-size:13px;font-weight:700;color:var(--amber)">Backed Out</div><div style="font-size:11.5px;color:var(--muted)">Medical expenses may be charged to agent.</div></div></div>`:''}${app.agentId?`<div style="margin-bottom:10px;padding:10px 14px;background:var(--gbg);border:1px solid #86efac;border-radius:8px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:12px;font-weight:700;color:var(--green)">Linked Agent</div><div style="font-size:11.5px">${app.agent}</div></div><button style='font-size:11px;padding:4px 10px' class='btn btn-s btn-sm' onclick="openAgentAccountPanel('${app.agentId}','${app.agent}')">View Account →</button></div>`:''}${''}
 
@@ -6928,7 +6867,7 @@ function switchDrawerTab(tab, btn) {
     var docHeader = _canEditDoc ? `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
         <div style="font-size:12px;font-weight:700;color:var(--muted)">${docs.length} document${docs.length!==1?'s':''}</div>
-        <button class="btn btn-p btn-sm" onclick="openUploadDoc('${app.name}')">📎 Upload Document</button>
+        <button class="btn btn-p btn-sm" onclick="openUploadDoc(${escapeHtml(JSON.stringify(app.name || ''))})">📎 Upload Document</button>
       </div>` : '';
     var docList = docs.length ? docs.map(function(d){
       return `<div class="doc-card" style="margin-bottom:8px">
@@ -7004,16 +6943,7 @@ function switchDrawerTab(tab, btn) {
   if (tab === 'agent') {
     panel.innerHTML = renderAgentSummaryInDrawer(app);
   }
-  if (tab === 'history') {
-    const logs = DB.auditLog.filter(l => l.detail.includes(app.name) || l.detail.includes(app.id));
-    panel.innerHTML = logs.length ? `
-      <div>${logs.map(l=>`<div class="audit-item">
-        <div class="audit-ico" style="background:${{'create':'var(--gbg)','update':'var(--brand-l)','delete':'var(--rbg)','export':'var(--abg)'}[l.type]}">${{'create':'➕','update':'✏️','delete':'🗑️','export':'📤'}[l.type]}</div>
-        <div class="audit-content"><div class="audit-action">${l.detail}</div><div class="audit-meta">${l.user} · ${l.action}</div></div>
-        <div class="audit-time">${l.time}</div>
-      </div>`).join('')}</div>
-    ` : `<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">No History</div><div class="empty-sub">No audit log entries for this applicant.</div></div>`;
-  }
+  if (tab === 'history') { _apTimeline(app, panel); }
 }
 
 // ════════════════════════════════════════════════════════
@@ -7197,6 +7127,7 @@ function _dashGo(key, arg) {
   if (key === 'stuck') {
     var days = Number(arg) || 14;
     window._appExtraFilter = {
+      server: { stuck: days },
       label: 'Unchanged for ' + days + '+ days',
       fn: function(x) { return _DASH_END.indexOf(x.status) === -1 && (Date.now() - new Date(x._statusUpdatedAt || x._updatedAt || 0).getTime()) > days * 86400000; }
     };
@@ -7624,12 +7555,12 @@ function _plAsk(name, from, to) {
 async function _plMove(uuid, to, opts) {
   opts = opts || {};
   var c = _plFindCard(uuid), local = _plLocal(uuid);
-  var name = (c && c.name) || (local && local.name) || 'This applicant';
+  var name = (c && c.name) || (local && local.name) || opts.name || 'This applicant';
   var from = opts.from || (c && c.status) || (local && local.status);
   if (!from || from === to) { if (typeof renderApplicants === 'function' && currentPage === 'applicants') renderApplicants(); return; }
   if (_pl.busy[uuid]) return;
   var extra = _plAsk(name, from, to);
-  if (extra === null) { _plPaint(); if (currentPage === 'applicants') renderApplicants(); return; }
+  if (extra === null) { _plPaint(); if (currentPage === 'applicants') renderApplicants(true); return; }
   if (to === 'Deployed') {                                 // the deployment date is asked in the existing dialog
     window._pendingDeploy = { via: 'pipeline', uuid: uuid, from: from, to: to, reason: extra.reason, applicantId: uuid, oldStatus: from };
     var nm = document.getElementById('deploy-modal-name'); if (nm) nm.textContent = name + ' — setting deployment date';
@@ -7655,7 +7586,7 @@ async function _plDoMove(uuid, to, from, reason, deploymentDate) {
     if (d && d.blockers && d.blockers.length) msg = msg + ' (' + d.blockers.join('; ') + ')';
     toast('⛔ ' + msg, 'error');
     if (d && d.error === 'status_conflict') { _pl.data = null; try { await fetchApplicants(); } catch (e) {} }
-    renderKanban(true); if (currentPage === 'applicants') renderApplicants();
+    renderKanban(true); if (currentPage === 'applicants') renderApplicants(true);
     return false;
   }
   if (d.unchanged) { renderKanban(true); return true; }
@@ -7691,7 +7622,7 @@ function _plAfterMove(uuid, d, to) {
   }
   if (typeof _dashReset === 'function') _dashReset();
   _pl.data = null; renderKanban(true);
-  if (currentPage === 'applicants') renderApplicants();
+  if (currentPage === 'applicants') renderApplicants(true);
   if (currentPage === 'dashboard') renderDashboard(true);
 }
 
@@ -7736,121 +7667,25 @@ function _moveLocalApplicant(appId, newStatus) {
   var app = DB.applicants.find(function(a) { return a.id === appId || a._dbId === appId; });
   if (!app) { toast('Applicant not found', 'error'); return; }
   var uuid = app._dbId || app.id;
-  if (!isUUID(uuid)) { toast('This applicant has not been saved to the server yet', 'error'); if (currentPage === 'applicants') renderApplicants(); return; }
+  if (!isUUID(uuid)) { toast('This applicant has not been saved to the server yet', 'error'); if (currentPage === 'applicants') renderApplicants(true); return; }
   return _plMove(uuid, newStatus, { from: app.status });
 }
 
 
 
-function deleteApplicant(appId) {
-  if (!hasPermission('Delete Applicants')) { toast('Your role cannot delete applicants','error'); return; }
-  var app = DB.applicants.find(function(a){ return a.id===appId; });
-  if (!app || !confirm('Delete '+app.name+'? This cannot be undone.')) return;
-  DB.applicants = DB.applicants.filter(function(a){ return a.id!==appId; });
-  autosave('applicants');
-  var dbId = app._dbId || app.id;
-  if (dbId && isUUID(dbId)) {
-    apiFetch('/applicants/'+dbId, {method:'DELETE'}).then(function(r){
-      if(r&&r.ok){ try{_triggerImmediateSync();}catch(e){} }
-    }).catch(function(){});
-  }
-  addAudit('DELETE','Applicant','Deleted '+app.name);
-  toast('Applicant deleted','success');
-  filteredApps = filteredApps.filter(function(a){ return a.id!==appId; });
-  if (currentPage==='applicants') renderApplicants();
-}
+
 
 
 // ── Re-apply active filters after data refresh — prevents poll clearing filters ─
-function _reapplyFiltersIfActive() {
-  try {
-    var saved = localStorage.getItem('rams:filters:applicants');
-    if (!saved) { filteredApps = [...getScopedApplicants()]; return; }
-    var f = JSON.parse(saved);
-    if (f.q || f.s || f.a || f.m || f.jo || f.c || f.cat) {
-      // Re-run the active filters but stay on the page the user was on
-      window._keepAppPage = true;
-      try { filterApplicants(); } finally { window._keepAppPage = false; }
-    } else {
-      filteredApps = [...getScopedApplicants()];
-    }
-  } catch(e) { filteredApps = [...getScopedApplicants()]; }
-}
+
 
 // ── Active filter state — source of truth, not the DOM ───────────────
 var _activeFilters = { q:'', s:'', a:'', m:'', jo:'', c:'' };
 
 // ── Re-apply active filters after poll refresh ────────────────────────
-function _reapplyFiltersIfActive() {
-  try {
-    var saved = localStorage.getItem('rams:filters:applicants');
-    if (!saved) { filteredApps = [...getScopedApplicants()]; return; }
-    var f = JSON.parse(saved);
-    if (f.q || f.s || f.a || f.m || f.jo || f.c || f.cat) {
-      // Re-run the active filters but stay on the page the user was on
-      window._keepAppPage = true;
-      try { filterApplicants(); } finally { window._keepAppPage = false; }
-    } else {
-      filteredApps = [...getScopedApplicants()];
-    }
-  } catch(e) { filteredApps = [...getScopedApplicants()]; }
-}
 
-function filterApplicants() {
-  var q  = document.getElementById('app-search').value.toLowerCase();
-  var s  = document.getElementById('app-status-filter').value; // comma-separated
-  var sList = s ? s.split(',').map(function(v){ return v.trim(); }).filter(Boolean) : [];
-  var a  = document.getElementById('app-agent-filter').value;
-  var m  = document.getElementById('app-medical-filter').value;
-  var joEl = document.getElementById('app-joborder-filter');
-  var jo = joEl ? joEl.value : '';
-  var cEl = document.getElementById('app-country-filter');
-  var c  = cEl ? cEl.value : '';
-  var catEl = document.getElementById('app-category-filter');
-  var cat = catEl ? catEl.value : '';
-  try { localStorage.setItem('rams:filters:applicants', JSON.stringify({q:q,s:s,a:a,m:m,jo:jo,c:c,cat:cat})); } catch(e){}
 
-  // Build job matchIds set for employer-level filtering
-  var matchIds = null;
-  if (jo) {
-    matchIds = new Set();
-    var repJob = DB.jobs.find(function(j){ return j.id===jo || j._dbId===jo; });
-    var matchEmployer = repJob ? repJob.employer : null;
-    if (matchEmployer) {
-      DB.jobs.forEach(function(j){
-        if (j.employer === matchEmployer) {
-          if (j.id)   matchIds.add(j.id);
-          if (j._dbId) matchIds.add(j._dbId);
-        }
-      });
-    } else {
-      matchIds.add(jo);
-    }
-  }
 
-  filteredApps = getScopedApplicants().filter(function(x) {
-    if (sList.length && sList.indexOf(x.status) === -1) return false;
-    if (a && x.agent  !== a) return false;
-    if (m && x.medical !== m) return false;
-    if (q && !(
-      (x.name||'').toLowerCase().includes(q) ||
-      (x.displayId||x.id||'').toLowerCase().includes(q) ||
-      (x.contact||'').includes(q) ||
-      (x.passport||'').toLowerCase().includes(q)
-    )) return false;
-    if (matchIds !== null) {
-      if (!x._jobOrderId) return false;
-      if (!matchIds.has(x._jobOrderId)) return false;
-    }
-    if (c && (x.destination || '') !== c) return false;
-    if (cat && (x.category || '') !== cat) return false;
-    if (window._appExtraFilter && !window._appExtraFilter.fn(x)) return false;   // drill-down from Analytics (e.g. "no agent")
-    return true;
-  });
-  if (typeof _syncExtraFilterChip === 'function') _syncExtraFilterChip();
-  if (!window._keepAppPage) appPage = 1;
-  renderApplicants();
-}
 function _restoreApplicantFilters() {
   try {
     var saved = localStorage.getItem('rams:filters:applicants');
@@ -7887,19 +7722,7 @@ function clearFilters() {
   try { localStorage.removeItem('rams:filters:applicants'); } catch(e){}
   filterApplicants();
 }
-function sortTable(col) {
-  if (sortCol === col) sortDir *= -1;
-  else { sortCol = col; sortDir = 1; }
-  document.querySelectorAll('th[data-col]').forEach(t => t.classList.remove('sorted'));
-  const th = document.querySelector(`th[data-col="${col}"]`);
-  if (th) { th.classList.add('sorted'); const si = th.querySelector('.sort-icon'); if (si) si.textContent = sortDir > 0 ? '↑' : '↓'; }
-  filteredApps.sort((a, b) => {
-    const va = col==='name'?a.name:col==='status'?a.status:col==='date'?a.date:a.id;
-    const vb = col==='name'?b.name:col==='status'?b.status:col==='date'?b.date:b.id;
-    return va.localeCompare(vb) * sortDir;
-  });
-  renderApplicants();
-}
+
 // ── INLINE STATUS / MEDICAL EDIT ─────────────────────────────────────
 var _ALL_APP_STATUSES = ['For Selection','Applied','Screening','Interview','Selected',
   'Processing','Visa','OWWA','Deployed','Repatriated','Backout','Rejected','With Complaint'];
@@ -8022,234 +7845,618 @@ function _inlineSaveStatus(appId, newStatus) {
   return _moveLocalApplicant(appId, newStatus);
 }
 
-function _inlineSaveMedical(appId, newMedical) {
-  var app = DB.applicants.find(function(a){ return a.id===appId; });
-  if (!app || app.medical===newMedical) return;
-  var oldMedical = app.medical;
-  app.medical = newMedical;
-  autosave('applicants');
-  if (_isLiveSession()) _scheduleCommissionSync();
 
-  // ── Tranche 1 commission (20%) fires when medical → Passed ──────────
-  if (!_isLiveSession() && newMedical === 'Passed' && oldMedical !== 'Passed') {
-    var _agent = DB.agents.find(function(a){ return a.id===app._agentId||a.id===app._agentDbId||a.name===app.agent; });
-    if (_agent) {
-      // Reuse same dedup map from onApplicantStatusChange
-      if (!window._commissionFired) window._commissionFired = {};
-      var _t1Key = appId + ':T1';
-      var _t1Exists = !!window._commissionFired[_t1Key]
-        || DB.commissions.some(function(c){
-            var idMatch   = c.applicantId === appId || c.applicantId === (app._dbId||'') || c.applicantId === (app.id||'');
-            var nameMatch = c.applicantName && app.name && c.applicantName.toLowerCase().trim() === app.name.toLowerCase().trim();
-            return (idMatch || nameMatch) && c.tranche===1 && c.status!=='Reversed';
-           });
-      if (_t1Exists) {
-        toast('ℹ️ Medical commission for ' + app.name + ' already recorded — skipped', 'info');
-      } else {
-        var _medCountry = app.job ? app.job.split('·').pop().trim() : '';
-        var _medRule    = _findCountryRule(_medCountry);
-        // Same precedence as _resolveCommission: worker override → per-country
-        // override → agent primary rate → country rule → default
-        var _agentRate = getAgentRateForApplicant(_agent, app);
-        var _medTotal  = _agentRate ? _agentRate.amount   : (_medRule ? _medRule.commissionAmt : 15000);
-        var _medCurr   = _agentRate ? _agentRate.currency : (_medRule ? (_medRule.commissionCurrency||'PHP') : 'PHP');
-        var _medGP     = getAgentGuaranteeMonths(_agent, _medRule, _medCountry);
-        var _medSplit  = getAgentCommissionSplit(_agent, _medCountry);
-        var _t1amt     = Math.round(_medTotal * _medSplit.t1);
-        var _t1gEnd    = (function(){ var d=new Date(); d.setMonth(d.getMonth()+_medGP); return _ymd(d); })();
-        var _t1 = {
-          id: 'COM-' + Date.now() + '-T1',
-          agentId: _agent.id, applicantId: appId, applicantName: app.name,
-          country: _medCountry || 'Philippines', amount: _t1amt,
-          totalCommission: _medTotal, tranche: 1, trancheLabel: 'Medical — Passed (' + _medSplit.p1 + '%)',
-          currency: _medCurr, status: 'Pending Release', triggerStatus: 'Medical Passed',
-          triggerDate: _ymd(new Date()),
-          guaranteeEnd: _t1gEnd, releaseDate: null,
-        };
-        DB.commissions.push(_t1);
-        window._commissionFired[_t1Key] = true;
-        autosave('commissions');
-        addAudit('CREATE','Commission','Tranche 1 ('+_medSplit.p1+'%) — '+(_medCurr==='USD'?'$':'₱')+_t1amt.toLocaleString()+' pending for '+app.name+' — Medical Passed');
-        toast('Commission T1: '+(_medCurr==='USD'?'$':'₱')+_t1amt.toLocaleString()+' ('+_medSplit.p1+'%) pending for '+_agent.name,'info');
-        apiCreateCommission(_t1).then(function(r){ if(r&&r.ok&&r.data&&r.data.id){ _t1._dbId=r.data.id; autosave('commissions'); } }).catch(function(){});
-        if (currentPage==='accounting') renderCommissions();
-      }
-    }
-  }
 
-  var dbId = app._dbId || app.id;
-  if (dbId && isUUID(dbId)) {
-    apiFetch('/applicants/' + dbId, {
-      method: 'PATCH',
-      body: JSON.stringify({ medical_status: newMedical }),
-    }).then(function(r) {
-      if (r && r.ok) {
-        toast('✅ ' + app.name + ' medical → ' + newMedical, 'success');
-        // Invalidate cache only — no immediate re-sync (avoids cache overwrite)
-        if (window._lastFetch) window._lastFetch['applicants'] = 0;
-        if (window._cache) Object.keys(window._cache).forEach(function(k){ if(k.includes('/applicants')) delete window._cache[k]; });
-      } else if (r && r.httpStatus === 400) {
-        toast('⚠️ Could not update medical status — ' + (r.error || 'invalid field'), 'error');
-      } else {
-        toast('💾 Saved locally — will sync to server when reconnected', 'info');
-      }
-    }).catch(function() {
-      toast('💾 Saved — server unreachable, retrying soon', 'info');
-    });
-  }
-  renderApplicants();
+// ════════════════════════════════════════════════════════
+// APPLICANTS (server-owned)
+// The list is served page by page by GET /applicants (search, filters, sorting, paging and personal-data
+// masking happen on the server). Create / edit / archive wait for the server's answer — nothing is added to
+// or removed from the list until the server confirms it. Field errors, duplicates and edit conflicts come
+// back from the server and are shown in the form.
+// ════════════════════════════════════════════════════════
+var _AP_STATUSES = ['For Selection', 'Applied', 'Screening', 'Interview', 'Selected', 'Medical', 'Processing', 'Visa', 'OWWA', 'Deployed', 'With Complaint', 'Backout', 'Repatriated', 'Rejected'];
+var _AP_MEDICAL = ['Pending', 'Passed', 'Failed', 'Exempted'];
+var _ap = { q: '', status: '', agent: '', medical: '', employer: '', country: '', category: '', archived: '0', sort: 'created_at', order: 'desc', page: 1,
+  data: null, total: 0, masked: false, filters: null, fAt: 0, sel: {}, loading: false, seq: 0, at: 0, err: null, bound: false, restored: false };
+var _apForm = { mode: 'create', id: null, row: null, pendingDup: null };
+
+function _apIsUUID(v) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v || '')); }
+function _apUuid(id) { if (_apIsUUID(id)) return id; var a = DB.applicants.find(function(x) { return x.id === id || x._dbId === id; }); return a ? (a._dbId || a.id) : id; }
+function _apRow(id) { return ((_ap.data || []).find(function(r) { return r.id === id; })) || null; }
+function _apName(r) { return (r && (r.full_name || [r.first_name, r.middle_name, r.last_name].filter(Boolean).join(' '))) || 'Applicant'; }
+
+// keep the shared applicant cache (used by the drawer, pipeline, accounting) in step with the server
+function _apCache(row) {
+  if (!row || !row.id) return null;
+  var m = mapApplicant(row);
+  var i = DB.applicants.findIndex(function(a) { return a.id === row.id || a._dbId === row.id; });
+  if (row.archived_at) { if (i !== -1) DB.applicants.splice(i, 1); }
+  else if (i !== -1) DB.applicants[i] = Object.assign({}, DB.applicants[i], m);
+  else DB.applicants.unshift(m);
+  try { autosave('applicants'); } catch (e) {}
+  return m;
 }
 
-function renderApplicants() {
-  // ── Restore persisted filters FIRST so they're applied on nav/refresh ──
+// ── controls ──────────────────────────────────────────────────────────────
+function _apRestoreControls() {
+  if (_ap.restored) return; _ap.restored = true;
   try {
-    var _sf = localStorage.getItem('rams:filters:applicants');
-    if (_sf) {
-      var _ff = JSON.parse(_sf);
-      var _se = document.getElementById('app-search');          if (_se && _ff.q && !_se.value) _se.value = _ff.q;
-      var _ste= document.getElementById('app-status-filter');   if (_ste && _ff.s && !_ste.value) { _ste.value = _ff.s; syncStatusFilterUI(); }
-      var _me = document.getElementById('app-medical-filter');  if (_me && _ff.m && !_me.value) _me.value = _ff.m;
-      // Agent + job order + country dropdowns are repopulated below — set after repopulation
-    }
-  } catch(e) {}
-
-  const agentFilter = document.getElementById('app-agent-filter');
-  const agents = [...new Set(getScopedApplicants().map(a=>a.agent).filter(Boolean))];
-  // Always repopulate — agents may load async after initial render
-  var _agentPrevVal = agentFilter.value;
-  // If no current value, try restoring from saved filters
-  if (!_agentPrevVal) {
-    try { var _s=JSON.parse(localStorage.getItem('rams:filters:applicants')||'{}'); _agentPrevVal=_s.a||''; } catch(e){}
-  }
-  agentFilter.innerHTML = '<option value="">All Agents</option>';
-  agents.forEach(a => { const o = document.createElement('option'); o.value = a; o.text = a; agentFilter.appendChild(o); });
-  if (_agentPrevVal) agentFilter.value = _agentPrevVal;
-  // Populate job order filter with jobs that have applicants
-  const joFilter = document.getElementById('app-joborder-filter');
-  // Repopulate job order filter — group by employer (show employer once, not every position)
-  if (joFilter) {
-    var usedJobIds = new Set(getScopedApplicants().map(function(a){ return a._jobOrderId; }).filter(Boolean));
-    var usedJobs = DB.jobs.filter(function(j){ return usedJobIds.has(j.id) || usedJobIds.has(j._dbId); });
-    // Group by employer so each employer appears once in the dropdown
-    var seenEmployers = {};
-    var grouped = [];
-    usedJobs.forEach(function(j) {
-      var key = (j.employer||'') + '|' + (j.country||'');
-      if (!seenEmployers[key]) {
-        seenEmployers[key] = true;
-        grouped.push({
-          employer: j.employer||'',
-          country:  j.country||'',
-          representativeId:   j.id,
-          representativeDbId: j._dbId || j.id,
-          label: (j.employer||'Unknown') + (j.country?' ('+j.country+')':'')
-        });
-      }
-    });
-    joFilter.innerHTML = '<option value="">All Job Orders</option>';
-    grouped.forEach(function(g) {
-      var o = document.createElement('option');
-      o.value = g.representativeDbId || g.representativeId;
-      o.text  = g.label;
-      joFilter.appendChild(o);
-    });
-    // Restore from _activeFilters (source of truth) — not from DOM which gets wiped on rebuild
-    var savedJo = _activeFilters.jo || '';
-    if (!savedJo) {
-      try { var _fj = JSON.parse(localStorage.getItem('rams:filters:applicants')||'{}'); savedJo = _fj.jo||''; } catch(e) {}
-    }
-    if (savedJo) {
-      joFilter.value = savedJo;
-      if (joFilter.value !== savedJo) {
-        // Option no longer exists — clear the filter completely
-        _activeFilters.jo = '';
-        try {
-          var _fj2 = JSON.parse(localStorage.getItem('rams:filters:applicants')||'{}');
-          _fj2.jo = '';
-          localStorage.setItem('rams:filters:applicants', JSON.stringify(_fj2));
-        } catch(e) {}
-      }
-    }
-  }
-  // Populate country filter from the destinations present among scoped applicants
-  const countryFilter = document.getElementById('app-country-filter');
-  if (countryFilter) {
-    var countries = [...new Set(getScopedApplicants().map(function(a){ return a.destination; }).filter(Boolean))]
-      .sort(function(x,y){ return x.localeCompare(y); });
-    var _countryPrevVal = _activeFilters.c || countryFilter.value;
-    if (!_countryPrevVal) {
-      try { var _fc = JSON.parse(localStorage.getItem('rams:filters:applicants')||'{}'); _countryPrevVal = _fc.c||''; } catch(e){}
-    }
-    countryFilter.innerHTML = '<option value="">All Countries</option>';
-    countries.forEach(function(c) {
-      var o = document.createElement('option');
-      o.value = c; o.text = c;
-      countryFilter.appendChild(o);
-    });
-    if (_countryPrevVal) {
-      countryFilter.value = _countryPrevVal;
-      if (countryFilter.value !== _countryPrevVal) {
-        // Saved country no longer present in the data — clear it
-        _activeFilters.c = '';
-        try {
-          var _fc2 = JSON.parse(localStorage.getItem('rams:filters:applicants')||'{}');
-          _fc2.c = '';
-          localStorage.setItem('rams:filters:applicants', JSON.stringify(_fc2));
-        } catch(e) {}
-      }
-    }
-  }
-  var _maxPg = Math.max(1, Math.ceil(filteredApps.length / APP_PER_PAGE));
-  if (appPage > _maxPg) appPage = _maxPg;
-  if (appPage < 1) appPage = 1;
-  const start = (appPage-1)*APP_PER_PAGE;
-  const pageApps = filteredApps.slice(start, start+APP_PER_PAGE);
-  const tbody = document.getElementById('app-tbody');
-  tbody.innerHTML = pageApps.length ? pageApps.map(a => `
-    <tr>
-      <td><input type="checkbox" class="table-check" ${selectedApps.has(a.id)?'checked':''} onchange="toggleSelect('${a.id}',this)" aria-label="Select ${a.name}"></td>
-      <td><span style="font-family:monospace;font-size:11.5px;color:var(--muted)">${a.displayId||a.id}</span></td>
-      <td>
-        <div style="font-weight:700;cursor:pointer;color:var(--text)" onclick="openDrawer('${a.id}')"${noteTip(a)}>${a.name}</div>
-        <div style="font-size:11px;color:var(--muted)">${a.email}</div>
-      </td>
-      <td onclick="event.stopPropagation()" style="position:relative">${_inlineStatusCell(a)}</td>
-      <td style="font-size:12px;color:var(--text2)">${a.contact}</td>
-      <td style="font-size:12.5px">
-        ${a._jobOrderId ? `<div style="font-size:11px;font-weight:700;color:var(--brand);margin-bottom:2px">🔗 Job Order</div>` : ''}
-        ${a.job}
-      </td>
-      <td style="font-size:12.5px;color:var(--text2)">${a.agent}</td>
-      <td onclick="event.stopPropagation()" style="position:relative">${_inlineMedicalCell(a)}</td>
-      <td style="font-size:11.5px;font-family:monospace;color:var(--muted)">${a.date}</td>
-      <td style="text-align:right;white-space:nowrap">
-        <button class="btn btn-ghost btn-xs" onclick="openDrawer('${a.id}')" data-tip="View details" aria-label="View ${a.name}">View</button>
-        <button class="btn btn-ghost btn-xs" onclick="editApplicant('${a.id}')" data-tip="Edit" aria-label="Edit ${a.name}">Edit</button>
-        <button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="confirmDelete('applicant','${a.id}')" data-tip="Delete" aria-label="Delete ${a.name}">Del</button>
-      </td>
-    </tr>
-  `).join('') : `<tr><td colspan="10"><div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">No applicants found</div><div class="empty-sub">Try adjusting your search or filters.</div></div></td></tr>`;
-
-  const total = filteredApps.length;
-  const pages = Math.ceil(total/APP_PER_PAGE);
-  document.getElementById('pg-info').textContent = `${Math.min(start+1,total)}–${Math.min(start+APP_PER_PAGE,total)} of ${total}`;
-  document.getElementById('applicant-count-label').textContent = `${total} applicant${total!==1?'s':''}`;
-  // Sidebar badge: show scoped count for viewers, total for everyone else
-  var _isViewerRole = getCurrentRole && getCurrentRole() === 'Viewer';
-  document.getElementById('sb-app-count').textContent = _isViewerRole
-    ? getScopedApplicants().length
-    : DB.applicants.length;
-  // Hide write buttons for viewers
-  var _csvBtn = document.getElementById('app-csv-btn');
-  var _newBtn = document.getElementById('app-new-btn');
-  if (_csvBtn) _csvBtn.style.display = _isViewerRole ? 'none' : '';
-  if (_newBtn) _newBtn.style.display = _isViewerRole ? 'none' : '';
-  // Sync per-page select to current value
-  var ppSel = document.getElementById('per-page-select');
-  if (ppSel) ppSel.value = String(APP_PER_PAGE);
-  renderPagination(pages);
-  updateBulkBar();
+    var f = JSON.parse(localStorage.getItem('rams:filters:applicants') || '{}');
+    var set = function(id, v) { var el = document.getElementById(id); if (el && v) el.value = v; };
+    set('app-search', f.q); set('app-status-filter', f.s); set('app-medical-filter', f.m);
+    if (typeof syncStatusFilterUI === 'function') syncStatusFilterUI();
+    _ap.agent = f.a || ''; _ap.employer = (f.jo && !_apIsUUID(f.jo)) ? f.jo : ''; _ap.country = f.c || ''; _ap.category = f.cat || ''; _ap.archived = f.arch || '0';
+    var sv = parseInt(localStorage.getItem('rams:perPage')); if (sv) APP_PER_PAGE = sv;
+  } catch (e) {}
 }
+function _apReadControls() {
+  var v = function(id) { var el = document.getElementById(id); return el ? el.value : ''; };
+  _ap.q = v('app-search').trim(); _ap.status = v('app-status-filter'); _ap.agent = v('app-agent-filter'); _ap.medical = v('app-medical-filter');
+  _ap.employer = v('app-joborder-filter'); _ap.country = v('app-country-filter'); _ap.category = v('app-category-filter');
+  _ap.archived = v('app-archived-filter') || '0';
+  try { localStorage.setItem('rams:filters:applicants', JSON.stringify({ q: _ap.q, s: _ap.status, a: _ap.agent, m: _ap.medical, jo: _ap.employer, c: _ap.country, cat: _ap.category, arch: _ap.archived })); } catch (e) {}
+}
+function _apParams(extra) {
+  var p = { sort: _ap.sort, order: _ap.order, page: _ap.page, limit: APP_PER_PAGE };
+  if (_ap.q) p.q = _ap.q;
+  if (_ap.status) p.status = _ap.status;
+  if (_ap.agent) {
+    var ag = _ap.filters && (_ap.filters.agents || []).find(function(a) { return a.name === _ap.agent; });
+    p.agent_id = ag ? ag.id : (_apIsUUID(_ap.agent) ? _ap.agent : '00000000-0000-0000-0000-000000000000');
+  }
+  if (_ap.medical) p.medical = _ap.medical;
+  if (_ap.employer) p.employer = _ap.employer;
+  if (_ap.country) p.country = _ap.country;
+  if (_ap.category) p.category = _ap.category;
+  if (_ap.archived === 'retention') p.retention = 'past'; else if (_ap.archived && _ap.archived !== '0') p.archived = _ap.archived;
+  var xf = window._appExtraFilter; if (xf && xf.server) Object.keys(xf.server).forEach(function(k) { p[k] = xf.server[k]; });
+  return Object.assign(p, extra || {});
+}
+function _apQS(p) { return Object.keys(p).filter(function(k) { return p[k] !== '' && p[k] !== null && p[k] !== undefined; }).map(function(k) { return encodeURIComponent(k) + '=' + encodeURIComponent(p[k]); }).join('&'); }
+
+function filterApplicants() { _apReadControls(); if (!window._keepAppPage) _ap.page = 1; _ap.sel = {}; renderApplicants(true); }
+function _reapplyFiltersIfActive() { if (typeof currentPage !== 'undefined' && currentPage === 'applicants') renderApplicants(true); }
+function sortTable(col) {
+  var key = { id: 'display_id', name: 'name', status: 'status', date: 'created_at', agent: 'agent' }[col] || col;
+  if (_ap.sort === key) _ap.order = _ap.order === 'asc' ? 'desc' : 'asc'; else { _ap.sort = key; _ap.order = (key === 'name' || key === 'display_id' || key === 'agent') ? 'asc' : 'desc'; }
+  document.querySelectorAll('th[data-col]').forEach(function(t) { t.classList.remove('sorted'); var si = t.querySelector('.sort-icon'); if (si) si.textContent = '↕'; });
+  var th = document.querySelector('th[data-col="' + col + '"]'); if (th) { th.classList.add('sorted'); var si2 = th.querySelector('.sort-icon'); if (si2) si2.textContent = _ap.order === 'asc' ? '↑' : '↓'; }
+  _ap.page = 1; renderApplicants(true);
+}
+function changePage(p) { _ap.page = Math.max(1, p); renderApplicants(true); var mc = document.getElementById('main-content'); if (mc && mc.scrollTo) mc.scrollTo(0, 0); }
+function setPerPage(val) { APP_PER_PAGE = parseInt(val) || 25; _ap.page = 1; try { localStorage.setItem('rams:perPage', String(APP_PER_PAGE)); } catch (e) {} renderApplicants(true); }
+
+// ── load + paint ──────────────────────────────────────────────────────────
+function renderApplicants(force) {
+  _apBind();
+  if (!_isLiveSession()) { _apDemo(); return; }
+  _apRestoreControls();
+  _apPaint();
+  if (force === true || !_ap.data || (Date.now() - _ap.at) > 8000) _apLoad();
+}
+async function _apLoad() {
+  if (!_isLiveSession()) return;
+  var seq = ++_ap.seq; _ap.loading = true;
+  if (!_ap.filters || (Date.now() - _ap.fAt) > 60000) {
+    var fr = await apiFetch('/applicants/filters?_=' + Date.now());
+    if (fr.ok && fr.data) { _ap.filters = fr.data; _ap.fAt = Date.now(); }
+  }
+  var r = await apiFetch('/applicants?' + _apQS(_apParams({ _: Date.now() })));
+  if (seq !== _ap.seq) return;
+  _ap.loading = false;
+  if (!r.ok || !r.data || !Array.isArray(r.data.data)) { _ap.err = _acctMsg(r, 'Could not load applicants'); }
+  else {
+    _ap.err = null; _ap.data = r.data.data; _ap.total = r.data.total; _ap.masked = !!r.data.pii_masked; _ap.at = Date.now();
+    var maxPage = Math.max(1, Math.ceil(_ap.total / APP_PER_PAGE));
+    if (_ap.page > maxPage && _ap.total > 0) { _ap.page = maxPage; return _apLoad(); }
+    _ap.data.forEach(function(row) { if (!row.archived_at) _apCache(row); });
+    filteredApps = _ap.data.map(mapApplicant);
+  }
+  if (typeof currentPage === 'undefined' || currentPage === 'applicants') _apPaint();
+}
+
+function _apFillFilters() {
+  var F = _ap.filters; if (!F) return;
+  var fill = function(id, label, items, cur) {
+    var el = document.getElementById(id); if (!el) return;
+    el.innerHTML = '<option value="">' + escapeHtml(label) + '</option>' + items.map(function(x) {
+      return '<option value="' + escapeHtml(x.v) + '"' + (x.v === cur ? ' selected' : '') + '>' + escapeHtml(x.l) + '</option>'; }).join('');
+    if (cur && el.value !== cur) { el.value = ''; }
+  };
+  fill('app-agent-filter', 'All Agents', (F.agents || []).map(function(a) { return { v: a.name, l: a.name + ' (' + a.count + ')' }; }), _ap.agent);
+  fill('app-joborder-filter', 'All Employers', (F.employers || []).map(function(e) { return { v: e.value, l: e.value + ' (' + e.count + ')' }; }), _ap.employer);
+  fill('app-country-filter', 'All Countries', (F.countries || []).map(function(c) { return { v: c.value, l: c.value + ' (' + c.count + ')' }; }), _ap.country);
+  var med = document.getElementById('app-medical-filter');
+  if (med && med.options.length < 5) med.innerHTML = '<option value="">All Medical</option>' + _AP_MEDICAL.map(function(m) { return '<option' + (m === _ap.medical ? ' selected' : '') + '>' + m + '</option>'; }).join('');
+  var cat = document.getElementById('app-category-filter'); if (cat && _ap.category) cat.value = _ap.category;
+  var arch = document.getElementById('app-archived-filter');
+  if (arch) {
+    arch.innerHTML = [['0', 'Active applicants'], ['1', 'Archived (' + (F.archived || 0) + ')'], ['all', 'Active + archived'], ['retention', 'Past retention date (' + (F.past_retention || 0) + ')']]
+      .map(function(o) { return '<option value="' + o[0] + '"' + (o[0] === _ap.archived ? ' selected' : '') + '>' + escapeHtml(o[1]) + '</option>'; }).join('');
+  }
+  var sb = document.getElementById('sb-app-count');
+  if (sb) sb.textContent = (F.statuses || []).reduce(function(s, x) { return s + x.count; }, 0);
+}
+
+function _apStatusCell(r, canMove) {
+  if (!canMove || r.archived_at) return pillHtml(r.status);
+  return '<div class="inline-edit-wrap" title="Change status (checked by the server)">' + pillHtml(r.status) + '<span class="inline-edit-icon">✎</span>' +
+    '<select class="inline-edit-sel" data-act="status" data-id="' + escapeHtml(r.id) + '" aria-label="Change status of ' + escapeHtml(_apName(r)) + '">' +
+    _AP_STATUSES.map(function(s) { return '<option value="' + s + '"' + (s === r.status ? ' selected' : '') + '>' + s + '</option>'; }).join('') + '</select></div>';
+}
+function _apMedicalCell(r, canEdit) {
+  if (!canEdit || r.archived_at) return pillHtml(r.medical_status || 'Pending', 'medical');
+  return '<div class="inline-edit-wrap" title="Change medical status">' + pillHtml(r.medical_status || 'Pending', 'medical') + '<span class="inline-edit-icon">✎</span>' +
+    '<select class="inline-edit-sel" data-act="medical" data-id="' + escapeHtml(r.id) + '" aria-label="Change medical status of ' + escapeHtml(_apName(r)) + '">' +
+    _AP_MEDICAL.map(function(s) { return '<option value="' + s + '"' + (s === (r.medical_status || 'Pending') ? ' selected' : '') + '>' + s + '</option>'; }).join('') + '</select></div>';
+}
+function _apRowHtml(r, P) {
+  var id = escapeHtml(r.id), job = r.job_title || r.position || '';
+  var acts = '<button class="btn btn-ghost btn-xs" data-act="open" data-id="' + id + '">View</button>';
+  if (!r.archived_at && P.edit) acts += '<button class="btn btn-ghost btn-xs" data-act="edit" data-id="' + id + '">Edit</button>';
+  if (P.archive) acts += r.archived_at ? '<button class="btn btn-ghost btn-xs" data-act="restore" data-id="' + id + '">Restore</button>'
+    : '<button class="btn btn-ghost btn-xs" style="color:var(--red)" data-act="archive" data-id="' + id + '" title="Archive (keeps documents, fees and history)">Archive</button>';
+  if (r.archived_at && P.admin) acts += '<button class="btn btn-ghost btn-xs" style="color:var(--red)" data-act="delete" data-id="' + id + '" title="Permanently delete (only records with nothing attached)">Delete</button>';
+  return '<tr data-id="' + id + '"' + (r.archived_at ? ' style="opacity:.65"' : '') + '>' +
+    '<td><input type="checkbox" class="table-check" data-act="pick" data-id="' + id + '"' + (_ap.sel[r.id] ? ' checked' : '') + ' aria-label="Select ' + escapeHtml(_apName(r)) + '"></td>' +
+    '<td><span style="font-family:monospace;font-size:11.5px;color:var(--muted)">' + escapeHtml(r.display_id || '—') + '</span></td>' +
+    '<td><div style="font-weight:700;cursor:pointer;color:var(--text)" data-act="open" data-id="' + id + '"' + (r.notes ? ' title="' + escapeHtml(String(r.notes).slice(0, 300)) + '"' : '') + '>' + escapeHtml(_apName(r)) + '</div>' +
+      '<div style="font-size:11px;color:var(--muted)">' + escapeHtml(r.email || '') + (r.archived_at ? ' <span class="pill pill-gray" style="font-size:10px">Archived</span>' : '') + (r.docs_pending ? ' <span title="Documents awaiting approval" style="font-size:10px;color:var(--purple)">📄 ' + r.docs_pending + '</span>' : '') + '</div></td>' +
+    '<td style="position:relative">' + _apStatusCell(r, P.move) + '</td>' +
+    '<td style="font-size:12px;color:var(--text2)">' + escapeHtml(r.phone || '—') + '</td>' +
+    '<td style="font-size:12.5px">' + (r.job_order_id ? '<div style="font-size:11px;font-weight:700;color:var(--brand);margin-bottom:2px">🔗 ' + escapeHtml(r.employer || 'Job order') + '</div>' : '') + escapeHtml(job || '—') + (r.destination ? ' · ' + escapeHtml(r.destination) : '') + '</td>' +
+    '<td style="font-size:12.5px;color:var(--text2)">' + escapeHtml(r.agent_name || '—') + '</td>' +
+    '<td style="position:relative">' + _apMedicalCell(r, P.edit) + '</td>' +
+    '<td style="font-size:11.5px;font-family:monospace;color:var(--muted)">' + escapeHtml(String(r.created_at || '').slice(0, 10)) + '</td>' +
+    '<td style="text-align:right;white-space:nowrap">' + acts + '</td></tr>';
+}
+function _apPerms() {
+  var role = typeof getCurrentRole === 'function' ? getCurrentRole() : '';
+  return { edit: hasPermission('Edit Applicants'), move: hasPermission('Edit Applicants'), archive: hasPermission('Delete Applicants'), admin: role === 'Admin',
+    create: hasPermission('Create Applicants'), export: hasPermission('Export Applicant Data') };
+}
+function _apPaint() {
+  var tbody = document.getElementById('app-tbody'); if (!tbody) return;
+  var P = _apPerms();
+  _apFillFilters();
+  var show = function(id, on) { var el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+  show('app-csv-btn', P.export); show('app-new-btn', P.create); show('app-import-btn', P.create);
+  var lbl = document.getElementById('applicant-count-label');
+  if (!_ap.data) {
+    tbody.innerHTML = _ap.err ? '<tr><td colspan="10"><div class="empty-state" style="color:var(--red)">' + escapeHtml(_ap.err) + '</div></td></tr>'
+      : '<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--muted)">Loading applicants…</td></tr>';
+    return;
+  }
+  tbody.innerHTML = _ap.data.length ? _ap.data.map(function(r) { return _apRowHtml(r, P); }).join('')
+    : '<tr><td colspan="10"><div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">No applicants found</div><div class="empty-sub">Try adjusting your search or filters.</div></div></td></tr>';
+  var start = (_ap.page - 1) * APP_PER_PAGE;
+  var pi = document.getElementById('pg-info'); if (pi) pi.textContent = (_ap.total ? (start + 1) : 0) + '–' + Math.min(start + APP_PER_PAGE, _ap.total) + ' of ' + _ap.total;
+  if (lbl) lbl.textContent = _ap.total + ' applicant' + (_ap.total === 1 ? '' : 's') + (_ap.loading ? ' · updating…' : '') + (_ap.masked ? ' · personal data hidden for your role' : '') + (_ap.err ? ' · ' + _ap.err : '');
+  var pp = document.getElementById('per-page-select'); if (pp) pp.value = String(APP_PER_PAGE);
+  var sa = document.getElementById('select-all'); if (sa) sa.checked = _ap.data.length > 0 && _ap.data.every(function(r) { return _ap.sel[r.id]; });
+  appPage = _ap.page;
+  renderPagination(Math.ceil(_ap.total / APP_PER_PAGE));
+  updateBulkBar();
+  if (typeof _syncExtraFilterChip === 'function') _syncExtraFilterChip();
+}
+
+// demo sessions have no server: show the local sample, clearly labelled
+function _apDemo() {
+  var tbody = document.getElementById('app-tbody'); if (!tbody) return;
+  var rows = getScopedApplicants().map(function(a) { return { id: a.id, display_id: a.displayId || a.id, full_name: a.name, email: a.email, phone: a.contact, status: a.status, position: a.job, agent_name: a.agent, medical_status: a.medical, created_at: a.date }; });
+  _ap.data = rows; _ap.total = rows.length;
+  var P = { edit: false, move: false, archive: false, admin: false };
+  tbody.innerHTML = rows.slice(0, 100).map(function(r) { return _apRowHtml(r, P); }).join('');
+  var lbl = document.getElementById('applicant-count-label'); if (lbl) lbl.textContent = rows.length + ' applicants (demo data)';
+}
+
+// ── events (delegated, bound once) ─────────────────────────────────────────
+function _apBind() {
+  if (_ap.bound) return; var page = document.getElementById('page-applicants'); if (!page) return; _ap.bound = true;
+  page.addEventListener('click', function(e) {
+    var t = e.target.closest('[data-act]'); if (!t || t.tagName === 'SELECT') return;
+    var act = t.dataset.act, id = t.dataset.id;
+    if (act === 'pick') { if (t.checked) _ap.sel[id] = 1; else delete _ap.sel[id]; updateBulkBar(); return; }
+    if (act === 'open') { _plOpen(id); return; }
+    if (act === 'edit') { editApplicant(id); return; }
+    if (act === 'archive') { archiveApplicant(id); return; }
+    if (act === 'restore') { restoreApplicant(id); return; }
+    if (act === 'delete') { deleteApplicantForever(id); return; }
+    if (act === 'sel-all-matching') { _apSelectAllMatching(); return; }
+    if (act === 'bulk-export') { _apBulkExport(); return; }
+    if (act === 'bulk-archive') { _apBulkArchive(); return; }
+    if (act === 'bulk-move') { _apBulkMove(); return; }
+    if (act === 'bulk-clear') { clearBulk(); return; }
+  });
+  page.addEventListener('change', function(e) {
+    var t = e.target; if (!t.dataset) return;
+    if (t.dataset.act === 'status') { var r = _apRow(t.dataset.id); _apMove(t.dataset.id, t.value, r); }
+    if (t.dataset.act === 'medical') { _apMedical(t.dataset.id, t.value, _apRow(t.dataset.id)); }
+  });
+}
+
+async function _apMove(id, to, r) {
+  await _plMove(id, to, { from: r ? r.status : undefined, name: _apName(r) });
+  renderApplicants(true);
+}
+async function _apMedical(id, value, r) {
+  var body = { medical_status: value };
+  if (r && r.updated_at) body.expected_updated_at = r.updated_at;
+  var res = await apiFetch('/applicants/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify(body) });
+  if (!res.ok && res.data && res.data.error === 'reason_required') {
+    var why = _askReason('Why is the medical status of ' + _apName(r) + ' changing to ' + value + ' after deployment?');
+    if (!why) { renderApplicants(true); return; }
+    body.reason = why; res = await apiFetch('/applicants/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify(body) });
+  }
+  if (!res.ok) { toast('⛔ ' + _acctMsg(res, 'Medical status was not saved'), 'error'); renderApplicants(true); return; }
+  _apCache(res.data);
+  toast('✅ ' + _apName(r) + ' medical → ' + value, 'success');
+  if (res.data.commission_sync) { try { apiFetchCommissions(); } catch (e) {} }
+  renderApplicants(true);
+}
+// legacy entry point (drawer etc.)
+function _inlineSaveMedical(appId, newMedical) { var uuid = _apUuid(appId); return _apMedical(uuid, newMedical, _apRow(uuid) || { id: uuid, full_name: (DB.applicants.find(function(a) { return a._dbId === uuid || a.id === uuid; }) || {}).name }); }
+
+// ── selection + bulk ──────────────────────────────────────────────────────
+function toggleSelect(id, cb) { if (cb.checked) _ap.sel[id] = 1; else delete _ap.sel[id]; updateBulkBar(); }
+function toggleSelectAll(cb) { (_ap.data || []).forEach(function(r) { if (cb.checked) _ap.sel[r.id] = 1; else delete _ap.sel[r.id]; }); _apPaint(); }
+function clearBulk() { _ap.sel = {}; var sa = document.getElementById('select-all'); if (sa) sa.checked = false; _apPaint(); }
+function updateBulkBar() {
+  var bar = document.getElementById('bulk-action-bar'); if (!bar) return;
+  var n = Object.keys(_ap.sel).length, P = _apPerms();
+  if (!n) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  var pageAll = (_ap.data || []).length && (_ap.data || []).every(function(r) { return _ap.sel[r.id]; });
+  var btn = 'class="btn btn-sm" style="background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.2)"';
+  bar.innerHTML = '<span id="bulk-count-label">' + n + ' selected</span>' +
+    (pageAll && _ap.total > n ? '<button ' + btn + ' data-act="sel-all-matching">Select all ' + _ap.total + ' matching</button>' : '') +
+    (P.export ? '<button ' + btn + ' data-act="bulk-export">Export selected</button>' : '') +
+    (P.move ? '<select id="ap-bulk-to" style="border-radius:6px;padding:3px 6px">' + _AP_STATUSES.map(function(s) { return '<option>' + s + '</option>'; }).join('') + '</select><button ' + btn + ' data-act="bulk-move">Move</button>' : '') +
+    (P.archive ? '<button class="btn btn-sm" style="background:rgba(220,38,38,.3);color:#fff;border:none" data-act="bulk-archive">Archive selected</button>' : '') +
+    '<button class="btn btn-ghost btn-sm" style="color:rgba(255,255,255,.7)" data-act="bulk-clear">✕ Clear</button>';
+}
+async function _apSelectAllMatching() {
+  var r = await apiFetch('/applicants/ids?' + _apQS(_apParams({ page: '', limit: '', sort: '', order: '' })));
+  if (!r.ok || !r.data) { toast(_acctMsg(r, 'Could not select all'), 'error'); return; }
+  _ap.sel = {}; r.data.ids.forEach(function(id) { _ap.sel[id] = 1; }); _apPaint();
+  toast(r.data.ids.length + ' applicants selected', 'info');
+}
+function _apBulkExport() {
+  var ids = Object.keys(_ap.sel);
+  if (!hasPermission('Export Applicant Data')) { toast('Your role cannot export applicant data', 'error'); return; }
+  if (ids.length > 300) { toast('Export up to 300 selected applicants at a time — or use CSV Export with filters for larger sets', 'error'); return; }
+  _srvExport('dataset', 'applicants', { ids: ids.join(','), archived: 'all' }, 'csv');
+}
+async function _apBulkArchive() {
+  var ids = Object.keys(_ap.sel); if (!ids.length) return;
+  var why = _askReason('Why are these ' + ids.length + ' applicant(s) being archived?'); if (!why) return;
+  var r = await apiFetch('/applicants/bulk-archive', { method: 'POST', body: JSON.stringify({ ids: ids, reason: why }) });
+  if (!r.ok) { toast(_acctMsg(r, 'Archive failed'), 'error'); return; }
+  var bad = r.data.results.filter(function(x) { return !x.ok; });
+  ids.forEach(function(id) { var i = DB.applicants.findIndex(function(a) { return a._dbId === id || a.id === id; }); if (i !== -1) DB.applicants.splice(i, 1); });
+  toast(r.data.archived + ' archived' + (bad.length ? ' · ' + bad.length + ' not archived' : ''), bad.length ? 'error' : 'success');
+  _ap.sel = {}; _apAfterChange();
+}
+async function _apBulkMove() {
+  var ids = Object.keys(_ap.sel); var toEl = document.getElementById('ap-bulk-to'); if (!ids.length || !toEl) return;
+  _pl.sel = {}; ids.forEach(function(id) { _pl.sel[id] = 1; });
+  var tmp = document.createElement('select'); tmp.id = 'pl-bulk-to'; tmp.innerHTML = '<option>' + escapeHtml(toEl.value) + '</option>'; tmp.style.display = 'none'; document.body.appendChild(tmp);
+  try { await _plBulk(); } finally { tmp.remove(); }
+  _ap.sel = {}; _apAfterChange();
+}
+function bulkDelete() { return _apBulkArchive(); }
+function bulkExport() { return _apBulkExport(); }
+
+function _apAfterChange() {
+  _ap.fAt = 0; if (typeof _dashReset === 'function') _dashReset(); if (typeof _pl !== 'undefined') { _pl.data = null; }
+  if (typeof _cache !== 'undefined') Object.keys(_cache).forEach(function(k) { if (k.indexOf('/applicants') !== -1) delete _cache[k]; });
+  renderApplicants(true);
+}
+
+// ── archive / restore / delete ────────────────────────────────────────────
+async function archiveApplicant(id) {
+  id = _apUuid(id);
+  if (!hasPermission('Delete Applicants')) { toast('Your role cannot archive applicants', 'error'); return; }
+  var r0 = _apRow(id) || { full_name: (DB.applicants.find(function(a) { return a._dbId === id || a.id === id; }) || {}).name };
+  var why = _askReason('Archive ' + _apName(r0) + '? Documents, fees and history are kept and the applicant can be restored.\nWhy is this applicant being archived?');
+  if (!why) return;
+  var r = await apiFetch('/applicants/' + encodeURIComponent(id) + '/archive', { method: 'POST', body: JSON.stringify({ reason: why }) });
+  if (!r.ok) { toast('⛔ ' + _acctMsg(r, 'Archive failed'), 'error'); return; }
+  var i = DB.applicants.findIndex(function(a) { return a._dbId === id || a.id === id; }); if (i !== -1) DB.applicants.splice(i, 1);
+  try { autosave('applicants'); } catch (e) {}
+  if (typeof currentDrawerApplicant !== 'undefined' && currentDrawerApplicant && (currentDrawerApplicant._dbId === id || currentDrawerApplicant.id === id)) closeDrawer();
+  toast('🗄 ' + _apName(r0) + ' archived', 'success'); _apAfterChange();
+}
+async function restoreApplicant(id) {
+  id = _apUuid(id);
+  var r = await apiFetch('/applicants/' + encodeURIComponent(id) + '/restore', { method: 'POST', body: JSON.stringify({}) });
+  if (!r.ok) { toast('⛔ ' + _acctMsg(r, 'Restore failed'), 'error'); return; }
+  _apCache(r.data.applicant); toast('↩ ' + _apName(r.data.applicant) + ' restored', 'success'); _apAfterChange();
+}
+async function deleteApplicantForever(id) {
+  id = _apUuid(id);
+  var r0 = _apRow(id) || {};
+  if (!confirm('Permanently delete ' + _apName(r0) + '? This cannot be undone. Only records with no documents, fees, commissions, expenses or complaints can be deleted.')) return;
+  var why = _askReason('Why is ' + _apName(r0) + ' being permanently deleted?'); if (!why) return;
+  var r = await apiFetch('/applicants/' + encodeURIComponent(id), { method: 'DELETE', body: JSON.stringify({ reason: why }) });
+  if (!r.ok) { toast('⛔ ' + _acctMsg(r, 'Delete failed'), 'error'); return; }
+  toast(_apName(r0) + ' permanently deleted', 'success'); _apAfterChange();
+}
+function deleteApplicant(appId) { return archiveApplicant(appId); }
+
+// ── the form ──────────────────────────────────────────────────────────────
+var _AP_FIELD_INPUT = { first_name: 'a-first', middle_name: 'a-middle', last_name: 'a-last', email: 'a-email', phone: 'a-contact', passport_number: 'a-passport', date_of_birth: 'a-dob',
+  gender: 'a-gender', nationality: 'a-nationality', category: 'a-category', job_order_id: 'a-job-order', agent_id: 'a-agent', status: 'a-status', medical_status: 'a-medical',
+  consent_date: 'a-consent', retention_until: 'a-retention', destination: 'a-destination', position: 'a-job', notes: 'a-notes', salary: 'a-salary' };
+function _apSetVal(id, v) { var el = document.getElementById(id); if (el) el.value = v === null || v === undefined ? '' : String(v); }
+function _apVal(id) { var el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; }
+function _apClearErrors() {
+  Object.keys(_AP_FIELD_INPUT).forEach(function(k) { var el = document.getElementById(_AP_FIELD_INPUT[k]); if (el) { el.classList.remove('error'); el.title = ''; } });
+  var er = document.getElementById('a-error'); if (er) { er.style.display = 'none'; er.innerHTML = ''; }
+  var dp = document.getElementById('a-dup'); if (dp) { dp.style.display = 'none'; dp.innerHTML = ''; }
+}
+function _apShowError(msg, fields) {
+  var er = document.getElementById('a-error');
+  if (fields) Object.keys(fields).forEach(function(k) { var el = document.getElementById(_AP_FIELD_INPUT[k] || ''); if (el) { el.classList.add('error'); el.title = fields[k]; } });
+  var list = fields ? Object.keys(fields).map(function(k) { return '<li>' + escapeHtml(fields[k]) + '</li>'; }).join('') : '';
+  if (er) { er.innerHTML = '⛔ ' + escapeHtml(msg) + (list && Object.keys(fields).length > 1 ? '<ul style="margin:6px 0 0 18px">' + list + '</ul>' : ''); er.style.display = 'block'; }
+  else toast('⛔ ' + msg, 'error');
+}
+function _apFillForm(r) {
+  r = r || {};
+  _apClearErrors();
+  _apSetVal('a-first', r.first_name); _apSetVal('a-middle', r.middle_name); _apSetVal('a-last', r.last_name === '.' ? '' : r.last_name);
+  _apSetVal('a-id', r.display_id || 'Assigned when saved');
+  _apSetVal('a-contact', r.phone); _apSetVal('a-email', r.email); _apSetVal('a-passport', r.passport_number);
+  _apSetVal('a-dob', r.date_of_birth ? String(r.date_of_birth).slice(0, 10) : '');
+  _apSetVal('a-gender', r.gender); _apSetVal('a-nationality', r.nationality); _apSetVal('a-category', r.category);
+  _apSetVal('a-destination', r.destination); _apSetVal('a-job', r.position || r.job_title);
+  _apSetVal('a-medical', r.medical_status || 'Pending'); _apSetVal('a-status', r.status || 'Applied');
+  _apSetVal('a-consent', r.consent_date ? String(r.consent_date).slice(0, 10) : ''); _apSetVal('a-retention', r.retention_until ? String(r.retention_until).slice(0, 10) : '');
+  _apSetVal('a-notes', r.notes);
+  _populateAgentSelect('a-agent', r.agent_name || '', r.agent_id || '');
+  var hid = document.getElementById('a-job-order-id'); if (hid) hid.value = r.job_order_id || '';
+  _populateJobOrderSelect(r.job_order_id || '');
+  var dob = document.getElementById('a-dob'); if (dob) dob.max = _ymd(new Date());
+  // masked rows: personal fields are read-only and never sent back
+  var masked = !!r.pii_masked;
+  ['a-contact', 'a-email', 'a-passport', 'a-dob'].forEach(function(id) { var el = document.getElementById(id); if (el) { el.readOnly = masked; el.style.background = masked ? 'var(--s2)' : ''; } });
+  var mn = document.getElementById('a-masked-note'); if (mn) mn.style.display = masked ? 'block' : 'none';
+}
+function openAddApplicant() {
+  if (!hasPermission('Create Applicants')) { toast('Your role cannot create applicants', 'error'); return; }
+  _apForm = { mode: 'create', id: null, row: null, pendingDup: null };
+  document.getElementById('applicant-modal-title').textContent = 'New Applicant';
+  document.getElementById('applicant-modal-sub').textContent = 'Fields marked * are required. The APP-number is assigned when the server saves the record.';
+  _apFillForm({ status: 'Applied', medical_status: 'Pending' });
+  var st = document.getElementById('a-status'); if (st) st.disabled = false;
+  openOverlay('overlay-applicant');
+}
+async function editApplicant(id) {
+  if (!hasPermission('Edit Applicants')) { toast('Your role cannot edit applicants', 'error'); return; }
+  var uuid = _apUuid(id);
+  if (!_apIsUUID(uuid)) { toast('This applicant has not been saved to the server yet', 'error'); return; }
+  var r = await apiFetch('/applicants/' + encodeURIComponent(uuid) + '?_=' + Date.now());
+  if (!r.ok || !r.data) { toast(_acctMsg(r, 'Could not load the applicant'), 'error'); return; }
+  if (r.data.archived_at) { toast(_apName(r.data) + ' is archived — restore the applicant before editing', 'error'); return; }
+  _apForm = { mode: 'edit', id: uuid, row: r.data, pendingDup: null };
+  document.getElementById('applicant-modal-title').textContent = 'Edit Applicant';
+  document.getElementById('applicant-modal-sub').textContent = 'Editing ' + _apName(r.data) + (r.data.display_id ? ' · ' + r.data.display_id : '');
+  _apFillForm(r.data);
+  var st = document.getElementById('a-status'); if (st) st.disabled = !hasPermission('Edit Applicants');
+  openOverlay('overlay-applicant');
+}
+function _apCollect() {
+  var agentUuid = _apVal('a-agent-uuid');
+  if (!_apIsUUID(agentUuid)) { var nm = _apVal('a-agent'); var ag = nm ? DB.agents.find(function(a) { return a.name === nm; }) : null; agentUuid = ag ? (ag._dbId || ag.id) : ''; }
+  var jo = _apVal('a-job-order-id') || _apVal('a-job-order');
+  return {
+    first_name: _apVal('a-first'), middle_name: _apVal('a-middle'), last_name: _apVal('a-last'),
+    phone: _apVal('a-contact'), email: _apVal('a-email'), passport_number: _apVal('a-passport'), date_of_birth: _apVal('a-dob'),
+    gender: _apVal('a-gender'), nationality: _apVal('a-nationality'), category: _apVal('a-category'),
+    destination: _apVal('a-destination'), position: _apVal('a-job'), job_order_id: _apIsUUID(jo) ? jo : '', agent_id: _apIsUUID(agentUuid) ? agentUuid : '',
+    medical_status: _apVal('a-medical') || 'Pending', consent_date: _apVal('a-consent'), retention_until: _apVal('a-retention'), notes: document.getElementById('a-notes') ? document.getElementById('a-notes').value : '',
+  };
+}
+function _apNorm(v) { if (v === null || v === undefined) return ''; return String(v).slice(0, 10) === String(v) ? String(v).trim() : String(v).trim(); }
+function _apDiff(p, row) {
+  var out = {}, personal = ['phone', 'email', 'passport_number', 'date_of_birth'];
+  Object.keys(p).forEach(function(k) {
+    if (row.pii_masked && personal.indexOf(k) !== -1) return;
+    var a = p[k] == null ? '' : String(p[k]).trim(), b = row[k] == null ? '' : String(row[k]).trim();
+    if (k === 'date_of_birth' || k === 'consent_date' || k === 'retention_until') b = b.slice(0, 10);
+    if (k === 'last_name' && b === '.') b = '';
+    if (k === 'position' && !b) b = row.job_title == null ? '' : String(row.job_title).trim();
+    if (a !== b) out[k] = p[k];
+  });
+  return out;
+}
+async function saveApplicant(dupReason) {
+  var btn = document.getElementById('a-save-btn');
+  var p = _apCollect();
+  _apClearErrors();
+  if (!p.first_name) { _apShowError('First name is required', { first_name: 'Required' }); return; }
+  var body, res, newStatus = null;
+  if (_apForm.mode === 'create') {
+    body = Object.assign({}, p, { status: _apVal('a-status') || 'Applied' });
+    Object.keys(body).forEach(function(k) { if (body[k] === '') delete body[k]; });
+  } else {
+    var row = _apForm.row || {};
+    body = _apDiff(p, row);
+    var st = _apVal('a-status'); if (st && st !== row.status) newStatus = st;
+    if (!Object.keys(body).length && !newStatus) { toast('No changes to save', 'info'); closeOverlay('overlay-applicant'); return; }
+    body.expected_updated_at = row.updated_at;
+  }
+  if (dupReason) { body.allow_duplicate = true; body.duplicate_reason = dupReason; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    if (_apForm.mode === 'create') res = await apiFetch('/applicants', { method: 'POST', body: JSON.stringify(body) });
+    else if (Object.keys(body).length > 1 || dupReason) res = await apiFetch('/applicants/' + encodeURIComponent(_apForm.id), { method: 'PATCH', body: JSON.stringify(body) });
+    else res = { ok: true, data: _apForm.row };
+  } finally { if (btn) { btn.disabled = false; btn.textContent = 'Save Applicant'; } }
+  var d = res && res.data;
+  if (!res.ok) {
+    if (d && d.error === 'validation') { _apShowError(d.message || 'Please correct the highlighted fields', d.fields); return; }
+    if (d && (d.error === 'possible_duplicate' || (d.error === 'reason_required' && d.duplicates))) { _apShowDuplicates(d); return; }
+    if (d && d.error === 'edit_conflict') { _apShowConflict(d); return; }
+    if (d && d.error === 'agent_inactive') { _apShowError(d.message, d.fields || { agent_id: d.message }); return; }
+    _apShowError(_acctMsg(res, 'The applicant was not saved'), null); return;
+  }
+  var saved = d && d.id ? d : (_apForm.row || {});
+  _apCache(saved);
+  closeOverlay('overlay-applicant');
+  toast(_apForm.mode === 'create' ? '✅ ' + _apName(saved) + ' registered' + (saved.display_id ? ' as ' + saved.display_id : '') : '✅ ' + _apName(saved) + ' updated', 'success');
+  if (d && d.agent_transfer && typeof _applyAgentTransfer === 'function') { try { _applyAgentTransfer(d.agent_transfer, mapApplicant(saved)); } catch (e) {} }
+  if (d && d.commission_sync) { try { apiFetchCommissions(); } catch (e) {} }
+  if (newStatus) await _plMove(saved.id, newStatus, { from: saved.status, name: _apName(saved) });
+  if (typeof currentDrawerApplicant !== 'undefined' && currentDrawerApplicant && (currentDrawerApplicant._dbId === saved.id || currentDrawerApplicant.id === saved.id)) { try { openDrawer(saved.id); } catch (e) {} }
+  _apAfterChange();
+  if (currentPage === 'pipeline') renderKanban(true);
+}
+function _apShowDuplicates(d) {
+  var dp = document.getElementById('a-dup'); if (!dp) { toast(d.message, 'error'); return; }
+  dp.innerHTML = '<div style="font-weight:800;margin-bottom:6px">⚠ Possible duplicate</div><div style="font-size:12px;margin-bottom:8px">' + escapeHtml(d.message || '') + '</div>' +
+    (d.duplicates || []).map(function(x) {
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--border)"><div><b>' + escapeHtml(x.name) + '</b> <span style="font-family:monospace;font-size:11px;color:var(--muted)">' + escapeHtml(x.display_id || '') + '</span>' +
+        '<div style="font-size:11px;color:var(--muted)">' + escapeHtml(x.status || '') + (x.archived ? ' · archived' : '') + ' · same ' + escapeHtml((x.matched || []).join(', ')) + '</div></div>' +
+        '<button type="button" class="btn btn-s btn-xs" data-dup-open="' + escapeHtml(x.id) + '">Open existing</button></div>';
+    }).join('') +
+    '<div style="margin-top:8px;text-align:right"><button type="button" class="btn btn-ghost btn-sm" id="a-dup-anyway">Save anyway…</button></div>';
+  dp.style.display = 'block';
+  dp.querySelectorAll('[data-dup-open]').forEach(function(b) { b.onclick = function() { closeOverlay('overlay-applicant'); _plOpen(b.getAttribute('data-dup-open')); }; });
+  var any = document.getElementById('a-dup-anyway');
+  if (any) any.onclick = function() { var why = _askReason('Why is this not a duplicate?'); if (why) saveApplicant(why); };
+}
+function _apShowConflict(d) {
+  var er = document.getElementById('a-error'); if (!er) { toast(d.message, 'error'); return; }
+  er.innerHTML = '⚠ ' + escapeHtml(d.message) + ' <button type="button" class="btn btn-s btn-xs" id="a-reload-latest">Load the latest values</button>';
+  er.style.display = 'block';
+  var b = document.getElementById('a-reload-latest');
+  if (b) b.onclick = function() { if (d.current) { _apForm.row = d.current; _apFillForm(d.current); toast('Latest values loaded — re-apply your change and save', 'info'); } };
+}
+
+// ── CSV import ────────────────────────────────────────────────────────────
+var _AP_IMPORT_HEADERS = { 'full name': 'full_name', 'name': 'full_name', 'first name': 'first_name', 'middle name': 'middle_name', 'last name': 'last_name', 'surname': 'last_name',
+  'email': 'email', 'e-mail': 'email', 'phone': 'phone', 'contact': 'phone', 'mobile': 'phone', 'contact number': 'phone', 'passport': 'passport_number', 'passport number': 'passport_number',
+  'dob': 'date_of_birth', 'date of birth': 'date_of_birth', 'birthdate': 'date_of_birth', 'birthday': 'date_of_birth', 'gender': 'gender', 'sex': 'gender', 'category': 'category',
+  'nationality': 'nationality', 'destination': 'destination', 'country': 'destination', 'position': 'position', 'agent': 'agent', 'agent code': 'agent', 'job order': 'job_order',
+  'medical': 'medical_status', 'medical status': 'medical_status', 'status': 'status', 'consent date': 'consent_date', 'retention until': 'retention_until', 'notes': 'notes' };
+var _apImport = { rows: [], result: null };
+function _apParseCsv(text) {
+  var rows = [], row = [], cell = '', q = false;
+  text = String(text || '').replace(/^﻿/, '');
+  for (var i = 0; i < text.length; i++) {
+    var ch = text[i];
+    if (q) { if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === ',') { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(cell); cell = ''; if (row.some(function(c) { return c.trim() !== ''; })) rows.push(row); row = []; }
+    else cell += ch;
+  }
+  row.push(cell); if (row.some(function(c) { return c.trim() !== ''; })) rows.push(row);
+  if (!rows.length) return { rows: [], unknown: [] };
+  var head = rows[0].map(function(h) { return String(h).trim().toLowerCase().replace(/[_*]/g, ' ').replace(/\s+/g, ' '); });
+  var keys = head.map(function(h) { return _AP_IMPORT_HEADERS[h] || null; });
+  var unknown = head.filter(function(h, i) { return !keys[i] && h; });
+  var out = rows.slice(1).map(function(r) { var o = {}; keys.forEach(function(k, i) { if (k && r[i] !== undefined && String(r[i]).trim() !== '') o[k] = String(r[i]).trim(); }); return o; });
+  return { rows: out, unknown: unknown };
+}
+function _apImportTemplate() {
+  var csv = 'First name,Middle name,Last name,Gender,Date of birth,Category,Phone,Email,Passport,Nationality,Destination,Position,Agent,Job order,Medical,Status,Consent date,Notes\r\n' +
+    'Juan,Santos,dela Cruz,Male,1990-05-14,Skilled,+63 917 000 1234,juan@example.com,P1234567A,Filipino,Saudi Arabia,Driver,A1,EmpA - Driver,Pending,Applied,2026-10-01,\r\n';
+  _saveBlob(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' }), 'applicants_import_template.csv');
+}
+function _apOpenImport() {
+  if (!hasPermission('Create Applicants')) { toast('Your role cannot create applicants', 'error'); return; }
+  var ov = document.getElementById('overlay-app-import');
+  if (!ov) {
+    ov = document.createElement('div'); ov.className = 'overlay'; ov.id = 'overlay-app-import'; ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-modal', 'true');
+    ov.innerHTML = '<div class="modal modal-lg"><div class="modal-hdr"><div><h2>Import applicants</h2><p>CSV with a header row. Every row is checked (required fields, formats, duplicates) before anything is saved.</p></div>' +
+      '<button class="close-btn" onclick="closeOverlay(\'overlay-app-import\')" aria-label="Close">✕</button></div>' +
+      '<div class="modal-body"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><input type="file" id="ap-import-file" accept=".csv,text/csv">' +
+      '<button class="btn btn-ghost btn-sm" type="button" onclick="_apImportTemplate()">⬇ Template</button></div>' +
+      '<div id="ap-import-body" style="font-size:12.5px;color:var(--muted)">Choose a CSV file (max 500 rows). Required: first name (or full name), gender, date of birth, category.</div></div>' +
+      '<div class="modal-foot"><button class="btn btn-ghost" onclick="closeOverlay(\'overlay-app-import\')">Close</button><button class="btn btn-p" id="ap-import-go" disabled>Import valid rows</button></div></div>';
+    document.body.appendChild(ov);
+    document.getElementById('ap-import-file').addEventListener('change', function(e) {
+      var f = e.target.files && e.target.files[0]; if (!f) return;
+      if (f.size > 2 * 1024 * 1024) { toast('File is larger than 2 MB', 'error'); return; }
+      var rd = new FileReader(); rd.onload = function() { _apImportCheck(String(rd.result || '')); }; rd.readAsText(f);
+    });
+    document.getElementById('ap-import-go').addEventListener('click', _apImportCommit);
+  }
+  _apImport = { rows: [], result: null };
+  var fi = document.getElementById('ap-import-file'); if (fi) fi.value = '';
+  document.getElementById('ap-import-go').disabled = true;
+  openOverlay('overlay-app-import');
+}
+async function _apImportCheck(text) {
+  var body = document.getElementById('ap-import-body');
+  var parsed = _apParseCsv(text);
+  if (!parsed.rows.length) { body.innerHTML = '<span style="color:var(--red)">No data rows found.</span>'; return; }
+  if (parsed.rows.length > 500) { body.innerHTML = '<span style="color:var(--red)">' + parsed.rows.length + ' rows — import at most 500 at a time.</span>'; return; }
+  _apImport.rows = parsed.rows;
+  body.innerHTML = 'Checking ' + parsed.rows.length + ' rows…';
+  var r = await apiFetch('/applicants/import', { method: 'POST', body: JSON.stringify({ rows: parsed.rows, dry_run: true }) });
+  if (!r.ok) { body.innerHTML = '<span style="color:var(--red)">' + escapeHtml(_acctMsg(r, 'Check failed')) + '</span>'; return; }
+  _apImport.result = r.data; _apImportRender(r.data, parsed.unknown);
+}
+function _apImportRender(d, unknown) {
+  var body = document.getElementById('ap-import-body'), S = d.summary;
+  body.innerHTML = '<div style="margin-bottom:8px;color:var(--text)"><b style="color:var(--green)">' + S.valid + ' ready</b> · ' + S.invalid + ' with errors · ' + S.duplicates + ' possible duplicates (skipped)' + (S.created !== undefined ? ' · <b>' + S.created + ' created</b>' : '') + '</div>' +
+    (unknown && unknown.length ? '<div style="margin-bottom:8px">Ignored columns: ' + escapeHtml(unknown.join(', ')) + '</div>' : '') +
+    '<div style="max-height:46vh;overflow:auto;border:1px solid var(--border);border-radius:8px"><table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr style="background:var(--s2)"><th style="padding:6px;text-align:left">Row</th><th style="padding:6px;text-align:left">Name</th><th style="padding:6px;text-align:left">Result</th></tr></thead><tbody>' +
+    d.results.map(function(x) {
+      var errs = Object.keys(x.errors || {}).map(function(k) { return x.errors[k]; });
+      var dup = (x.duplicates || []).map(function(m) { return 'possible duplicate of ' + m.name + (m.display_id ? ' (' + m.display_id + ')' : ''); });
+      var txt = x.created ? '✅ created ' + (x.created.display_id || '') : (x.ok ? '✅ ready' : '⛔ ' + errs.concat(dup).join('; '));
+      return '<tr style="border-top:1px solid var(--border)"><td style="padding:6px">' + x.row + '</td><td style="padding:6px">' + escapeHtml((x.preview && x.preview.name) || '—') + '</td><td style="padding:6px;color:' + (x.ok || x.created ? 'var(--green)' : 'var(--red)') + '">' + escapeHtml(txt) + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+  var go = document.getElementById('ap-import-go'); if (go) go.disabled = !(d.dry_run && S.valid > 0);
+}
+async function _apImportCommit() {
+  if (!_apImport.rows.length || !_apImport.result || !_apImport.result.summary.valid) return;
+  if (!confirm('Create ' + _apImport.result.summary.valid + ' applicant(s)? Rows with errors or possible duplicates are skipped.')) return;
+  var go = document.getElementById('ap-import-go'); if (go) go.disabled = true;
+  var r = await apiFetch('/applicants/import', { method: 'POST', body: JSON.stringify({ rows: _apImport.rows, dry_run: false }) });
+  if (!r.ok) { toast(_acctMsg(r, 'Import failed'), 'error'); if (go) go.disabled = false; return; }
+  _apImport.result = r.data; _apImportRender(r.data, []);
+  toast(r.data.summary.created + ' applicant(s) imported', 'success');
+  if (typeof _cache !== 'undefined') Object.keys(_cache).forEach(function(k) { if (k.indexOf('/applicants') !== -1) delete _cache[k]; });
+  try { fetchApplicants(); } catch (e) {}
+  _apAfterChange();
+}
+
+// ── drawer timeline + notes ───────────────────────────────────────────────
+async function _apTimeline(app, panel) {
+  var uuid = _apUuid(app._dbId || app.id);
+  panel.innerHTML = '<div style="color:var(--muted);padding:12px">Loading timeline…</div>';
+  if (!_isLiveSession() || !_apIsUUID(uuid)) { panel.innerHTML = '<div class="empty-state"><div class="empty-title">Timeline is available for saved applicants only</div></div>'; return; }
+  var r = await apiFetch('/applicants/' + encodeURIComponent(uuid) + '/timeline?_=' + Date.now());
+  if (!r.ok || !r.data) { panel.innerHTML = '<div style="color:var(--red);padding:12px">' + escapeHtml(_acctMsg(r, 'Could not load the timeline')) + '</div>'; return; }
+  var icon = { status: '🔄', note: '📝', created: '➕', change: '✏️', archive: '🗄', document: '📄', money: '💰' };
+  var canNote = hasPermission('Edit Applicants');
+  panel.innerHTML = (canNote ? '<div style="margin-bottom:12px"><textarea id="ap-note-input" rows="2" maxlength="2000" placeholder="Add a dated note (who called, what was agreed…)" style="width:100%;padding:8px 10px;font-size:12.5px;border:1.5px solid var(--border);border-radius:8px;background:var(--s2);color:var(--text);box-sizing:border-box"></textarea>' +
+      '<div style="text-align:right;margin-top:6px"><button class="btn btn-p btn-sm" type="button" id="ap-note-add">Add note</button></div></div>' : '') +
+    (r.data.events.length ? r.data.events.map(function(e) {
+      return '<div class="audit-item"><div class="audit-ico" style="background:var(--s2)">' + (icon[e.kind] || '•') + '</div>' +
+        '<div class="audit-content"><div class="audit-action" style="white-space:pre-wrap">' + escapeHtml(e.text) + (e.reason ? ' <span style="color:var(--muted)">— ' + escapeHtml(e.reason) + '</span>' : '') + '</div>' +
+        '<div class="audit-meta">' + escapeHtml(e.by || 'System') + ' · ' + escapeHtml(e.kind) + '</div></div>' +
+        '<div class="audit-time">' + escapeHtml(new Date(e.at).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })) + '</div></div>';
+    }).join('') : '<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">No history yet</div></div>');
+  var add = document.getElementById('ap-note-add');
+  if (add) add.onclick = async function() {
+    var t = (document.getElementById('ap-note-input') || {}).value || '';
+    if (!t.trim()) { toast('Write a note first', 'error'); return; }
+    add.disabled = true;
+    var rr = await apiFetch('/applicants/' + encodeURIComponent(uuid) + '/notes', { method: 'POST', body: JSON.stringify({ body: t }) });
+    add.disabled = false;
+    if (!rr.ok) { toast(_acctMsg(rr, 'Note not saved'), 'error'); return; }
+    toast('Note added', 'success'); _apTimeline(app, panel);
+  };
+}
+
+
 function renderPagination(pages) {
   const el = document.getElementById('pagination');
   if (pages <= 1) { el.innerHTML = ''; return; }
@@ -8261,564 +8468,27 @@ function renderPagination(pages) {
   html += `<button class="pg-btn" onclick="changePage(${appPage+1})" ${appPage===pages?'disabled':''} aria-label="Next">›</button>`;
   el.innerHTML = html;
 }
-function changePage(p) { appPage = p; renderApplicants(); document.getElementById('main-content').scrollTo(0,0); }
-function setPerPage(val) {
-  APP_PER_PAGE = parseInt(val) || 8;
-  appPage = 1; // reset to first page
-  localStorage.setItem('rams:perPage', String(APP_PER_PAGE));
-  renderApplicants();
-}
-function toggleSelect(id, cb) {
-  if (cb.checked) selectedApps.add(id); else selectedApps.delete(id);
-  updateBulkBar();
-}
-function toggleSelectAll(cb) {
-  const pageApps = filteredApps.slice((appPage-1)*APP_PER_PAGE, appPage*APP_PER_PAGE);
-  pageApps.forEach(a => { if(cb.checked) selectedApps.add(a.id); else selectedApps.delete(a.id); });
-  renderApplicants();
-}
-function updateBulkBar() {
-  const bar = document.getElementById('bulk-action-bar');
-  if (selectedApps.size > 0) {
-    bar.style.display = 'flex';
-    document.getElementById('bulk-count-label').textContent = `${selectedApps.size} selected`;
-  } else {
-    bar.style.display = 'none';
-  }
-}
-function clearBulk() { selectedApps.clear(); document.getElementById('select-all').checked = false; renderApplicants(); }
-function bulkDelete() {
-  if (!selectedApps.size) return;
 
-  if (!confirm('Delete ' + selectedApps.size + ' selected applicant' + (selectedApps.size > 1 ? 's' : '') + '? This cannot be undone.')) return;
 
-  const count   = selectedApps.size;
-  // Capture id→dbId map BEFORE removing from DB
-  const toDelete = [];
-  selectedApps.forEach(function(id) {
-    var app = DB.applicants.find(function(a){ return a.id === id; });
-    toDelete.push({ id: id, dbId: app ? (app._dbId || app.id) : id });
-  });
 
-  // 1. Remove from local DB
-  DB.applicants = DB.applicants.filter(function(a){ return !selectedApps.has(a.id); });
 
-  // 2. Add to permanent deleted Set so polls never restore them
-  if (!window._deletedApplicantIds) window._deletedApplicantIds = new Set();
-  toDelete.forEach(function(entry) {
-    window._deletedApplicantIds.add(entry.id);
-    if (entry.dbId !== entry.id) window._deletedApplicantIds.add(entry.dbId);
-  });
-  Store.set('rams:deleted:applicants', JSON.stringify([...window._deletedApplicantIds]), true).catch(function(){});
-  Store.set('rams:deleted:applicants:ts', String(Date.now()), true).catch(function(){});
 
-  // 3. Persist local cache
-  autosave('applicants');
 
-  addAudit('DELETE', 'Applicants', 'Bulk deleted ' + count + ' applicants');
-  selectedApps.clear();
-  filteredApps = [...getScopedApplicants()];
-  renderApplicants();
-  toast('Deleted ' + count + ' applicant' + (count > 1 ? 's' : ''), 'success');
 
-  // 4. Delete each from server (parallel) — if any fail, log but keep local delete
-  // Invalidate cache immediately so next poll fetches fresh
-  if (typeof _cache !== 'undefined') Object.keys(_cache).forEach(function(k){ if(k.includes('/applicants')) delete _cache[k]; });
-  if (typeof _lastFetch !== 'undefined') _lastFetch['applicants'] = 0;
 
-  var failedNames = [];
-  Promise.all(toDelete.map(function(entry) {
-    return apiDeleteApplicant(entry.dbId).then(function(r){
-      if (!r.ok) failedNames.push(entry.id);
-    }).catch(function(){ failedNames.push(entry.id); });
-  })).then(function() {
-    if (failedNames.length) {
-      toast(failedNames.length + ' deletion(s) saved — will sync to server when reconnected','info');
-    }
-  });
-}
-function bulkExport() {
-  if (!hasPermission('Export Applicant Data')) { toast('Your role cannot export applicant data', 'error'); return; }
-  const rows = DB.applicants.filter(a => selectedApps.has(a.id));
-  const cols = [['id','ID'],['name','Name'],['status','Status'],['position','Position'],['destination','Destination'],['agent','Agent']];
-  if (hasPermission('Export Personal Data')) cols.push(['email','Email'],['phone','Phone'],['passport','Passport']);
-  exportCSV(rows, 'selected_applicants', cols);
-  // Update summary counts
-  var rc = document.getElementById('repat-count');
-  var bc = document.getElementById('backout-count');
-  var rj = document.getElementById('rejected-count');
-  if (rc) rc.textContent = DB.applicants.filter(function(a){return a.status==='Repatriated';}).length;
-  if (bc) bc.textContent = DB.applicants.filter(function(a){return a.status==='Backout';}).length;
-  if (rj) rj.textContent = DB.applicants.filter(function(a){return a.status==='Rejected';}).length;
-
-}
 
 // ════════════════════════════════════════════════════════
 // APPLICANT CRUD
 // ════════════════════════════════════════════════════════
-function openAddApplicant() {
-  if (!hasPermission('Create Applicants')) {
-    toast('Your role cannot create applicants', 'error'); return;
-  }
-  document.getElementById('applicant-modal-title').textContent = 'New Applicant';
-  document.getElementById('applicant-modal-sub').textContent = 'Fill in all required fields to register an applicant.';
-  document.getElementById('a-name').value = '';
-  var _previewId = nextAppId(); _sequences.APP--; saveSequences(); // peek without consuming
-  document.getElementById('a-id').value = 'APP-' + String(_sequences.APP + 1).padStart(4, '0');
-  document.getElementById('a-status').value = 'Applied';
-  _populateAgentSelect('a-agent', DB.agents.filter(function(a){return a.status==='Active';})[0]?.name || '');
-  document.getElementById('a-contact').value = '';
-  document.getElementById('a-email').value = '';
-  document.getElementById('a-job').value = '';
-  document.getElementById('a-medical').value = 'Pending';
-  document.getElementById('a-notes').value = '';
-  document.getElementById('a-gender').value = '';
-  document.getElementById('a-passport').value = '';
-  var _dobElR = document.getElementById('a-dob'); if (_dobElR) _dobElR.value = '';
-  document.getElementById('a-destination').value = '';
-  document.getElementById('a-job').value = '';
-  document.getElementById('a-name').dataset.editId = '';
-  _populateAgentSelect('a-agent', '', '');
-  _populateJobOrderSelect('');
-  var _auuid = document.getElementById('a-agent-uuid'); if(_auuid) _auuid.value = '';
-  var _joid  = document.getElementById('a-job-order-id'); if(_joid) _joid.value = '';
-  openOverlay('overlay-applicant');
-}
-function editApplicant(id) {
-  if (!hasPermission('Edit Applicants')) {
-    toast('Your role cannot edit applicants', 'error'); return;
-  }
-  const a = DB.applicants.find(x => x.id === id || x._dbId === id);
-  if (!a) { toast('Applicant not found — try refreshing the page', 'error'); return; }
-  document.getElementById('applicant-modal-title').textContent = 'Edit Applicant';
-  document.getElementById('applicant-modal-sub').textContent = `Editing ${a.name}`;
-  document.getElementById('a-name').value = a.name;
-  document.getElementById('a-id').value = a.displayId || a.id;
-  document.getElementById('a-status').value = a.status;
-  _populateAgentSelect('a-agent', a.agent, a._agentDbId || '');
-  document.getElementById('a-contact').value = a.contact;
-  document.getElementById('a-email').value = a.email;
-  document.getElementById('a-job').value = a.job || '';
-  document.getElementById('a-medical').value = a.medical;
-  document.getElementById('a-notes').value = a.notes;
-  document.getElementById('a-gender').value = a.gender || '';
-  document.getElementById('a-passport').value = a.passport || '';
-  var _dobEl = document.getElementById('a-dob'); if (_dobEl) _dobEl.value = a.dob || '';
-  var _aCat = document.getElementById('a-category'); if (_aCat) _aCat.value = a.category || '';
-  document.getElementById('a-destination').value = a.destination || '';
-  var _joid = document.getElementById('a-job-order-id'); if(_joid) _joid.value = a._jobOrderId || '';
-  // _populateJobOrderSelect called last so _onJobOrderSelect can override a-job with the resolved title
-  _populateJobOrderSelect(a._jobOrderId || '');
-  document.getElementById('a-name').dataset.editId = id;
-  openOverlay('overlay-applicant');
-}
-function saveApplicant() {
-  const name = document.getElementById('a-name').value.trim();
-  if (!name) { toast('Full name is required', 'error'); document.getElementById('a-name').classList.add('error'); return; }
-  document.getElementById('a-name').classList.remove('error');
 
-  const editId = document.getElementById('a-name').dataset.editId;
 
-  // ── Category — required on both create AND edit. No applicant record,
-  // new or existing, can be saved without one. ───────────────────────────
-  var categoryEl = document.getElementById('a-category');
-  if (categoryEl && !categoryEl.value) {
-    categoryEl.classList.add('error');
-    toast('Please fill in: Category', 'error');
-    return;
-  } else if (categoryEl) {
-    categoryEl.classList.remove('error');
-  }
 
-  // ── Remaining required fields — enforced for NEW applicants only ────────
-  // Existing applicants encoded before these fields were required can still
-  // be edited and saved without filling them in (to avoid blocking staff).
-  if (!editId) {
-    var genderEl   = document.getElementById('a-gender');
-    var dobEl      = document.getElementById('a-dob');
-
-    var missingFields = [];
-    if (genderEl && !genderEl.value)     { missingFields.push('Gender');        genderEl.classList.add('error'); }
-    else if (genderEl)                   { genderEl.classList.remove('error'); }
-
-    if (dobEl && !dobEl.value)           { missingFields.push('Date of Birth'); dobEl.classList.add('error'); }
-    else if (dobEl)                      { dobEl.classList.remove('error'); }
-
-    if (missingFields.length) {
-      toast('Please fill in: ' + missingFields.join(', '), 'error');
-      return;
-    }
-  }
-  const data = {
-    id: editId || genId('APP'), name,
-    status: document.getElementById('a-status').value,
-    agent: document.getElementById('a-agent').value,
-    _agentDbId: (function() {
-      var hiddenUUID = document.getElementById('a-agent-uuid') ? document.getElementById('a-agent-uuid').value.trim() : '';
-      if (hiddenUUID && isUUID(hiddenUUID)) return hiddenUUID;
-      var selectedName = document.getElementById('a-agent').value;
-      if (!selectedName) return '';
-      var found = DB.agents.find(function(ag){ return ag.name === selectedName; });
-      return found ? (found._dbId || found.id || '') : '';
-    })(),
-    contact: document.getElementById('a-contact').value || '+63 900 000 0000',
-    email: document.getElementById('a-email').value || 'no-email@example.com',
-    job: document.getElementById('a-job').value || 'Not specified',
-    _jobOrderId: (function() {
-      var hiddenId = document.getElementById('a-job-order-id');
-      var selectEl = document.getElementById('a-job-order');
-      // Hidden field is kept in sync by _onJobOrderSelect — prefer it
-      var v = (hiddenId && hiddenId.value) ? hiddenId.value
-            : (selectEl && selectEl.value)  ? selectEl.value
-            : '';
-      return v || '';
-    })(),
-    medical: document.getElementById('a-medical').value,
-    date: editId ? DB.applicants.find(a=>a.id===editId).date : _ymd(new Date()),
-    notes: document.getElementById('a-notes').value,
-    gender: document.getElementById('a-gender').value,
-    passport:  document.getElementById('a-passport').value.trim().toUpperCase(),
-    dob:       document.getElementById('a-dob') ? document.getElementById('a-dob').value : '',
-    category:  (document.getElementById('a-category')||{}).value||'',
-    destination: document.getElementById('a-destination').value,
-  };
-  if (editId) {
-    const idx = DB.applicants.findIndex(a => a.id === editId);
-    // Preserve server-assigned fields from existing record
-    const existing = DB.applicants[idx];
-    if (existing) {
-      data._dbId      = existing._dbId || existing.id;
-      data._updatedAt = existing._updatedAt;
-      data.id         = existing.id;
-      // Agent: check if user intentionally cleared (select exists and is blank)
-      // vs agent field not rendered (no select element present)
-      var _agentSelectEl = document.getElementById('a-agent');
-      var _agentIntentionalClear = _agentSelectEl && _agentSelectEl.value === '';
-      if (_agentIntentionalClear) {
-        // User picked "-- Select Agent --" — clear the agent completely
-        data._agentDbId = '';
-        data._agentId   = '';
-        data.agent      = '';
-        // Track in Store so polls don't restore old agent_id from server
-        if (!window._clearedAgentMap) window._clearedAgentMap = {};
-        window._clearedAgentMap[data.id] = true;
-        if (data._dbId) window._clearedAgentMap[data._dbId] = true;
-        Store.set('rams:cleared:agents', JSON.stringify(window._clearedAgentMap), true).catch(function(){});
-        Store.set('rams:cleared:agents:ts', String(Date.now()), true).catch(function(){});
-      } else {
-        // No agent select or user kept existing — restore from local if server didn't return it
-        if (!data._agentDbId) data._agentDbId = existing._agentDbId || '';
-        if (!data.agent)      data.agent      = existing.agent || '';
-        // If user set a new agent, remove from cleared map
-        if (data._agentDbId && window._clearedAgentMap) {
-          delete window._clearedAgentMap[data.id];
-          if (data._dbId) delete window._clearedAgentMap[data._dbId];
-          Store.set('rams:cleared:agents', JSON.stringify(window._clearedAgentMap), true).catch(function(){});
-        }
-      }
-      // Fall back to existing job order ONLY if the select element doesn't exist (field not rendered)
-      // If select exists and is empty, user intentionally cleared it — honour that
-      var _joSelectExists = !!document.getElementById('a-job-order');
-      if (!data._jobOrderId && !_joSelectExists) data._jobOrderId = existing._jobOrderId || '';
-      // (if _joSelectExists and _jobOrderId is '', user cleared it intentionally — send null to server)
-      // Keep email from server if user left field blank
-      if (!data.email || data.email === 'no-email@example.com') {
-        data.email = existing.email || data.email;
-      }
-    }
-    // Stamp status timestamp when status changes
-    if (existing && existing.status !== data.status) {
-      data._statusUpdatedAt = new Date().toISOString();
-
-      // ── Stage gate: Deployed requires Medical (passed/exempted) + Processing ──
-      // Same rules as _inlineSaveStatus: medical is read from the actual
-      // Medical Status field, and OWWA is never required for Skilled workers.
-      if (data.status === 'Deployed') {
-        var _hist = existing._stageHistory || [];
-        var _medVal  = data.medical !== undefined ? data.medical : existing.medical;
-        var _hasMed  = _medVal === 'Passed' || _medVal === 'Exempted';
-        var _catVal   = data.category !== undefined ? data.category : existing.category;
-        var _isSkilled = _catVal === 'Skilled';
-        var _hasProc = _isSkilled
-          ? (_hist.indexOf('Processing') !== -1)
-          : (_hist.indexOf('Processing') !== -1 || _hist.indexOf('OWWA') !== -1);
-        if (!_hasMed || !_hasProc) {
-          var _miss = [];
-          if (!_hasMed)  _miss.push('Medical');
-          if (!_hasProc) _miss.push(_isSkilled ? 'Processing' : 'Processing or OWWA');
-          var errEl = document.getElementById('a-error') || document.getElementById('applicant-error');
-          if (errEl) {
-            errEl.textContent = '⛔ Cannot deploy — required stage' + (_miss.length > 1 ? 's' : '') +
-              ' not completed: ' + _miss.join(', ') + '. Move applicant through those stages first.';
-            errEl.style.display = 'block';
-          } else {
-            toast('⛔ Cannot deploy — required stages not completed: ' + _miss.join(', '), 'error');
-          }
-          // Revert status in form dropdown to previous value
-          var statusSel = document.getElementById('a-status');
-          if (statusSel) statusSel.value = existing.status;
-          return; // block save
-        }
-      }
-
-      // Record stage history
-      if (!data._stageHistory) data._stageHistory = existing._stageHistory ? existing._stageHistory.slice() : [];
-      if (data._stageHistory.indexOf(data.status) === -1) data._stageHistory.push(data.status);
-
-      // Register pending status so fetchApplicants respects it
-      if (!window._pendingStatusUpdates) window._pendingStatusUpdates = {};
-      window._pendingStatusUpdates[data.id] = { status: data.status, ts: Date.now() };
-      if (data._dbId) window._pendingStatusUpdates[data._dbId] = { status: data.status, ts: Date.now() };
-    } else {
-      // Preserve existing timestamp — status didn't change
-      data._statusUpdatedAt = (existing && existing._statusUpdatedAt) || data._statusUpdatedAt || new Date().toISOString();
-      // Carry forward existing stage history
-      if (!data._stageHistory && existing && existing._stageHistory) data._stageHistory = existing._stageHistory.slice();
-    }
-    DB.applicants[idx] = data;
-
-    // ── Agent change: transfer expenses and ledger entries to new agent ──
-    if (!_isLiveSession() && existing && existing.agent && data.agent && existing.agent !== data.agent) {
-      var oldAgentName = existing.agent;
-      var newAgent     = DB.agents.find(function(ag){ return ag.name === data.agent || ag.name.toLowerCase().trim() === data.agent.toLowerCase().trim(); });
-      var oldAgent     = DB.agents.find(function(ag){ return ag.name === oldAgentName; });
-
-      if (newAgent && oldAgent) {
-        var appId       = data.id;
-        var appDbId     = data._dbId || data.id;
-        var appName     = data.name;
-        var transferredExp  = 0;
-        var transferredLedg = 0;
-
-        // 1. Transfer DB.expenses to new agent
-        DB.expenses.forEach(function(e) {
-          var match = e.applicant === appName || e.applicantId === appId || e.applicantId === appDbId;
-          if (!match) return;
-          var oldAmt = e.amount || 0;
-
-          // Reverse from old agent's balance (only if was Charged to old agent)
-          if (e.status === 'Charged' && oldAgent) {
-            oldAgent.balance = (oldAgent.balance || 0) + oldAmt;
-            oldAgent.totalExpenses = Math.max(0, (oldAgent.totalExpenses || 0) - oldAmt);
-          }
-
-          // Assign to new agent
-          e.agentName = newAgent.name;
-          e.agentId   = newAgent._dbId || newAgent.id;
-
-          // Apply to new agent's balance if Charged
-          if (e.status === 'Charged') {
-            newAgent.balance       = (newAgent.balance || 0) - oldAmt;
-            newAgent.totalExpenses = (newAgent.totalExpenses || 0) + oldAmt;
-          }
-          transferredExp++;
-        });
-
-        // 2. Transfer agent ledger entries to new agent
-        DB.agentLedger.forEach(function(e) {
-          var match = e.applicantId === appId || e.applicantId === appDbId ||
-                      (e.applicantName && e.applicantName.toLowerCase().trim() === appName.toLowerCase().trim());
-          if (!match || e.agentId !== (oldAgent._dbId || oldAgent.id)) return;
-
-          // Reverse from old agent
-          oldAgent.balance = (oldAgent.balance || 0) - (e.amount || 0);
-
-          // Move to new agent
-          var newAgentId = newAgent._dbId || newAgent.id;
-          e.agentId   = newAgentId;
-          e.agentName = newAgent.name;
-          newAgent.balance = (newAgent.balance || 0) + (e.amount || 0);
-          transferredLedg++;
-
-          // Persist to backend via the PATCH route
-          var entryDbId = e._dbId || e.id;
-          if (entryDbId && isUUID(entryDbId)) {
-            apiFetch('/agent-ledger/' + entryDbId, {
-              method: 'PATCH',
-              body: JSON.stringify({ agent_id: newAgentId })
-            }).catch(function(){});
-          }
-        });
-
-        // 3. Transfer commissions to new agent
-        DB.commissions.forEach(function(c) {
-          var match = c.applicantId === appId || c.applicantId === appDbId ||
-                      (c.applicantName && c.applicantName.toLowerCase().trim() === appName.toLowerCase().trim());
-          if (!match || c.agentId !== (oldAgent._dbId || oldAgent.id)) return;
-          c.agentId = newAgent._dbId || newAgent.id;
-          // Sync to backend
-          var cDbId = c._dbId || c.id;
-          if (cDbId && isUUID(cDbId)) {
-            apiFetch('/commissions/' + cDbId, { method: 'PATCH', body: JSON.stringify({ agent_id: c.agentId }) }).catch(function(){});
-          }
-        });
-
-        autosave('expenses');
-        autosave('agentLedger');
-        autosave('commissions');
-        autosave('agents');
-        apiUpdateAgent(oldAgent).catch(function(){});
-        apiUpdateAgent(newAgent).catch(function(){});
-
-        // Add a ledger note on new agent showing the transfer
-        if (transferredExp > 0 || transferredLedg > 0) {
-          addAudit('UPDATE', 'Agent', 'Agent reassigned for ' + appName + ': ' + oldAgentName + ' → ' + data.agent +
-            ' (' + transferredExp + ' expenses, ' + transferredLedg + ' ledger entries transferred)');
-          toast('✅ Agent changed: ' + transferredExp + ' expense(s) and ' + transferredLedg +
-            ' ledger entries transferred from ' + oldAgentName + ' to ' + data.agent, 'success');
-        }
-      }
-    }
-
-    // Status-change notifications are emitted solely by _pushStatusChangeNotif,
-    // which now covers routine stages too. Notifying here as well meant one
-    // status change produced two separate entries in the bell.
-
-    // Track intentionally-cleared job orders so polls don't restore old value
-    if (!data._jobOrderId && existing && existing._jobOrderId) {
-      if (!window._clearedJobOrders) window._clearedJobOrders = {};
-      window._clearedJobOrders[data.id] = true;
-      Store.set('rams:cleared:joborders', JSON.stringify(window._clearedJobOrders));
-    } else if (data._jobOrderId) {
-      // User set a job order — remove from cleared set if present
-      if (window._clearedJobOrders && window._clearedJobOrders[data.id]) {
-        delete window._clearedJobOrders[data.id];
-        Store.set('rams:cleared:joborders', JSON.stringify(window._clearedJobOrders));
-      }
-      // Auto-set ALL positions of the same employer to "In Progress" when any applicant is assigned
-      var assignedJob = DB.jobs.find(function(j) {
-        return j.id === data._jobOrderId || j._dbId === data._jobOrderId;
-      });
-      if (assignedJob) {
-        var employerName = assignedJob.employer;
-        DB.jobs.forEach(function(j) {
-          if (j.employer === employerName && j.status === 'Open') {
-            j.status = 'In Progress';
-            apiFetch('/jobs/' + (j._dbId || j.id), {
-              method: 'PATCH',
-              body: JSON.stringify({ status: 'In Progress' }),
-            }).catch(function(){});
-          }
-        });
-        autosave('jobs');
-        if (currentPage === 'jobs') renderJobs();
-      }
-    }
-    addAudit('UPDATE', 'Applicant', `Updated ${name}`);
-    queueWrite(async () => {
-      var r = await apiUpdateApplicant(data);
-      if (!r.ok) {
-        toast('Sync failed: ' + r.error, 'error');
-      } else if (r.data) {
-        // Merge server response back — preserves _updatedAt so fetchApplicants
-        // knows this record was just updated and won't overwrite local data
-        var serverData = mapApplicant(r.data);
-        if (r.data.agent_transfer) _applyAgentTransfer(r.data.agent_transfer, data);
-        if (r.data.commission_sync) _afterCommissionSync(r.data.commission_sync);
-        // Preserve non-server fields only
-        if (!serverData.passport    && data.passport)    serverData.passport    = data.passport;
-        if (data.category !== undefined)              serverData.category    = data.category;
-        if (!serverData.gender      && data.gender)      serverData.gender      = data.gender;
-        // Job order merge: user's explicit clear wins over whatever the server echoes back
-        if (data._jobOrderId === '') {
-          serverData._jobOrderId = ''; // user cleared — don't restore even if server returned old UUID
-        } else if (!serverData._jobOrderId && data._jobOrderId) {
-          serverData._jobOrderId = data._jobOrderId; // server lost it — restore from local
-        }
-        // Agent merge: user's intentional clear wins over whatever server echoes back
-        var _wasAgentCleared = window._clearedAgentMap &&
-          (window._clearedAgentMap[data.id] || (data._dbId && window._clearedAgentMap[data._dbId]));
-        if (_wasAgentCleared) {
-          // User cleared agent — zero it out even if server returned old agent_id
-          serverData.agent      = '';
-          serverData._agentId   = '';
-          serverData._agentDbId = '';
-        } else if (!serverData.agent && data.agent) {
-          // Server response lacks JOIN'd agent_name — preserve what user selected
-          serverData.agent      = data.agent;
-          serverData._agentId   = data._agentId   || data._agentDbId || '';
-          serverData._agentDbId = data._agentDbId || '';
-        }
-        var i = DB.applicants.findIndex(function(a){ return a.id === data.id || a._dbId === data._dbId; });
-        if (i !== -1) {
-          // Preserve the locally-set status if server echoed back the old one
-          if (data.status && serverData.status !== data.status) {
-            serverData.status = data.status;
-          }
-          // Register pending status so fetchApplicants also respects it
-          if (data.status) {
-            if (!window._pendingStatusUpdates) window._pendingStatusUpdates = {};
-            window._pendingStatusUpdates[data.id] = { status: data.status, ts: Date.now() };
-            if (data._dbId) window._pendingStatusUpdates[data._dbId] = { status: data.status, ts: Date.now() };
-          }
-          DB.applicants[i] = Object.assign({}, DB.applicants[i], serverData);
-          // If the drawer is open for this applicant, refresh it immediately
-          if (currentDrawerApplicant && (currentDrawerApplicant.id === data.id || currentDrawerApplicant._dbId === data._dbId)) {
-            currentDrawerApplicant = DB.applicants[i];
-            var _activeDrawerTab = document.querySelector('.dtab.active');
-            var _activeTabName = _activeDrawerTab ? (_activeDrawerTab.getAttribute('onclick') || '').match(/switchDrawerTab\('(\w+)'/)?.[1] : null;
-            if (_activeTabName === 'overview') switchDrawerTab('overview', _activeDrawerTab);
-          }
-        }
-        _reapplyFiltersIfActive();
-        autosave('applicants');
-      }
-    });
-    toast('Applicant updated', 'success');
-  } else {
-    DB.applicants.unshift(data);
-    addAudit('CREATE', 'Applicant', `Created ${data.id}: ${name}`);
-    queueWrite(() => apiCreateApplicant(data).then(r => {
-      if (!r.ok) { toast('Sync failed: '+r.error,'error'); return; }
-      if (r.data && r.data.id) {
-        var serverUUID = r.data.id;
-        data._dbId = serverUUID;
-        autosave('applicants');
-        // Update the notification link so clicking it still works after page refresh
-        var localId = data.id;
-        var nx = DB.notifications.find(function(n) {
-          return n.title === 'New Applicant Registered' && n.link && n.link.id === localId;
-        });
-        if (nx) {
-          nx.link.id    = serverUUID;
-          nx.link.altId = localId; // keep local as fallback
-          autosave('notifications');
-        }
-      }
-    }));
-    pushNotif('New Applicant Registered', name + ' has been added to the system', 'applicant',
-      { page: 'applicants', id: data.id || '' });
-    toast('Applicant registered', 'success');
-  }
-  // Display ID comes from the server (assigned on INSERT). getDisplayId returns
-  // '' on a live session when it hasn't arrived yet, so we leave it unset and
-  // let the next sync fill it in rather than inventing a conflicting number.
-  if (!data.displayId) {
-    var _did = getDisplayId(data);
-    if (_did) data.displayId = _did;
-  }
-  _reapplyFiltersIfActive();
-  autosave('applicants');
-  closeOverlay('overlay-applicant');
-  // Immediately refresh drawer if it's open for this applicant — shows category change right away
-  if (currentDrawerApplicant && (currentDrawerApplicant.id === data.id || currentDrawerApplicant._dbId === data._dbId)) {
-    currentDrawerApplicant = data;
-    var _dtab = document.querySelector('.dtab.active');
-    var _dtabName = _dtab ? (_dtab.getAttribute('onclick')||'').replace(/.*switchDrawerTab\('(\w+)'.*/,'$1') : '';
-    if (_dtabName === 'overview') switchDrawerTab('overview', _dtab);
-  }
-  // Invalidate applicants cache so next poll gets fresh data for ALL users
-  if (typeof _cache !== 'undefined') delete _cache['/applicants?limit=500'];
-  if (typeof _lastFetch !== 'undefined') _lastFetch['applicants'] = 0;
-  if (currentPage === 'applicants') renderApplicants();
-  if (currentPage === 'pipeline') renderKanban();
-  if (currentPage === 'dashboard') renderDashboard();
-}
 
 // ════════════════════════════════════════════════════════
 // CONFIRM DELETE
 // ════════════════════════════════════════════════════════
 function confirmDelete(type, id) {
+  if (type === 'applicant') { archiveApplicant(id); return; }   // applicants are archived, never deleted from here
   if (type === 'expense') { voidExpense(id); return; }   // expenses are voided with a reason, never deleted
   let name = '';
   if (type==='applicant') { const a=DB.applicants.find(x=>x.id===id); name=a?a.name:id; }
@@ -10513,12 +10183,12 @@ function _anRender(d) {
 
 // ── Drill-down into the Applicants page ───────────────────────────────
 var _AN_DQ_PREDICATES = {
-  deployed_no_date:    { label: 'Deployed with no deployment date', fn: function(x) { return x.status === 'Deployed' && !x.deploymentDate; } },
-  no_agent:            { label: 'No agent assigned',                fn: function(x) { return !x.agent; } },
-  no_destination:      { label: 'No destination country',           fn: function(x) { return !(x.destination || (x.job && x.job.indexOf('·') !== -1)); } },
-  no_category:         { label: 'No category',                      fn: function(x) { return !x.category; } },
-  no_job_order:        { label: 'Not linked to a job order',        fn: function(x) { return !x._jobOrderId; } },
-  advanced_no_medical: { label: 'Past Medical with medical Pending', fn: function(x) { return ['Processing','Visa','OWWA','Deployed'].indexOf(x.status) !== -1 && (!x.medical || x.medical === 'Pending'); } },
+  deployed_no_date:    { server: { dq: 'deployed_no_date' }, label: 'Deployed with no deployment date', fn: function(x) { return x.status === 'Deployed' && !x.deploymentDate; } },
+  no_agent:            { server: { agent_id: 'none' }, label: 'No agent assigned',                fn: function(x) { return !x.agent; } },
+  no_destination:      { server: { country: 'none' }, label: 'No destination country',           fn: function(x) { return !(x.destination || (x.job && x.job.indexOf('·') !== -1)); } },
+  no_category:         { server: { category: 'none' }, label: 'No category',                      fn: function(x) { return !x.category; } },
+  no_job_order:        { server: { job_order_id: 'none' }, label: 'Not linked to a job order',        fn: function(x) { return !x._jobOrderId; } },
+  advanced_no_medical: { server: { dq: 'advanced_no_medical' }, label: 'Past Medical with medical Pending', fn: function(x) { return ['Processing','Visa','OWWA','Deployed'].indexOf(x.status) !== -1 && (!x.medical || x.medical === 'Pending'); } },
 };
 function analyticsDrill(f) {
   f = f || {};
@@ -12155,6 +11825,7 @@ const PERMISSIONS=[
   ['Create Applicants',true,true,true,false,false,false],
   ['Edit Applicants',true,true,true,false,false,false],
   ['Delete Applicants',true,false,true,false,false,false],
+  ['View Personal Data',true,true,true,true,false,false],
   ['Move Applicants Backward',true,false,true,false,false,false],
   ['View All Applicants',true,true,true,true,true,true],
   ['Export Applicant Data',true,true,true,true,false,false],
@@ -16898,7 +16569,7 @@ function exportData(type) {
   if (type === 'analytics') return exportAnalyticsPDF();
   if (type === 'roles') return exportRolesMatrix();
   if (!map[type]) { toast('That export is not available', 'error'); return; }
-  _srvExport('dataset', map[type], {}, 'csv');
+  _srvExport('dataset', map[type], type === 'applicants' && typeof _apParams === 'function' ? (function(p) { var o = {}; ['status', 'agent', 'medical', 'category', 'employer', 'country', 'archived'].forEach(function(k) { var v = k === 'agent' ? p.agent_id : p[k]; if (v && String(v).indexOf(',') === -1 && v !== 'none') o[k] = v; }); return o; })(_apParams()) : {}, 'csv');
 }
 function exportRolesMatrix() {
   var head = ['Permission', 'Admin', 'Recruiter', 'Manager', 'Compliance', 'Finance', 'Viewer'];
@@ -17772,7 +17443,7 @@ async function deleteAgent(idx) {
   addAudit('DELETE', 'Agent', 'Removed agent: ' + agName);
   toast('Agent deleted', 'success');
   renderAgentGrid();
-  if (currentPage === 'applicants') renderApplicants();
+  if (currentPage === 'applicants') renderApplicants(true);
 }
 
 // ── MANUAL ADJUSTMENT ────────────────────────────────────────────────
@@ -18325,7 +17996,7 @@ function autoWaiveBackoutFees() {
 
 // ── DEPLOYMENT DATE MODAL HANDLERS ────────────────────────────────────
 function cancelDeploymentDate() {
-  if (window._pendingDeploy && window._pendingDeploy.via === 'pipeline') { window._pendingDeploy = null; closeOverlay('overlay-deployment-date'); toast('Deployment cancelled', 'info'); if (typeof renderKanban === 'function') renderKanban(true); if (currentPage === 'applicants') renderApplicants(); return; }
+  if (window._pendingDeploy && window._pendingDeploy.via === 'pipeline') { window._pendingDeploy = null; closeOverlay('overlay-deployment-date'); toast('Deployment cancelled', 'info'); if (typeof renderKanban === 'function') renderKanban(true); if (currentPage === 'applicants') renderApplicants(true); return; }
   // Revert the applicant status back to previous
   if (window._pendingDeploy) {
     var app = DB.applicants.find(function(a){ return a.id===window._pendingDeploy.applicantId; });
@@ -20205,76 +19876,8 @@ function _createMissingCommissions() {
 
 
 
-// ── PATCH saveApplicant to trigger accounting logic ───────────────────
-var _origSaveApplicant = saveApplicant;
-saveApplicant = function() {
-  var editId    = document.getElementById('a-name') ? document.getElementById('a-name').dataset.editId : null;
-  var oldApp    = editId ? (DB.applicants.find(function(a){ return a.id===editId; })||{}) : {};
-  var oldStatus     = oldApp.status      || null;
-  var oldJobOrderId = oldApp._jobOrderId || null;
+// (saveApplicant is server-confirmed; job-order changes re-point pending fees on the server)
 
-  // ── Employer fee gate: block Deployed if fee is Pending ──────────
-  var attemptedStatus = document.getElementById('a-status') ? document.getElementById('a-status').value : null;
-  if (editId && attemptedStatus === 'Deployed' && oldStatus !== 'Deployed') {
-    var _pendingFee = DB.employerFees && DB.employerFees.find(function(f){
-      return f.applicantId === editId && f.status === 'Pending';
-    });
-    if (_pendingFee) {
-      toast('⛔ Cannot deploy — employer fee of $' + _pendingFee.feeUSD.toLocaleString() + ' USD is still pending. Admin must mark it settled first.', 'error');
-      var _sel = document.getElementById('a-status');
-      if (_sel && oldStatus) _sel.value = oldStatus;
-      return;
-    }
-  }
-
-  // A status change made in the edit form is a pipeline move: the other fields are saved here, the move goes to the server
-  var _formMove = null;
-  if (editId && attemptedStatus && oldStatus && attemptedStatus !== oldStatus) {
-    _formMove = attemptedStatus;
-    var _fs = document.getElementById('a-status'); if (_fs) _fs.value = oldStatus;
-  }
-  _origSaveApplicant();
-  if (_formMove) setTimeout(function() { _moveLocalApplicant(editId, _formMove); }, 150);
-
-  var newApp        = editId ? (DB.applicants.find(function(a){ return a.id===editId; })||{}) : {};
-  var newStatus     = newApp.status      || null;
-  var newJobOrderId = newApp._jobOrderId || null;
-
-  // Status change hook
-  if (editId && newStatus && oldStatus !== newStatus) {
-    onApplicantStatusChange(editId, newStatus, oldStatus);
-  }
-
-  // ── If job order changed → update any Pending fee to reflect new employer ──
-  if (editId && newJobOrderId && newJobOrderId !== oldJobOrderId) {
-    var existingFee = DB.employerFees && DB.employerFees.find(function(f){
-      return f.applicantId === editId && f.status === 'Pending';
-    });
-    if (existingFee) {
-      var newJob = DB.jobs.find(function(j){ return j.id === newJobOrderId || j._dbId === newJobOrderId; });
-      if (newJob) {
-        existingFee.jobId    = newJob._dbId || newJob.id;
-        existingFee.jobTitle = newJob.title;
-        existingFee.employer = newJob.employer;
-        existingFee.country  = newJob.country || newApp.destination || '';
-        if (parseFloat(newJob.employerFeeUSD) > 0) existingFee.feeUSD = parseFloat(newJob.employerFeeUSD);
-        autosave('employerFees');
-        _syncEmployerFees();
-        // Patch the fee record on the backend with updated employer info
-        // Backend doesn't have a direct "update employer info" path so we
-        // delete and recreate to get a clean record with the right data
-        var _feeDbId = existingFee._dbId || existingFee.id;
-        if (isUUID(_feeDbId)) {
-          apiDeleteEmployerFee(_feeDbId).then(function() {
-            return apiCreateEmployerFee(existingFee);
-          }).catch(function(){});
-        }
-        toast('Employer fee updated: now linked to ' + newJob.employer, 'info');
-        if (currentPage === 'accounting') renderEmployerFees();
-      }
-    }
-  }
-};
 
 // Check guarantee periods on load
 function checkGuaranteePeriods() {
@@ -22373,7 +21976,7 @@ function saveViewerScope() {
   var me = getCurrentUser();
   if (me && me.email && me.email.toLowerCase() === _scopingUserEmail) {
     _reapplyFiltersIfActive();
-    if (currentPage === 'applicants') renderApplicants();
+    if (currentPage === 'applicants') renderApplicants(true);
     if (currentPage === 'jobs') renderJobs();
     if (currentPage === 'pipeline') renderKanban();
     if (currentPage === 'dashboard') renderDashboard();
@@ -22388,7 +21991,7 @@ function saveViewerScope() {
 
 // ── Clear local cache + re-sync from PostgreSQL ───────────────────────
 async function clearLocalCache() {
-  DB.applicants = []; DB.jobs = []; DB.expenses = []; DB.users = []; DB.auditLog = []; if (typeof _dashReset === 'function') _dashReset(); if (typeof _plReset === 'function') _plReset(); if (typeof _ov !== 'undefined') { _ov.data = null; _ov.at = 0; }
+  DB.applicants = []; DB.jobs = []; DB.expenses = []; DB.users = []; DB.auditLog = []; if (typeof _dashReset === 'function') _dashReset(); if (typeof _plReset === 'function') _plReset(); if (typeof _ap !== 'undefined') { _ap.data = null; _ap.filters = null; _ap.sel = {}; _ap.restored = false; } if (typeof _ov !== 'undefined') { _ov.data = null; _ov.at = 0; }
   filteredApps = [];
   await Store.clear();
   toast('Cache cleared — re-syncing from server…', 'info');
@@ -22596,7 +22199,7 @@ function _onJobOrderSelect() {
     var slotsLeft = (job.slots || 0) - (job.filled || 0);
     var statusColor = job.status === 'Open' ? 'var(--green)' : 'var(--muted)';
     info.innerHTML =
-      '<strong>' + job.title + '</strong>' +
+      '<strong>' + escapeHtml(job.title) + '</strong>' +
       '<br><span style="font-size:11px;color:var(--muted)">' + (job.employer||'') + ' · ' + (job.country||'') + '</span>' +
       '<br>' + (job.salary || 'Salary TBD') +
       ' · <span style="color:' + statusColor + ';font-weight:700">' + job.status + '</span>' +
@@ -23103,7 +22706,7 @@ async function fetchAgents() {
   }
   if (currentPage === 'dashboard') renderDashboard();
   // Applicants page: re-render so agent column and filter dropdown are populated
-  if (currentPage === 'applicants') renderApplicants();
+  if (currentPage === 'applicants') renderApplicants(true);
 }
 
 async function apiCreateAgent(data) {
