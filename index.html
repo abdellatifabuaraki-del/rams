@@ -1197,46 +1197,18 @@ button[disabled][data-rbac-locked] {
       <div class="pg-hdr">
         <div class="pg-hdr-l">
           <h1>Pipeline</h1>
-          <p>Drag applicants between stages to update their status.</p>
+          <p>Drag a card to another column — or use ⋯ — to move an applicant. Every move is checked by the server.</p>
         </div>
         <div class="pg-hdr-r">
-          <button class="btn btn-ghost btn-sm" onclick="resetPipelineOrder()" id="pipeline-reset-btn" style="font-size:11.5px">↺ Reset Order</button>
-          <button class="btn btn-s btn-sm" onclick="exportData('pipeline')">Export</button>
-          <button class="btn btn-p btn-sm" onclick="openAddApplicant()">+ Add Applicant</button>
+          <button class="btn btn-s btn-sm" id="pipeline-export-btn" onclick="exportData('pipeline')" style="display:none">Export</button>
+          <button class="btn btn-p btn-sm" id="pipeline-add-btn" onclick="openAddApplicant()" style="display:none">+ Add Applicant</button>
         </div>
       </div>
-      <div class="filter-bar" style="margin-bottom:12px">
-        <select class="filter-sel" id="pipeline-joborder-filter" onchange="filterPipeline()"
-                aria-label="Filter pipeline by job order" style="max-width:260px">
-          <option value="">All Job Orders</option>
-        </select>
-        <span id="pipeline-filter-count" style="font-size:12px;color:var(--muted)"></span>
-        <button class="btn btn-ghost btn-sm" onclick="clearPipelineFilter()" style="font-size:11.5px;margin-left:auto">Clear</button>
-      </div>
+      <div class="filter-bar" style="margin-bottom:6px;flex-wrap:wrap;gap:8px" id="pipeline-controls"></div>
+      <div style="margin-bottom:8px"><span id="pipeline-filter-count" style="font-size:12px;color:var(--muted)"></span></div>
+      <div id="pipeline-bulkbar" style="display:none;margin-bottom:8px;padding:8px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card);align-items:center;gap:10px;flex-wrap:wrap"></div>
       <div class="kanban-board" id="kanban-board" role="region" aria-label="Applicant pipeline"></div>
-      <div style="margin-top:16px;display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
-        <div style="background:var(--rbg);border:1px solid #fca5a5;border-radius:10px;padding:14px;display:flex;align-items:center;gap:10px">
-          <span style="font-size:20px">↩</span>
-          <div>
-            <div style="font-size:20px;font-weight:800;font-family:'IBM Plex Mono',monospace;color:var(--red)" id="repat-count">0</div>
-            <div style="font-size:11.5px;color:var(--muted)">Repatriated</div>
-          </div>
-        </div>
-        <div style="background:var(--abg);border:1px solid #fde68a;border-radius:10px;padding:14px;display:flex;align-items:center;gap:10px">
-          <span style="font-size:20px">↩</span>
-          <div>
-            <div style="font-size:20px;font-weight:800;font-family:'IBM Plex Mono',monospace;color:var(--amber)" id="backout-count">0</div>
-            <div style="font-size:11.5px;color:var(--muted)">Backouts</div>
-          </div>
-        </div>
-        <div style="background:var(--s2);border:1px solid var(--border);border-radius:10px;padding:14px;display:flex;align-items:center;gap:10px">
-          <span style="font-size:20px">✕</span>
-          <div>
-            <div style="font-size:20px;font-weight:800;font-family:'IBM Plex Mono',monospace;color:var(--muted)" id="rejected-count">0</div>
-            <div style="font-size:11.5px;color:var(--muted)">Rejected</div>
-          </div>
-        </div>
-      </div>
+      <div id="pipeline-ended" style="margin-top:14px"></div>
     </div>
 
     <!-- ══════════════════════════════════════
@@ -7398,174 +7370,377 @@ function _saveStageOrder(order) {
 // Build STAGES array (used in drawer pipeline preview)
 const STAGES = Object.keys(_STAGE_META).map(function(k){ return Object.assign({key:k},_STAGE_META[k]); });
 
-// ── Pipeline job-order filter ─────────────────────────────────────────
-// Mirrors the Applicants page: the dropdown lists one entry per employer
-// (not per position), and selecting one matches every position belonging to
-// that employer, so a worker shows up under the job order they were hired for.
-var _pipelineJobFilter = '';
-try { _pipelineJobFilter = localStorage.getItem('rams:filters:pipelineJob') || ''; } catch(e) {}
+// ── PIPELINE (server-owned) ───────────────────────────────────────────────
+// The board is served by GET /pipeline (counts per stage in SQL, first N cards per column, filters, viewer
+// scoping). EVERY status change — drag, "Move to…", the Applicants table, the drawer, the edit form, bulk —
+// goes through _plMove → POST /applicants/:id/status, where the server checks the transition, the deploy gate,
+// the reason and "expected_from", applies the side effects (employer fees, complaint, slots, commissions) and
+// audits it. The browser never decides whether a move is allowed.
+var _pl = { f: { employer: '', agent: '', country: '', category: '', medical: '', q: '', stuck: false, sort: 'oldest' },
+  data: null, err: null, loading: false, seq: 0, at: 0, select: false, sel: {}, endedOpen: false, bound: false, qTimer: null, drag: null, busy: {} };
+try { var _plSaved = JSON.parse(localStorage.getItem('rams:pipeline:filters') || 'null'); if (_plSaved) { Object.keys(_pl.f).forEach(function(k) { if (_plSaved[k] !== undefined) _pl.f[k] = _plSaved[k]; }); _pl.f.q = ''; } } catch (e) {}
 
-function _pipelineMatchIds() {
-  if (!_pipelineJobFilter) return null; // null = no restriction
-  var ids = new Set();
-  var repJob = DB.jobs.find(function(j){
-    return j.id === _pipelineJobFilter || j._dbId === _pipelineJobFilter;
-  });
-  var employer = repJob ? repJob.employer : null;
-  if (employer) {
-    DB.jobs.forEach(function(j){
-      if (j.employer === employer) {
-        if (j.id)    ids.add(j.id);
-        if (j._dbId) ids.add(j._dbId);
-      }
-    });
-  } else {
-    ids.add(_pipelineJobFilter);
+function _plQS(extra) {
+  var f = _pl.f, p = [];
+  ['employer', 'agent', 'country', 'category', 'medical', 'q', 'sort'].forEach(function(k) { if (f[k]) p.push(k + '=' + encodeURIComponent(f[k])); });
+  if (f.stuck) p.push('stuck=14');
+  Object.keys(extra || {}).forEach(function(k) { p.push(k + '=' + encodeURIComponent(extra[k])); });
+  return p.join('&');
+}
+function _plSaveFilters() { try { localStorage.setItem('rams:pipeline:filters', JSON.stringify(_pl.f)); } catch (e) {} }
+
+function renderKanban(force) {
+  var board = document.getElementById('kanban-board'); if (!board) return;
+  _plBind();
+  if (!_isLiveSession()) {
+    board.innerHTML = '<div class="card cp" style="color:var(--muted)">The pipeline board is served by the server. Sign in to a live session to use it.</div>';
+    return;
   }
-  return ids;
+  if (!_pl.drag) _plPaint();
+  if (force === true || !_pl.data || (Date.now() - _pl.at) > 8000) _plLoad();
 }
 
-function filterPipeline() {
-  var el = document.getElementById('pipeline-joborder-filter');
-  _pipelineJobFilter = el ? el.value : '';
-  try { localStorage.setItem('rams:filters:pipelineJob', _pipelineJobFilter); } catch(e) {}
-  renderKanban();
+async function _plLoad() {
+  if (!_isLiveSession()) return;
+  var seq = ++_pl.seq; _pl.loading = true;
+  var r = await apiFetch('/pipeline?' + _plQS({ _: Date.now() }));
+  if (seq !== _pl.seq) return;                         // a newer request superseded this one
+  _pl.loading = false;
+  if (!r.ok || !r.data) { _pl.err = _acctMsg(r, 'Could not load the pipeline'); }
+  else { _pl.data = r.data; _pl.err = null; _pl.at = Date.now(); }
+  if (_pl.drag) return;
+  if (document.getElementById('kanban-board')) _plPaint();
+}
+function _plReset() { _pl.data = null; _pl.err = null; _pl.at = 0; _pl.seq++; _pl.sel = {}; }
+function _plRefresh() { renderKanban(true); }
+
+function _plSetFilter(k, v) { _pl.f[k] = v; _plSaveFilters(); _pl.data = null; renderKanban(true); }
+function _plSearch(v) { clearTimeout(_pl.qTimer); _pl.qTimer = setTimeout(function() { _pl.f.q = v; _pl.data = null; renderKanban(true); }, 300); }
+function _plClear() { _pl.f = { employer: '', agent: '', country: '', category: '', medical: '', q: '', stuck: false, sort: _pl.f.sort }; _plSaveFilters(); var s = document.getElementById('pl-q'); if (s) s.value = ''; _pl.data = null; renderKanban(true); }
+function _plToggleSelect() { _pl.select = !_pl.select; _pl.sel = {}; _plPaint(); }
+
+function _plFillControls(d) {
+  var el = document.getElementById('pipeline-controls'); if (!el) return;
+  var f = _pl.f, F = d ? d.filters : { employers: [], agents: [], countries: [], categories: [] };
+  var opt = function(v, l, cur) { return '<option value="' + escapeHtml(v) + '"' + (v === cur ? ' selected' : '') + '>' + escapeHtml(l) + '</option>'; };
+  var sel = function(k, label, items) { return '<select class="filter-sel" aria-label="' + label + '" style="max-width:170px" onchange="_plSetFilter(\'' + k + '\',this.value)"><option value="">' + label + '</option>' + items.join('') + '</select>'; };
+  var focus = document.activeElement && document.activeElement.id === 'pl-q';
+  var qv = (document.getElementById('pl-q') || {}).value;
+  el.innerHTML =
+    sel('employer', 'All employers', F.employers.map(function(x) { return opt(x.value, x.value + ' (' + x.count + ')', f.employer); })) +
+    sel('agent', 'All agents', F.agents.map(function(x) { return opt(x.id, x.name, f.agent); })) +
+    sel('country', 'All countries', F.countries.map(function(x) { return opt(x, x, f.country); })) +
+    sel('category', 'All categories', F.categories.map(function(x) { return opt(x, x, f.category); })) +
+    sel('medical', 'Any medical', ['Pending', 'Passed', 'Failed', 'Exempted'].map(function(x) { return opt(x, 'Medical: ' + x, f.medical); })) +
+    '<input id="pl-q" class="f-inp" type="search" placeholder="Search name, ID, passport…" value="' + escapeHtml(qv !== undefined ? qv : f.q) + '" oninput="_plSearch(this.value)" style="width:190px">' +
+    '<label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" ' + (f.stuck ? 'checked ' : '') + 'onchange="_plSetFilter(\'stuck\',this.checked)"> Unchanged 14+ days</label>' +
+    '<select class="filter-sel" aria-label="Sort cards" style="max-width:130px" onchange="_plSetFilter(\'sort\',this.value)">' +
+      [['oldest', 'Oldest in stage first'], ['newest', 'Newest first'], ['name', 'Name A–Z']].map(function(o) { return opt(o[0], o[1], f.sort); }).join('') + '</select>' +
+    '<button class="btn btn-ghost btn-sm" style="font-size:11.5px" onclick="_plClear()">Clear</button>' +
+    (d && d.actions.move ? '<button class="btn btn-sm ' + (_pl.select ? 'btn-p' : 'btn-s') + '" onclick="_plToggleSelect()">☑ ' + (_pl.select ? 'Done selecting' : 'Select') + '</button>' : '') +
+    '<button class="btn btn-ghost btn-sm" onclick="_plRefresh()">↻</button>';
+  if (focus) { var q2 = document.getElementById('pl-q'); if (q2) { q2.focus(); try { q2.setSelectionRange(q2.value.length, q2.value.length); } catch (e) {} } }
 }
 
-function clearPipelineFilter() {
-  _pipelineJobFilter = '';
-  try { localStorage.removeItem('rams:filters:pipelineJob'); } catch(e) {}
-  var el = document.getElementById('pipeline-joborder-filter');
-  if (el) el.value = '';
-  renderKanban();
+function _plCard(c, A) {
+  var id = escapeHtml(c.id);
+  var age = c.days_in_stage, ageCol = age >= 14 ? 'var(--red)' : age >= 7 ? 'var(--amber)' : 'var(--muted)';
+  var flags = '';
+  if (c.blockers && c.blockers.length) flags += '<span title="' + escapeHtml('Cannot be deployed yet: ' + c.blockers.join(', ')) + '" style="font-size:10px;background:var(--rbg);color:var(--red);padding:1px 6px;border-radius:99px;font-weight:700">⛔ ' + c.blockers.length + '</span>';
+  else if (c.fee_pending) flags += '<span title="Employer fee pending" style="font-size:10px;background:var(--abg);color:var(--amber);padding:1px 6px;border-radius:99px;font-weight:700">$</span>';
+  if (c.docs_pending) flags += '<span title="' + c.docs_pending + ' document(s) awaiting approval" style="font-size:10px;background:var(--pbg);color:var(--purple);padding:1px 6px;border-radius:99px;font-weight:700">📄 ' + c.docs_pending + '</span>';
+  var movable = A.move && !_pl.select;
+  return '<div class="kanban-card" data-id="' + id + '" data-status="' + escapeHtml(c.status) + '" tabindex="0" role="button" aria-label="' + escapeHtml(c.name) + ', ' + escapeHtml(c.status) + '" ' + (movable ? 'draggable="true" ' : '') + 'data-act="open">' +
+    (_pl.select ? '<input type="checkbox" data-act="pick" data-id="' + id + '" ' + (_pl.sel[c.id] ? 'checked ' : '') + 'style="float:right;margin:2px 0 0 6px">' : '') +
+    (A.move && !_pl.select ? '<button type="button" data-act="menu" data-id="' + id + '" title="Move to…" aria-label="Move ' + escapeHtml(c.name) + ' to another stage" style="float:right;border:none;background:none;cursor:pointer;color:var(--muted);font-size:15px;line-height:1">⋯</button>' : '') +
+    '<div class="kanban-card-name">' + escapeHtml(c.name) + '</div>' +
+    '<div class="kanban-card-sub">' + escapeHtml(c.job || '—') + (c.employer ? ' · ' + escapeHtml(c.employer) : '') + '</div>' +
+    '<div class="kanban-card-sub">' + escapeHtml(c.country || '') + (c.agent ? ' · ' + escapeHtml(c.agent) : '') + '</div>' +
+    '<div class="kanban-card-foot"><span style="font-size:10px;color:var(--dim);font-family:monospace">' + escapeHtml(c.display_id || '') + '</span>' +
+    '<span style="display:flex;gap:4px;align-items:center">' + flags + '<span title="Days in this stage" style="font-size:10px;color:' + ageCol + ';font-weight:700">' + age + 'd</span>' + pillHtml(c.medical, 'medical') + '</span></div></div>';
 }
 
-function _populatePipelineJobFilter() {
-  var sel = document.getElementById('pipeline-joborder-filter');
-  if (!sel) return;
-  var usedJobIds = new Set(getScopedApplicants().map(function(a){ return a._jobOrderId; }).filter(Boolean));
-  var usedJobs   = DB.jobs.filter(function(j){ return usedJobIds.has(j.id) || usedJobIds.has(j._dbId); });
+function _plColumn(s, A, ended) {
+  var meta = (typeof _STAGE_META !== 'undefined' && _STAGE_META[s.stage]) || { color: 'var(--muted)', bg: 'var(--s2)', cnt: 'pill-gray' };
+  var grip = (A.configure && !ended) ? '<span class="pl-grip" draggable="true" data-act="colgrip" data-stage="' + escapeHtml(s.stage) + '" title="Drag to reorder columns (applies to everyone)" style="color:var(--dim);font-size:14px;margin-right:2px;cursor:grab">⠿</span>' : '';
+  var body = s.cards.length ? s.cards.map(function(c) { return _plCard(c, A); }).join('') : '<div class="kanban-empty">' + (ended ? 'None' : 'No applicants<br>in this stage') + '</div>';
+  var more = s.has_more ? '<button class="btn btn-ghost btn-sm" style="width:100%;margin-top:6px" data-act="more" data-stage="' + escapeHtml(s.stage) + '">Load more (' + (s.count - s.cards.length) + ')</button>' : '';
+  return '<div class="kanban-col" data-stage="' + escapeHtml(s.stage) + '"><div class="kanban-col-hdr">' + grip +
+    '<div style="width:9px;height:9px;border-radius:50%;background:' + meta.color + ';flex-shrink:0"></div><span style="flex:1">' + escapeHtml(s.stage) + '</span>' +
+    '<span class="pill ' + meta.cnt + '" style="font-size:11px;padding:2px 8px">' + s.count + '</span></div><div class="kanban-body">' + body + more + '</div></div>';
+}
 
-  var seen = {}, grouped = [];
-  usedJobs.forEach(function(j){
-    var key = (j.employer||'') + '|' + (j.country||'');
-    if (seen[key]) return;
-    seen[key] = true;
-    grouped.push({
-      value: j._dbId || j.id,
-      label: (j.employer||'Unknown') + (j.country ? ' (' + j.country + ')' : ''),
-    });
+function _plPaint() {
+  var board = document.getElementById('kanban-board'); if (!board) return;
+  var d = _pl.data;
+  _plFillControls(d);
+  var cnt = document.getElementById('pipeline-filter-count');
+  var ex = document.getElementById('pipeline-export-btn'), add = document.getElementById('pipeline-add-btn');
+  if (ex) ex.style.display = d && d.actions.export ? '' : 'none';
+  if (add) add.style.display = d && d.actions.add ? '' : 'none';
+  var endBox = document.getElementById('pipeline-ended');
+  if (_pl.err && !d) { board.innerHTML = '<div class="card cp" style="color:var(--red)">' + escapeHtml(_pl.err) + '</div>'; if (endBox) endBox.innerHTML = ''; return; }
+  if (!d) { board.innerHTML = '<div class="card cp" style="color:var(--muted)">Loading the pipeline…</div>'; if (endBox) endBox.innerHTML = ''; return; }
+  if (cnt) cnt.textContent = d.totals.all + ' applicant' + (d.totals.all === 1 ? '' : 's') + ' · ' + d.totals.active + ' in pipeline' + (_pl.loading ? ' · updating…' : ' · as of ' + new Date(d.as_of).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) + (d.scoped ? ' · your job orders only' : '');
+  var sb = document.getElementById('sb-pipeline-count'); if (sb) sb.textContent = d.totals.active;
+  var A = d.actions;
+  board.innerHTML = (_pl.err ? '<div class="card cp" style="color:var(--red);flex:none;width:100%;margin-bottom:8px">' + escapeHtml(_pl.err) + ' — showing the last snapshot.</div>' : '') +
+    d.stages.map(function(s) { return _plColumn(s, A, false); }).join('');
+  if (endBox) {
+    var tot = d.ended.reduce(function(a, s) { return a + s.count; }, 0);
+    endBox.innerHTML = '<div style="display:flex;align-items:center;gap:10px;margin:4px 0 8px;flex-wrap:wrap"><button class="btn btn-s btn-sm" data-act="toggle-ended">' + (_pl.endedOpen ? '▾' : '▸') + ' Ended (' + tot + ')</button>' +
+      d.ended.map(function(s) { return '<span class="kanban-col" data-stage="' + escapeHtml(s.stage) + '" style="min-width:0;flex:none;padding:6px 12px;border-radius:10px;border:1px dashed var(--border);background:var(--card);cursor:pointer" data-act="toggle-ended" title="Drop a card here to mark it ' + escapeHtml(s.stage) + '">' +
+        '<b>' + s.count + '</b> <span style="color:var(--muted);font-size:12px">' + escapeHtml(s.stage) + '</span></span>'; }).join('') + '</div>' +
+      (_pl.endedOpen ? '<div class="kanban-board" style="margin-bottom:12px">' + d.ended.map(function(s) { return _plColumn(s, A, true); }).join('') + '</div>' : '');
+  }
+  var bar = document.getElementById('pipeline-bulkbar');
+  if (bar) {
+    var n = Object.keys(_pl.sel).length;
+    bar.style.display = _pl.select ? '' : 'none';
+    if (_pl.select) bar.innerHTML = '<b>' + n + ' selected</b> <span style="color:var(--muted);font-size:12px">— move to</span> <select id="pl-bulk-to" class="filter-sel" style="max-width:180px">' +
+      d.columns.concat(d.ended.map(function(s) { return s.stage; })).map(function(x) { return '<option>' + escapeHtml(x) + '</option>'; }).join('') + '</select>' +
+      '<button class="btn btn-p btn-sm" ' + (n ? '' : 'disabled ') + 'data-act="bulk-go">Move</button><button class="btn btn-ghost btn-sm" data-act="bulk-all">Select all shown</button>';
+  }
+}
+
+// ── events (delegated, bound once) ────────────────────────────────────────
+function _plBind() {
+  if (_pl.bound) return; var page = document.getElementById('page-pipeline'); if (!page) return; _pl.bound = true;
+  page.addEventListener('click', function(e) {
+    var t = e.target.closest('[data-act]'); if (!t) return;
+    var act = t.dataset.act, id = t.dataset.id;
+    if (act === 'menu') { e.stopPropagation(); _plMenu(id, t); return; }
+    if (act === 'pick') { e.stopPropagation(); if (t.checked) _pl.sel[id] = 1; else delete _pl.sel[id]; _plPaint(); return; }
+    if (act === 'more') { _plMore(t.dataset.stage); return; }
+    if (act === 'toggle-ended') { _pl.endedOpen = !_pl.endedOpen; _plPaint(); return; }
+    if (act === 'bulk-go') { _plBulk(); return; }
+    if (act === 'bulk-all') { ((_pl.data && _pl.data.stages) || []).concat((_pl.data && _pl.data.ended) || []).forEach(function(s) { s.cards.forEach(function(c) { _pl.sel[c.id] = 1; }); }); _plPaint(); return; }
+    if (act === 'open') { if (_pl.select) { var cid = t.dataset.id; if (_pl.sel[cid]) delete _pl.sel[cid]; else _pl.sel[cid] = 1; _plPaint(); } else _plOpen(t.dataset.id); }
   });
-  grouped.sort(function(a,b){ return a.label.toLowerCase().localeCompare(b.label.toLowerCase()); });
-
-  sel.innerHTML = '<option value="">All Job Orders</option>' +
-    grouped.map(function(g){
-      return '<option value="' + escapeHtml(g.value) + '">' + escapeHtml(g.label) + '</option>';
-    }).join('');
-
-  // Restore the saved selection; drop it if that job order no longer appears
-  if (_pipelineJobFilter) {
-    sel.value = _pipelineJobFilter;
-    if (sel.value !== _pipelineJobFilter) {
-      _pipelineJobFilter = '';
-      try { localStorage.removeItem('rams:filters:pipelineJob'); } catch(e) {}
-      sel.value = '';
+  page.addEventListener('keydown', function(e) {
+    var card = e.target.closest && e.target.closest('.kanban-card');
+    if (card && e.target === card && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); if (!_pl.select) _plOpen(card.dataset.id); }
+    if (e.key === 'Escape') _plCloseMenu();
+  });
+  page.addEventListener('dragstart', function(e) {
+    var grip = e.target.closest && e.target.closest('[data-act="colgrip"]');
+    var card = e.target.closest && e.target.closest('.kanban-card');
+    if (grip) { _pl.drag = { kind: 'col', stage: grip.dataset.stage }; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', 'col:' + grip.dataset.stage); return; }
+    if (card && card.getAttribute('draggable') === 'true') {
+      _pl.drag = { kind: 'card', id: card.dataset.id, from: card.dataset.status };
+      e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', 'card:' + card.dataset.id);
+      setTimeout(function() { card.style.opacity = '0.4'; }, 0);
     }
-  }
-}
-
-function renderKanban() {
-  var order = _loadStageOrder();
-  var board = document.getElementById('kanban-board');
-  var isAdmin = (typeof getCurrentRole === 'function') && getCurrentRole() === 'Admin';
-
-  _populatePipelineJobFilter();
-
-  var _allScoped  = getScopedApplicants();
-  var _matchIds   = _pipelineMatchIds();
-  var _scopedApps = (_matchIds === null) ? _allScoped : _allScoped.filter(function(a){
-    return a._jobOrderId && _matchIds.has(a._jobOrderId);
   });
+  page.addEventListener('dragover', function(e) {
+    if (!_pl.drag) return;
+    var col = e.target.closest && e.target.closest('.kanban-col'); if (!col) return;
+    e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+    page.querySelectorAll('.kanban-col').forEach(function(c) { c.style.outline = ''; });
+    if (!(_pl.drag.kind === 'card' && col.dataset.stage === _pl.drag.from) && !(_pl.drag.kind === 'col' && col.dataset.stage === _pl.drag.stage)) col.style.outline = '2px dashed var(--brand)';
+  });
+  page.addEventListener('drop', function(e) {
+    var drag = _pl.drag; if (!drag) return;
+    var col = e.target.closest && e.target.closest('.kanban-col'); if (!col) return;
+    e.preventDefault();
+    page.querySelectorAll('.kanban-col').forEach(function(c) { c.style.outline = ''; });
+    _pl.drag = null;
+    if (drag.kind === 'card') { if (col.dataset.stage !== drag.from) _plMove(drag.id, col.dataset.stage, { from: drag.from }); else _plPaint(); }
+    else if (drag.kind === 'col') _plReorder(drag.stage, col.dataset.stage);
+  });
+  page.addEventListener('dragend', function() {
+    _pl.drag = null;
+    page.querySelectorAll('.kanban-col').forEach(function(c) { c.style.outline = ''; });
+    page.querySelectorAll('.kanban-card').forEach(function(c) { c.style.opacity = ''; });
+  });
+  document.addEventListener('click', function(e) { if (!e.target.closest('#pl-menu')) _plCloseMenu(); });
+}
 
-  var _cntEl = document.getElementById('pipeline-filter-count');
-  if (_cntEl) {
-    _cntEl.textContent = (_matchIds === null)
-      ? _allScoped.length + ' applicant' + (_allScoped.length !== 1 ? 's' : '')
-      : _scopedApps.length + ' of ' + _allScoped.length + ' applicant' + (_allScoped.length !== 1 ? 's' : '');
+function _plFindCard(id) {
+  var d = _pl.data; if (!d) return null;
+  var all = d.stages.concat(d.ended);
+  for (var i = 0; i < all.length; i++) for (var j = 0; j < all[i].cards.length; j++) if (all[i].cards[j].id === id) return all[i].cards[j];
+  return null;
+}
+function _plLocal(uuid) { return DB.applicants.find(function(a) { return a._dbId === uuid || a.id === uuid; }) || null; }
+async function _plOpen(uuid) {
+  if (!_plLocal(uuid)) {
+    var r = await apiFetch('/applicants/' + encodeURIComponent(uuid));
+    if (r.ok && r.data) { try { var m = mapApplicant(r.data); DB.applicants.push(m); } catch (e) {} }
   }
-
-  // Always update the stat cards at the top of the Pipeline page
-  var rc = document.getElementById('repat-count');
-  var bc = document.getElementById('backout-count');
-  var rj = document.getElementById('rejected-count');
-  if (rc) rc.textContent = _scopedApps.filter(function(a){ return a.status === 'Repatriated'; }).length;
-  if (bc) bc.textContent = _scopedApps.filter(function(a){ return a.status === 'Backout'; }).length;
-  if (rj) rj.textContent = _scopedApps.filter(function(a){ return a.status === 'Rejected'; }).length;
-  board.innerHTML = order.map(function(stageKey) {
-    var meta = _STAGE_META[stageKey] || {color:'var(--muted)',bg:'var(--s2)',cnt:'pill-gray'};
-    var apps = _scopedApps.filter(function(a){ return a.status === stageKey; });
-    return '<div class="kanban-col" draggable="' + (isAdmin?'true':'false') + '" data-stage="' + stageKey + '" ' +
-      'ondragstart="_kDragStart(event)" ondragover="_kDragOver(event)" ' +
-      'ondrop="_kDrop(event)" ondragend="_kDragEnd(event)">' +
-      '<div class="kanban-col-hdr">' +
-        (isAdmin ? '<span style="color:var(--dim);font-size:14px;margin-right:2px;cursor:grab" title="Drag to reorder">⠿</span>' : '') +
-        '<div style="width:9px;height:9px;border-radius:50%;background:' + meta.color + ';flex-shrink:0"></div>' +
-        '<span style="flex:1">' + stageKey + '</span>' +
-        '<span class="pill ' + meta.cnt + '" style="font-size:11px;padding:2px 8px">' + apps.length + '</span>' +
-      '</div>' +
-      '<div class="kanban-body">' +
-        (apps.length ? apps.map(function(a) {
-          return '<div class="kanban-card" onclick="openDrawer(\'' + a.id + '\')" role="button" tabindex="0">' +
-            '<div class="kanban-card-name"' + noteTip(a) + '>' + a.name + '</div>' +
-            '<div class="kanban-card-sub">' + a.job + '</div>' +
-            '<div class="kanban-card-foot">' +
-              '<span style="font-size:10px;color:var(--dim);font-family:monospace">' + (a.displayId||a.id) + '</span>' +
-              pillHtml(a.medical,'medical') +
-            '</div></div>';
-        }).join('') : '<div class="kanban-empty">No applicants<br>in this stage</div>') +
-      '</div></div>';
-  }).join('');
+  openDrawer(uuid);
 }
 
-// ── Kanban drag-to-reorder ─────────────────────────────────────────────
-var _kDragSrc = null;
-function _kDragStart(e) {
-  _kDragSrc = e.currentTarget;
-  e.dataTransfer.effectAllowed = 'move';
-  e.dataTransfer.setData('text/plain', e.currentTarget.dataset.stage);
-  setTimeout(function(){ if(_kDragSrc) _kDragSrc.style.opacity='0.4'; }, 0);
+async function _plMore(stage) {
+  var d = _pl.data; if (!d) return;
+  var s = d.stages.concat(d.ended).find(function(x) { return x.stage === stage; }); if (!s) return;
+  var r = await apiFetch('/pipeline?' + _plQS({ stage: stage, offset: s.cards.length, _: Date.now() }));
+  if (!r.ok || !r.data || !r.data.stage) { toast(_acctMsg(r, 'Could not load more'), 'error'); return; }
+  s.cards = s.cards.concat(r.data.stage.cards); s.has_more = r.data.stage.has_more; s.count = r.data.stage.count;
+  _plPaint();
 }
-function _kDragOver(e) {
-  e.preventDefault();
-  e.dataTransfer.dropEffect = 'move';
-  document.querySelectorAll('.kanban-col').forEach(function(c){ c.style.outline=''; });
-  if (e.currentTarget !== _kDragSrc) e.currentTarget.style.outline = '2px dashed var(--brand)';
+
+async function _plReorder(from, to) {
+  var d = _pl.data; if (!d || from === to) return;
+  var order = d.columns.slice(), a = order.indexOf(from), b = order.indexOf(to);
+  if (a < 0 || b < 0) return;
+  order.splice(a, 1); order.splice(b, 0, from);
+  var r = await apiFetch('/pipeline/columns', { method: 'PUT', body: JSON.stringify({ order: order }) });
+  if (!r.ok) { toast(_acctMsg(r, 'Could not save the column order'), 'error'); return; }
+  toast('Column order saved for everyone', 'success'); renderKanban(true);
 }
-function _kDrop(e) {
-  e.preventDefault();
-  var target = e.currentTarget;
-  document.querySelectorAll('.kanban-col').forEach(function(c){ c.style.outline=''; });
-  if (!_kDragSrc || target === _kDragSrc) return;
-  var order = _loadStageOrder();
-  var si = order.indexOf(_kDragSrc.dataset.stage);
-  var ti = order.indexOf(target.dataset.stage);
-  if (si !== -1 && ti !== -1) {
-    order.splice(si, 1);
-    order.splice(ti, 0, _kDragSrc.dataset.stage);
-    _saveStageOrder(order);
-    renderKanban();
-    toast('Pipeline stage order saved', 'success');
+
+// "Move to…" menu — the touch / keyboard alternative to dragging
+function _plCloseMenu() { var m = document.getElementById('pl-menu'); if (m) m.remove(); }
+function _plMenu(id, btn) {
+  _plCloseMenu(); var d = _pl.data, c = _plFindCard(id); if (!d || !c) return;
+  var m = document.createElement('div'); m.id = 'pl-menu';
+  var r = btn.getBoundingClientRect();
+  m.style.cssText = 'position:fixed;z-index:9999;background:var(--card);border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:6px;min-width:170px;max-height:60vh;overflow:auto;top:' + Math.min(r.bottom + 4, window.innerHeight - 280) + 'px;left:' + Math.max(8, Math.min(r.left - 120, window.innerWidth - 190)) + 'px';
+  var items = d.columns.concat(d.ended.map(function(s) { return s.stage; })).filter(function(s) { return s !== c.status; });
+  m.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:4px 8px">Move ' + escapeHtml(c.name) + ' to</div>' +
+    items.map(function(s) { return '<button type="button" data-to="' + escapeHtml(s) + '" style="display:block;width:100%;text-align:left;border:none;background:none;padding:6px 8px;border-radius:6px;cursor:pointer;font-size:12.5px">' + escapeHtml(s) + '</button>'; }).join('');
+  m.addEventListener('click', function(e) { var b = e.target.closest('[data-to]'); if (!b) return; var to = b.dataset.to; _plCloseMenu(); _plMove(id, to, { from: c.status }); });
+  document.body.appendChild(m);
+}
+
+// ── THE move ──────────────────────────────────────────────────────────────
+var _PL_EXIT = ['Backout', 'Repatriated', 'Rejected'];
+function _plAsk(name, from, to) {
+  var order = (_pl.data && _pl.data.order) || [];
+  var fi = order.indexOf(from), ti = order.indexOf(to);
+  var ended = _PL_EXIT.indexOf(from) !== -1;
+  var exit = _PL_EXIT.indexOf(to) !== -1;
+  if (exit) {
+    if (!confirm('Move ' + name + ' to ' + to + '?\n\nThis will:\n• cancel unreleased commissions and claw back released ones\n' +
+      (to === 'Repatriated' ? '• waive the employer fee only if still inside the guarantee period\n' : to === 'Backout' ? '• waive any pending employer fee\n' : '') + '• apply the country expense rule to this worker\'s expenses')) return null;
+    var r = _askReason('Why is ' + name + ' being marked ' + to + '?'); return r ? { reason: r } : null;
   }
+  if (ended) { var r2 = _askReason('Why is ' + name + ' being reopened from ' + from + '?'); return r2 ? { reason: r2 } : null; }
+  if (fi >= 0 && ti >= 0 && ti < fi) { var r3 = _askReason('Why is ' + name + ' moving back from ' + from + ' to ' + to + '?'); return r3 ? { reason: r3 } : null; }
+  return {};
 }
-function _kDragEnd() {
-  document.querySelectorAll('.kanban-col').forEach(function(c){ c.style.outline=''; c.style.opacity=''; });
-  _kDragSrc = null;
+
+async function _plMove(uuid, to, opts) {
+  opts = opts || {};
+  var c = _plFindCard(uuid), local = _plLocal(uuid);
+  var name = (c && c.name) || (local && local.name) || 'This applicant';
+  var from = opts.from || (c && c.status) || (local && local.status);
+  if (!from || from === to) { if (typeof renderApplicants === 'function' && currentPage === 'applicants') renderApplicants(); return; }
+  if (_pl.busy[uuid]) return;
+  var extra = _plAsk(name, from, to);
+  if (extra === null) { _plPaint(); if (currentPage === 'applicants') renderApplicants(); return; }
+  if (to === 'Deployed') {                                 // the deployment date is asked in the existing dialog
+    window._pendingDeploy = { via: 'pipeline', uuid: uuid, from: from, to: to, reason: extra.reason, applicantId: uuid, oldStatus: from };
+    var nm = document.getElementById('deploy-modal-name'); if (nm) nm.textContent = name + ' — setting deployment date';
+    var di = document.getElementById('deploy-date-input'); if (di) { di.oninput = null; di.value = (local && local.deploymentDate) || _ymd(new Date()); }
+    var gi = document.getElementById('deploy-guarantee-info'); if (gi) gi.innerHTML = 'Set by the country / agent rule when the commission is created';
+    openOverlay('overlay-deployment-date');
+    return;
+  }
+  return _plDoMove(uuid, to, from, extra.reason, null);
 }
-function resetPipelineOrder() {
-  _saveStageOrder(_DEFAULT_STAGE_ORDER.slice());
-  renderKanban();
-  toast('Pipeline order reset to default', 'success');
+
+async function _plDoMove(uuid, to, from, reason, deploymentDate) {
+  if (_pl.busy[uuid]) return; _pl.busy[uuid] = true;
+  var body = { to: to, expected_from: from };
+  if (reason) body.reason = reason;
+  if (deploymentDate) body.deployment_date = deploymentDate;
+  var r;
+  try { r = await apiFetch('/applicants/' + encodeURIComponent(uuid) + '/status', { method: 'POST', body: JSON.stringify(body) }); }
+  finally { delete _pl.busy[uuid]; }
+  var d = r && r.data;
+  if (!r.ok) {
+    var msg = _acctMsg(r, 'The move was not accepted');
+    if (d && d.blockers && d.blockers.length) msg = msg + ' (' + d.blockers.join('; ') + ')';
+    toast('⛔ ' + msg, 'error');
+    if (d && d.error === 'status_conflict') { _pl.data = null; try { await fetchApplicants(); } catch (e) {} }
+    renderKanban(true); if (currentPage === 'applicants') renderApplicants();
+    return false;
+  }
+  if (d.unchanged) { renderKanban(true); return true; }
+  _plAfterMove(uuid, d, to);
+  return true;
 }
+
+// local copies follow the server's answer; the server already did the money / fee / slot work
+function _plAfterMove(uuid, d, to) {
+  var a = d.applicant || {}, fx = d.effects || {};
+  var local = _plLocal(uuid);
+  if (local) {
+    local.status = to; local._statusUpdatedAt = a.status_updated_at || new Date().toISOString();
+    if (a.deployment_date) local.deploymentDate = String(a.deployment_date).slice(0, 10);
+    if (!local._stageHistory) local._stageHistory = [];
+    if (local._stageHistory.indexOf(to) === -1) local._stageHistory.push(to);
+    autosave('applicants');
+  }
+  var msgs = [(local ? local.name : (a.first_name ? a.first_name + ' ' + (a.last_name || '') : 'Applicant')) + ' → ' + to];
+  if (fx.waived_fees) msgs.push(fx.waived_fees + ' employer fee(s) waived');
+  if (fx.kept_fee_pending) msgs.push('employer fee kept pending (after the guarantee period)');
+  if (fx.fee_created) msgs.push('employer fee $' + fx.fee_created.fee_usd + ' raised');
+  if (fx.complaint_created) msgs.push('complaint opened');
+  if (d.commission_sync) msgs.push('commissions updated');
+  toast('✅ ' + msgs.join(' · '), 'success');
+  _bustAcctCache();
+  if (fx.waived_fees || fx.fee_created) { try { apiFetchEmployerFees(); } catch (e) {} }
+  if (d.commission_sync) { try { apiFetchCommissions(); } catch (e) {} }
+  try { fetchJobs(); } catch (e) {}
+  if (_PL_EXIT.indexOf(to) !== -1 && local) {                // expenses are settled under the country rule (interactive)
+    var agent = DB.agents.find(function(x) { return x.name && x.name === local.agent; }) || null;
+    try { _settleExitExpenses(local, agent, to); } catch (e) { console.warn('[exit expenses]', e); }
+  }
+  if (typeof _dashReset === 'function') _dashReset();
+  _pl.data = null; renderKanban(true);
+  if (currentPage === 'applicants') renderApplicants();
+  if (currentPage === 'dashboard') renderDashboard(true);
+}
+
+// ── bulk ──────────────────────────────────────────────────────────────────
+async function _plBulk() {
+  var ids = Object.keys(_pl.sel); var toEl = document.getElementById('pl-bulk-to'); var to = toEl ? toEl.value : '';
+  if (!ids.length || !to) return;
+  var body = { ids: ids, to: to };
+  if (_PL_EXIT.indexOf(to) !== -1) {
+    if (!confirm('Move ' + ids.length + ' applicant(s) to ' + to + '? Commissions, fees and expenses are settled for each.')) return;
+    var r1 = _askReason('Reason for moving ' + ids.length + ' applicant(s) to ' + to + ':'); if (!r1) return; body.reason = r1;
+  } else if (to === 'Deployed') {
+    var dd = window.prompt('Deployment date for all ' + ids.length + ' (YYYY-MM-DD):', _ymd(new Date())); if (!dd || !/^\d{4}-\d{2}-\d{2}$/.test(dd.trim())) { toast('A valid deployment date is required', 'error'); return; }
+    body.deployment_date = dd.trim();
+  }
+  var r = await apiFetch('/applicants/bulk-status', { method: 'POST', body: JSON.stringify(body) });
+  if (!r.ok && !(r.data && r.data.results)) {
+    var rr = (r.data && r.data.error === 'reason_required') ? _askReason('A reason is required to move these applicants:') : '';
+    if (rr) { body.reason = rr; r = await apiFetch('/applicants/bulk-status', { method: 'POST', body: JSON.stringify(body) }); }
+    if (!r.ok) { toast(_acctMsg(r, 'Bulk move failed'), 'error'); return; }
+  }
+  var d = r.data;
+  _bustAcctCache(); try { fetchJobs(); apiFetchEmployerFees(); apiFetchCommissions(); } catch (e) {}
+  _pl.sel = {}; _pl.data = null; if (typeof _dashReset === 'function') _dashReset(); renderKanban(true);
+  try { fetchApplicants(); } catch (e) {}
+  _plShowResults(d, to);
+}
+function _plShowResults(d, to) {
+  var old = document.getElementById('pl-results'); if (old) old.remove();
+  var bad = d.results.filter(function(x) { return !x.ok; });
+  var m = document.createElement('div'); m.id = 'pl-results';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:10000;display:flex;align-items:center;justify-content:center';
+  m.innerHTML = '<div class="card cp" style="max-width:520px;width:92%;max-height:80vh;overflow:auto"><div style="font-size:15px;font-weight:800;margin-bottom:8px">Move to ' + escapeHtml(to) + '</div>' +
+    '<div style="font-size:13px;margin-bottom:10px"><b style="color:var(--green)">' + d.moved + ' moved</b>' + (d.unchanged ? ' · ' + d.unchanged + ' already there' : '') + (bad.length ? ' · <b style="color:var(--red)">' + bad.length + ' blocked</b>' : '') + '</div>' +
+    (bad.length ? bad.map(function(x) { return '<div style="padding:6px 0;border-top:1px solid var(--border);font-size:12.5px"><b>' + escapeHtml(x.name || 'Applicant') + '</b><div style="color:var(--red)">' + escapeHtml(x.message || x.code) + '</div></div>'; }).join('') : '') +
+    '<div style="text-align:right;margin-top:12px"><button class="btn btn-p btn-sm" onclick="document.getElementById(\'pl-results\').remove()">Close</button></div></div>';
+  document.body.appendChild(m);
+}
+
+// ── entry points elsewhere in the app all use the same move ───────────────
+function _moveLocalApplicant(appId, newStatus) {
+  var app = DB.applicants.find(function(a) { return a.id === appId || a._dbId === appId; });
+  if (!app) { toast('Applicant not found', 'error'); return; }
+  var uuid = app._dbId || app.id;
+  if (!isUUID(uuid)) { toast('This applicant has not been saved to the server yet', 'error'); if (currentPage === 'applicants') renderApplicants(); return; }
+  return _plMove(uuid, newStatus, { from: app.status });
+}
+
+
 
 function deleteApplicant(appId) {
   if (!hasPermission('Delete Applicants')) { toast('Your role cannot delete applicants','error'); return; }
@@ -7843,92 +8018,8 @@ function _inlineMedicalCell(app) {
 }
 
 function _inlineSaveStatus(appId, newStatus) {
-  var app = DB.applicants.find(function(a){ return a.id===appId; });
-  if (!app || app.status===newStatus) return;
-  var oldStatus = app.status;
-
-  // ── Stage gate: Deployed requires Medical (passed/exempted) + Processing ──
-  // Medical is checked from the actual Medical Status field (app.medical),
-  // not just whether the pipeline status ever touched "Medical" — a worker
-  // can sit in that stage without having passed medical yet. Skilled
-  // workers don't go through OWWA (that's a Household-only requirement),
-  // so for them only "Processing" is required, and OWWA is never mentioned.
-  if (newStatus === 'Deployed') {
-    var hist = app._stageHistory || [];
-    var hasMedical    = app.medical === 'Passed' || app.medical === 'Exempted';
-    var isSkilled      = app.category === 'Skilled';
-    var hasProcessing  = isSkilled
-      ? hist.indexOf('Processing') !== -1
-      : (hist.indexOf('Processing') !== -1 || hist.indexOf('OWWA') !== -1);
-    if (!hasMedical || !hasProcessing) {
-      var missing = [];
-      if (!hasMedical)    missing.push('Medical');
-      if (!hasProcessing) missing.push(isSkilled ? 'Processing' : 'Processing or OWWA');
-      toast('⛔ Cannot deploy ' + app.name + ' — required stage' + (missing.length > 1 ? 's' : '') +
-        ' not completed: ' + missing.join(', '), 'error');
-      var sel = document.querySelector('[data-app-id="' + appId + '"] .status-select, select[onchange*="' + appId + '"]');
-      if (sel) sel.value = oldStatus;
-      renderApplicants();
-      return;
-    }
-
-    // ── Stage gate: this applicant's employer fee must be Settled or Waived before deploying ──
-    // (same rule the server enforces)
-    var _gateFee = (DB.employerFees || []).find(function(f) {
-      return (f.applicantId === appId || f.applicantId === app._dbId) && f.status === 'Pending';
-    });
-    if (_gateFee) {
-      toast('⛔ Cannot deploy ' + app.name + ' — employer fee of $' + (_gateFee.feeUSD || 0).toLocaleString() +
-        ' is still pending. Record the payment, settle or waive it first.', 'error');
-      var selF = document.querySelector('[data-app-id="' + appId + '"] .status-select, select[onchange*="' + appId + '"]');
-      if (selF) selF.value = oldStatus;
-      renderApplicants();
-      return;
-    }
-  }
-
-  app.status = newStatus;
-  // Record stage history on the applicant
-  if (!app._stageHistory) app._stageHistory = [];
-  if (app._stageHistory.indexOf(newStatus) === -1) app._stageHistory.push(newStatus);
-  autosave('applicants');
-
-  // Track the pending status locally so fetchApplicants doesn't overwrite it
-  if (!window._pendingStatusUpdates) window._pendingStatusUpdates = {};
-  window._pendingStatusUpdates[appId] = { status: newStatus, ts: Date.now() };
-
-  // Trigger status-change side effects (commissions, complaints, etc.)
-  if (typeof onApplicantStatusChange === 'function') {
-    onApplicantStatusChange(appId, newStatus, oldStatus);
-  }
-
-  // Status-change notification is emitted by _pushStatusChangeNotif (reached via
-  // onApplicantStatusChange above) — firing one here too produced duplicates.
-
-  var dbId = app._dbId || app.id;
-  if (dbId && isUUID(dbId)) {
-    apiFetch('/applicants/' + dbId, {
-      method: 'PATCH',
-      body: JSON.stringify({ status: newStatus }),
-    }).then(function(r) {
-      if (r && r.ok) {
-        toast('✅ ' + app.name + ' → ' + newStatus, 'success');
-        if (window._lastFetch) window._lastFetch['applicants'] = 0;
-        if (window._cache) Object.keys(window._cache).forEach(function(k){ if (k.includes('/applicants')) delete window._cache[k]; });
-      } else if (r && r.httpStatus === 400) {
-        app.status = oldStatus;
-        if (window._pendingStatusUpdates) delete window._pendingStatusUpdates[appId];
-        autosave('applicants');
-        toast('⚠️ Status "' + newStatus + '" rejected by server — reverted', 'error');
-        renderApplicants();
-      } else {
-        toast('💾 Saved locally — will sync to server when reconnected', 'info');
-      }
-    }).catch(function() {
-      toast('💾 Saved — server unreachable, retrying soon', 'info');
-    });
-  }
-  renderApplicants();
+  // one rule set, on the server: see _plMove
+  return _moveLocalApplicant(appId, newStatus);
 }
 
 function _inlineSaveMedical(appId, newMedical) {
@@ -12064,6 +12155,7 @@ const PERMISSIONS=[
   ['Create Applicants',true,true,true,false,false,false],
   ['Edit Applicants',true,true,true,false,false,false],
   ['Delete Applicants',true,false,true,false,false,false],
+  ['Move Applicants Backward',true,false,true,false,false,false],
   ['View All Applicants',true,true,true,true,true,true],
   ['Export Applicant Data',true,true,true,true,false,false],
   ['View Job Orders',true,true,true,false,false,false],
@@ -18233,6 +18325,7 @@ function autoWaiveBackoutFees() {
 
 // ── DEPLOYMENT DATE MODAL HANDLERS ────────────────────────────────────
 function cancelDeploymentDate() {
+  if (window._pendingDeploy && window._pendingDeploy.via === 'pipeline') { window._pendingDeploy = null; closeOverlay('overlay-deployment-date'); toast('Deployment cancelled', 'info'); if (typeof renderKanban === 'function') renderKanban(true); if (currentPage === 'applicants') renderApplicants(); return; }
   // Revert the applicant status back to previous
   if (window._pendingDeploy) {
     var app = DB.applicants.find(function(a){ return a.id===window._pendingDeploy.applicantId; });
@@ -18256,6 +18349,7 @@ function confirmDeploymentDate() {
 
   var pd = window._pendingDeploy;
   if (!pd) { closeOverlay('overlay-deployment-date'); return; }
+  if (pd.via === 'pipeline') { window._pendingDeploy = null; closeOverlay('overlay-deployment-date'); _plDoMove(pd.uuid, pd.to, pd.from, pd.reason, deployDate); return; }
   window._pendingDeploy = null;
   closeOverlay('overlay-deployment-date');
 
@@ -20133,7 +20227,14 @@ saveApplicant = function() {
     }
   }
 
+  // A status change made in the edit form is a pipeline move: the other fields are saved here, the move goes to the server
+  var _formMove = null;
+  if (editId && attemptedStatus && oldStatus && attemptedStatus !== oldStatus) {
+    _formMove = attemptedStatus;
+    var _fs = document.getElementById('a-status'); if (_fs) _fs.value = oldStatus;
+  }
   _origSaveApplicant();
+  if (_formMove) setTimeout(function() { _moveLocalApplicant(editId, _formMove); }, 150);
 
   var newApp        = editId ? (DB.applicants.find(function(a){ return a.id===editId; })||{}) : {};
   var newStatus     = newApp.status      || null;
@@ -22124,54 +22225,7 @@ document.addEventListener('click', function(e) {
 
 // ── Quick status change (callable from anywhere) ─────────────────────
 function changeApplicantStatus(applicantId, newStatus) {
-  var app = DB.applicants.find(function(a){ return a.id === applicantId; });
-  if (!app) { toast('Applicant not found', 'error'); return; }
-  var oldStatus = app.status;
-  if (oldStatus === newStatus) return;
-
-  var CHARGE_STATUSES = ['Backout', 'Repatriated', 'Rejected'];
-  var needsConfirm = CHARGE_STATUSES.indexOf(newStatus) !== -1;
-
-  if (needsConfirm) {
-    var agent  = DB.agents.find(function(a){ return a.name === app.agent; });
-    var exps   = DB.expenses.filter(function(e){
-      return (e.applicant === app.name || e.applicantId === applicantId) && e.status !== 'Charged';
-    });
-    var total  = exps.reduce(function(s,e){ return s + e.amount; }, 0);
-    var msg    = 'Change ' + app.name + ' to ' + newStatus + '?';
-    if (total > 0 && agent) {
-      msg += '\n\n₱' + total.toLocaleString() + ' (' + exps.length + ' expense' +
-             (exps.length !== 1 ? 's' : '') + ') will be auto-charged to ' + agent.name + '.';
-    } else if (total > 0) {
-      msg += '\n\n₱' + total.toLocaleString() + ' in expenses will be marked as Agency-absorbed (no agent assigned).';
-    }
-    if (!confirm(msg)) return;
-  }
-
-  app.status = newStatus;
-  addAudit('UPDATE', 'Applicant', app.name + ' status changed: ' + oldStatus + ' → ' + newStatus);
-  // Sync status change to server — only send status field
-  var _sid = app._dbId || app.id;
-  if (isUUID(_sid) && window._ramsSessionToken !== 'demo') {
-    var serverStatus = toServerStatus(newStatus);
-    apiFetch('/applicants/' + _sid, {
-      method: 'PATCH',
-      body: JSON.stringify({ status: serverStatus })
-    }).then(function(r) {
-      if (!r.ok) {
-        console.error('Status sync failed:', r.error, 'status sent:', serverStatus);
-        toast('💾 Status saved — will sync to server when reconnected','info');
-      }
-    });
-  }
-  onApplicantStatusChange(applicantId, newStatus, oldStatus);
-
-  // Refresh visible pages
-  if (currentPage === 'applicants') renderApplicants();
-  if (currentPage === 'pipeline')   renderKanban();
-  if (currentPage === 'dashboard')  renderDashboard();
-  if (currentPage === 'accounting') renderAccounting();
-  if (typeof renderExpensesTab === 'function' && currentAccTab === 'expenses') renderExpensesTab();
+  return _moveLocalApplicant(applicantId, newStatus);
 }
 
 
@@ -22334,7 +22388,7 @@ function saveViewerScope() {
 
 // ── Clear local cache + re-sync from PostgreSQL ───────────────────────
 async function clearLocalCache() {
-  DB.applicants = []; DB.jobs = []; DB.expenses = []; DB.users = []; DB.auditLog = []; if (typeof _dashReset === 'function') _dashReset(); if (typeof _ov !== 'undefined') { _ov.data = null; _ov.at = 0; }
+  DB.applicants = []; DB.jobs = []; DB.expenses = []; DB.users = []; DB.auditLog = []; if (typeof _dashReset === 'function') _dashReset(); if (typeof _plReset === 'function') _plReset(); if (typeof _ov !== 'undefined') { _ov.data = null; _ov.at = 0; }
   filteredApps = [];
   await Store.clear();
   toast('Cache cleared — re-syncing from server…', 'info');
