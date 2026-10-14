@@ -4755,28 +4755,62 @@ function _notifIncoming(row) {
   }
   if (n.severity !== 'info' && !document.hidden) toast((n.severity === 'critical' ? '🚨 ' : '⚠️ ') + n.title, n.severity === 'critical' ? 'error' : 'info');
 }
-// Live stream (Server-Sent Events over fetch so the token stays in a header)
+// Live stream (Server-Sent Events over fetch so the token stays in a header).
+// The server ends each stream after ~10 minutes with a "reconnect" event (Railway closes any request after
+// 15 minutes, which Safari/Chrome log as "network connection was lost"). A clean end reconnects at once;
+// real failures back off (2s → 30s); the stream pauses while the tab is hidden and catches up when it returns.
+var _notifStreamFails = 0, _notifStreamPaused = false, _notifStreamTimer = null, _notifStreamWired = false;
+function _notifStreamSchedule(ms) {
+  clearTimeout(_notifStreamTimer);
+  _notifStreamTimer = setTimeout(function() { _notifStreamTimer = null; _notifStreamStart(); }, ms);
+}
+function _notifStreamStop() {
+  _notifStreamPaused = true; clearTimeout(_notifStreamTimer); _notifStreamTimer = null;
+  if (_notifStreamAbort) { try { _notifStreamAbort.abort(); } catch (e) {} }
+}
 async function _notifStreamStart() {
   if (!_isLiveSession() || _notifStreamAbort) return;
+  if (typeof document !== 'undefined' && document.hidden) { _notifStreamPaused = true; return; }
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) { _notifStreamPaused = true; return; }
+  _notifStreamPaused = false;
   var ctl = new AbortController(); _notifStreamAbort = ctl; _notifStreamOk = false;
+  var clean = false, wasReconnect = false;
   try {
-    var res = await fetch(RAILWAY_URL + '/api/notifications/stream', { headers: { Authorization: 'Bearer ' + window._ramsSessionToken }, signal: ctl.signal });
+    var res = await fetch(RAILWAY_URL + '/api/notifications/stream', { headers: { Authorization: 'Bearer ' + window._ramsSessionToken }, signal: ctl.signal, cache: 'no-store' });
+    if (res.status === 401 || res.status === 403) { _notifStreamAbort = null; return; }      // signed out — the app handles that
     if (!res.ok || !res.body) throw new Error('no stream');
-    _notifStreamOk = true;
+    if (_notifStreamFails > 0 || _notifStreamOk === false) { try { _notifSync(); } catch (e) {} }   // catch up on anything missed while disconnected
+    _notifStreamOk = true; _notifStreamFails = 0;
     var reader = res.body.getReader(), dec = new TextDecoder(), buf = '';
     for (;;) {
       var chunk = await reader.read();
-      if (chunk.done) break;
+      if (chunk.done) { clean = true; break; }
       buf += dec.decode(chunk.value, { stream: true });
       var parts = buf.split('\n\n'); buf = parts.pop();
       parts.forEach(function(p) {
         var m = p.match(/^event: (\w+)\ndata: (.*)$/m);
-        if (m && m[1] === 'notification') { try { _notifIncoming(JSON.parse(m[2])); } catch (e) {} }
+        if (!m) return;
+        if (m[1] === 'notification') { try { _notifIncoming(JSON.parse(m[2])); } catch (e) {} }
+        else if (m[1] === 'reconnect') wasReconnect = true;
       });
     }
-  } catch (e) { /* reconnect below */ }
+  } catch (e) {
+    if (ctl.signal.aborted) { _notifStreamOk = false; _notifStreamAbort = null; return; }   // we stopped it on purpose (tab hidden / sign-out)
+  }
   _notifStreamOk = false; _notifStreamAbort = null;
-  if (_isLiveSession()) setTimeout(_notifStreamStart, 5000);
+  if (!_isLiveSession() || _notifStreamPaused) return;
+  if (clean || wasReconnect) { _notifStreamFails = 0; _notifStreamSchedule(250); return; }
+  _notifStreamFails++;
+  _notifStreamSchedule(Math.min(30000, 2000 * Math.pow(2, _notifStreamFails - 1)));
+}
+function _notifStreamWire() {
+  if (_notifStreamWired) return; _notifStreamWired = true;
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) { clearTimeout(window._notifHideTimer); window._notifHideTimer = setTimeout(function() { if (document.hidden) _notifStreamStop(); }, 60000); }
+    else { clearTimeout(window._notifHideTimer); if (!_notifStreamAbort) { _notifStreamFails = 0; _notifSync(); _notifStreamStart(); } }
+  });
+  window.addEventListener('online', function() { if (!_notifStreamAbort) { _notifStreamFails = 0; _notifSync(); _notifStreamStart(); } });
+  window.addEventListener('offline', function() { _notifStreamStop(); });
 }
 function _startNotifTicker() {
   if (window._notifTickTimer) clearInterval(window._notifTickTimer);
@@ -4784,6 +4818,7 @@ function _startNotifTicker() {
   window._notifTickTimer = setInterval(function() { if (!document.hidden) _notifSync(); }, 45000);
   document.addEventListener('visibilitychange', function() { if (!document.hidden) _notifSync(); });
   _notifSync();
+  _notifStreamWire();
   _notifStreamStart();
 }
 
