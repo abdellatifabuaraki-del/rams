@@ -5755,6 +5755,8 @@ function navigateFromNotif(id) {
 
   if (!n.link) return;
   var lnk = n.link;
+  // grouped or accounting notifications open the exact records (filtered + highlighted)
+  if (lnk.focus && lnk.focus.entity) { goFocus(lnk.focus); return; }
   var DELAY = 320; // ms — let the page render before trying to open modals/drawers
 
   // ── Applicants ──────────────────────────────────────────────────────
@@ -5959,6 +5961,7 @@ function renderInquiries() {
     }
     return true;
   }).sort(function(a,b){ return new Date(b.createdAt) - new Date(a.createdAt); });
+  if (_focusOn('inquiry')) filtered = _focusFilter('inquiry', _inquiries);
 
   if (!filtered.length) {
     list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);font-size:13px">' +
@@ -5984,6 +5987,7 @@ function renderInquiries() {
         '<div style="font-size:11px;color:var(--dim);margin-top:4px">' + date + '</div>' +
     '</div>';
   }).join('');
+  _focusMark('inquiry', list, filtered); _focusBar('inquiry', list, filtered.length); _focusFlash('inquiry');
 }
 
 function openInquiry(id) {
@@ -7076,7 +7080,7 @@ function _dashPaint() {
     var col = { critical: 'var(--red)', warning: 'var(--amber)', info: 'var(--brand)' };
     h += '<div style="font-size:14px;font-weight:800;margin:18px 0 10px">⚠ Needs attention</div><div style="display:flex;gap:10px;flex-wrap:wrap">' + d.attention.map(function(a) {
       var arg = a.key === 'docs_pending' ? "'docs','Pending'" : a.key === 'docs_expired' ? "'docs','Expired'" : a.key === 'docs_expiring' ? "'docs','Expiring'" : a.key === 'stuck' ? "'stuck'," + Number(a.filter && a.filter.stuck || 14) : a.page === 'accounting' ? "'accounting'" : "'" + escapeHtml(a.page) + "'";
-      return '<div onclick="_dashGo(' + arg + ')" style="cursor:pointer;flex:1;min-width:200px;padding:12px 16px;background:var(--card);border:1px solid var(--border);border-left:3px solid ' + col[a.severity] + ';border-radius:10px">' +
+      return '<div data-att="' + d.attention.indexOf(a) + '" style="cursor:pointer;flex:1;min-width:200px;padding:12px 16px;background:var(--card);border:1px solid var(--border);border-left:3px solid ' + col[a.severity] + ';border-radius:10px">' +
         '<div style="font-size:20px;font-weight:800;color:' + col[a.severity] + '">' + Number(a.count) + '</div><div style="font-size:11.5px;color:var(--muted)">' + escapeHtml(a.label) + '</div></div>';
     }).join('') + '</div>';
   }
@@ -7142,6 +7146,8 @@ function _dashPaint() {
     }).join('') + '</div></div></div>';
 
   root.innerHTML = h;
+  root.querySelectorAll('[data-att]').forEach(function(b) { b.onclick = function() { var a = d.attention[+b.getAttribute('data-att')]; if (!a) return;
+    if (a.focus) goFocus(a.focus); else _dashGo(a.page === 'accounting' ? 'accounting' : a.page); }; });
 }
 
 // ════════════════════════════════════════════════════════
@@ -7782,6 +7788,8 @@ function _apReadControls() {
   try { localStorage.setItem('rams:filters:applicants', JSON.stringify({ q: _ap.q, s: _ap.status, a: _ap.agent, m: _ap.medical, jo: _ap.employer, c: _ap.country, cat: _ap.category, arch: _ap.archived })); } catch (e) {}
 }
 function _apParams(extra) {
+  var fa = typeof _focusOn === 'function' ? _focusOn('applicant') : null;
+  if (fa && fa.ids.length) return Object.assign({ ids: fa.ids.join(','), archived: 'all', sort: _ap.sort, order: _ap.order, page: _ap.page, limit: APP_PER_PAGE }, extra || {});
   var p = { sort: _ap.sort, order: _ap.order, page: _ap.page, limit: APP_PER_PAGE };
   if (_ap.q) p.q = _ap.q;
   if (_ap.status) p.status = _ap.status;
@@ -7923,6 +7931,7 @@ function _apPaint() {
   renderPagination(Math.ceil(_ap.total / APP_PER_PAGE));
   updateBulkBar();
   if (typeof _syncExtraFilterChip === 'function') _syncExtraFilterChip();
+  _focusBar('applicant', tbody, _ap.total); _focusFlash('applicant');
 }
 
 // demo sessions have no server: show the local sample, clearly labelled
@@ -8509,6 +8518,123 @@ function confirmDelete(type, id) {
 // ════════════════════════════════════════════════════════
 
 // ════════════════════════════════════════════════════════
+// FOCUS — notifications and action buttons open the exact records they are about.
+// goFocus({ entity, ids, filter, label, open }) navigates to the right page/tab, shows ONLY those records
+// (with a "Showing … · Show all" bar) and highlights them. A single record opens directly when it can.
+// ════════════════════════════════════════════════════════
+var _focus = null;
+var _FOCUS_ROUTE = {
+  expense: { page: 'accounting', tab: 'expenses' }, invoice: { page: 'accounting', tab: 'invoices' }, commission: { page: 'accounting', tab: 'commissions' },
+  employer_fee: { page: 'accounting', tab: 'employers' }, agent: { page: 'accounting', tab: 'agents' }, cash_account: { page: 'accounting', tab: 'office' },
+  fx: { page: 'accounting', tab: 'office' }, reconcile: { page: 'accounting', tab: 'controls' }, month_end: { page: 'accounting', tab: 'reports' },
+  accounting_overview: { page: 'accounting', tab: 'overview' }, applicant: { page: 'applicants' }, document: { page: 'documents' }, job: { page: 'jobs' },
+  complaint: { page: 'complaints' }, inquiry: { page: 'inquiries' } };
+var _FOCUS_RERENDER = {
+  expense: function() { if (typeof _expFilterState !== 'undefined') _expFilterState.page = 1; renderExpensesTab(); },
+  invoice: function() { renderInvoices(); }, commission: function() { renderCommissions(); }, employer_fee: function() { renderEmployerFees(); },
+  agent: function() { renderAgentGrid(); }, cash_account: function() { if (typeof _renderOfficeExtras === 'function') _renderOfficeExtras(); },
+  applicant: function() { if (typeof _ap !== 'undefined') _ap.page = 1; renderApplicants(true); }, document: function() { if (typeof _dc !== 'undefined') _dc.page = 1; renderDocs(true); },
+  job: function() { renderJobs(); }, complaint: function() { renderComplaints(); }, inquiry: function() { renderInquiries(); } };
+
+function _focusBindGo(host) {
+  if (!host) return;
+  host.querySelectorAll('[data-go]').forEach(function(a) { a.onclick = function(e) { e.preventDefault(); try { goFocus(JSON.parse(a.getAttribute('data-go'))); } catch (x) {} }; });
+}
+function _focusIds(v) { return (v || []).map(function(x) { return String(x); }).filter(Boolean); }
+function goFocus(spec) {
+  if (!spec || !spec.entity) return;
+  var route = _FOCUS_ROUTE[spec.entity]; if (!route) return;
+  var ids = _focusIds(spec.ids);
+  _focus = { entity: spec.entity, ids: ids, set: {}, filter: spec.filter || null, label: spec.label || '', at: Date.now() };
+  ids.forEach(function(i) { _focus.set[i] = 1; });
+  var e = spec.entity, one = ids.length === 1;
+  // pages that open a single record directly
+  if (one && spec.open !== false) {
+    if (e === 'applicant') { _plOpen(ids[0]); return; }
+    if (e === 'complaint' && typeof openComplaintDrawer === 'function') { nav('complaints'); setTimeout(function() { openComplaintDrawer(ids[0]); }, 250); }
+    if (e === 'inquiry' && typeof openInquiry === 'function') { nav('inquiries'); setTimeout(function() { openInquiry(ids[0]); }, 250); }
+    if (e === 'document') { nav('documents'); setTimeout(function() { _dcOpenById(ids[0]); }, 250); return; }
+    if (e === 'agent' && typeof viewAgentLedger === 'function') { nav('accounting'); setTimeout(function() { viewAgentLedger(ids[0]); }, 250); return; }
+  }
+  // filters that are not id lists
+  if (e === 'document' && spec.filter && spec.filter.status && !ids.length) { _focus = null; nav('documents'); setTimeout(function() { filterDocs(spec.filter.status); }, 150); return; }
+  if (e === 'applicant' && spec.filter && spec.filter.stuck && !ids.length) { _focus = null; _dashGo('stuck', spec.filter.stuck); return; }
+  if (e === 'invoice' && typeof _invF !== 'undefined') { ['q', 'status', 'pay', 'employer', 'from', 'to'].forEach(function(k) { _invF[k] = ''; }); _invF.overdue = !!(spec.filter && spec.filter.overdue); }
+  if (e === 'expense' && typeof _expFilterState !== 'undefined') _expFilterState.voided = false;
+  nav(route.page);
+  if (route.tab) {
+    if (e === 'month_end' && typeof _rpt !== 'undefined') { _rpt.key = 'month-end'; _rpt.data = null; }
+    switchAccTab(route.tab);
+  }
+  if (e === 'fx') { _focus = null; setTimeout(function() { var fx = document.getElementById('fx-rate'); if (fx) { fx.scrollIntoView({ behavior: 'smooth', block: 'center' }); fx.focus(); fx.classList.add('focus-hit'); setTimeout(function() { fx.classList.remove('focus-hit'); }, 4000); } }, 400); return; }
+  if (e === 'reconcile') { _focus = null; setTimeout(function() { var h = Array.prototype.find.call(document.querySelectorAll('#acc-controls .card'), function(c) { return /Reconciliation/.test(c.textContent); }); if (h) { h.scrollIntoView({ behavior: 'smooth', block: 'start' }); h.classList.add('focus-hit'); } }, 900); return; }
+  if (e === 'month_end' || e === 'accounting_overview') { _focus = null; return; }
+  var rr = _FOCUS_RERENDER[e]; if (rr) setTimeout(rr, 60);
+  if (e === 'commission' && one && spec.open !== false) setTimeout(function() { _focusFlash('commission'); }, 500);
+}
+function _focusOn(entity) {
+  if (!_focus || _focus.entity !== entity) return null;
+  if (Date.now() - _focus.at > 30 * 60 * 1000) { _focus = null; return null; }
+  return _focus;
+}
+function _focusMatch(f, x) { return !!(f.set[String(x.id)] || (x._dbId && f.set[String(x._dbId)]) || (x.dbId && f.set[String(x.dbId)])); }
+// list → only the focused records (all filters bypassed so nothing is hidden)
+function _focusFilter(entity, list) {
+  var f = _focusOn(entity); if (!f || !f.ids.length) return list;
+  return (list || []).filter(function(x) { return _focusMatch(f, x); });
+}
+function focusClear(rerender) { var e = _focus && _focus.entity; _focus = null; document.querySelectorAll('.focus-bar').forEach(function(b) { b.remove(); }); if (rerender !== false && e && _FOCUS_RERENDER[e]) _FOCUS_RERENDER[e](); }
+// the "Showing N … · Show all" bar above a list
+function _focusBar(entity, anchor, shown) {
+  var old = document.getElementById('focus-bar-' + entity);
+  var f = _focusOn(entity);
+  if (!f || !anchor || !anchor.parentNode) { if (old) old.remove(); return; }
+  var bar = old || document.createElement('div');
+  bar.id = 'focus-bar-' + entity; bar.className = 'focus-bar';
+  bar.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px;padding:8px 12px;border-radius:10px;background:var(--abg);border:1px solid var(--amber);font-size:12.5px';
+  var missing = f.ids.length && shown < f.ids.length ? ' <span style="color:var(--muted)">(' + (f.ids.length - shown) + ' no longer match — already handled or not loaded)</span>' : '';
+  bar.innerHTML = '🔎 <b>Showing ' + shown + (f.ids.length ? ' of ' + f.ids.length : '') + '</b> ' + escapeHtml(f.label ? '— ' + f.label : 'highlighted record(s)') + missing +
+    '<button type="button" class="btn btn-s btn-xs" style="margin-left:auto">Show all</button>';
+  bar.querySelector('button').onclick = function() { focusClear(true); };
+  var target = anchor.closest('table') || anchor;
+  if (!old) target.parentNode.insertBefore(bar, target);
+}
+// tag rendered rows/cards (1:1 with the items) so they can be highlighted
+function _focusMark(entity, container, items) {
+  if (!container || !items) return;
+  var kids = container.children, f = _focusOn(entity);
+  for (var i = 0; i < kids.length && i < items.length; i++) {
+    var it = items[i]; if (!it) continue;
+    kids[i].setAttribute('data-focus', entity + ':' + (it._dbId || it.id));
+    if (f && _focusMatch(f, it)) kids[i].classList.add('focus-hit'); else kids[i].classList.remove('focus-hit');
+  }
+}
+function _focusFlash(entity) {
+  var f = _focusOn(entity); if (!f) return;
+  setTimeout(function() {
+    var hits = Array.prototype.filter.call(document.querySelectorAll('[data-focus^="' + entity + ':"],[data-job-id],.doc-card[data-id],tr[data-id]'), function(el) {
+      var id = el.getAttribute('data-focus') ? el.getAttribute('data-focus').split(':').slice(1).join(':') : (el.getAttribute('data-job-id') || el.getAttribute('data-id'));
+      return f.set[String(id)] && el.offsetParent !== null;
+    });
+    hits.forEach(function(el) { el.classList.add('focus-hit'); el.classList.remove('focus-flash'); void el.offsetWidth; el.classList.add('focus-flash'); });
+    if (hits[0]) hits[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, 80);
+}
+async function _dcOpenById(id) {
+  var r = await apiFetch('/documents/' + encodeURIComponent(id) + '?_=' + Date.now());
+  if (!r.ok || !r.data) { toast(_acctMsg(r, 'Document not found'), 'error'); return; }
+  _dcDrawerDocs = [r.data]; previewDoc(r.data.id);
+}
+// nav() to another page drops a focus that belongs elsewhere
+(function() {
+  var _origNav = nav;
+  nav = function(page) {
+    if (_focus) { var rt = _FOCUS_ROUTE[_focus.entity]; if (!rt || rt.page !== page || Date.now() - _focus.at > 5000) { if (Date.now() - _focus.at > 1500) _focus = null; } }
+    return _origNav.apply(this, arguments);
+  };
+})();
+
+// ════════════════════════════════════════════════════════
 // DOCUMENTS (server-owned)
 // Every upload starts Pending and is reviewed by someone else. Files never live in the browser: previews and
 // downloads use a 5-minute link that the server issues (and audits) each time. Lists, counts and the
@@ -8596,6 +8722,7 @@ async function _dcLoad() {
   var seq = ++_dc.seq; _dc.loading = true;
   await _dcMeta();
   var p = { status: _dc.tab === 'All' ? '' : _dc.tab, q: _dc.q, type: _dc.type, page: _dc.page, limit: _dc.limit, _: Date.now() };
+  var fdoc = _focusOn('document'); if (fdoc && fdoc.ids.length) p = { ids: fdoc.ids.join(','), page: _dc.page, limit: _dc.limit, include_voided: '1', archived: '1', _: Date.now() };
   if (_dc.tab === 'Expiring') p.sort = 'expires_on', p.order = 'asc';
   var qs = Object.keys(p).filter(function(k) { return p[k] !== '' && p[k] !== undefined; }).map(function(k) { return k + '=' + encodeURIComponent(p[k]); }).join('&');
   var r = await apiFetch('/documents?' + qs);
@@ -8650,6 +8777,7 @@ function _dcPaint() {
   if (!_dc.data) { grid.innerHTML = '<div class="card cp" style="color:' + (_dc.err ? 'var(--red)' : 'var(--muted)') + '">' + escapeHtml(_dc.err || 'Loading documents…') + '</div>'; return; }
   grid.innerHTML = _dc.data.length ? _dc.data.map(function(d) { return _dcCard(d, P); }).join('') :
     '<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">📂</div><div class="empty-title">No documents here</div><div class="empty-sub">' + (_dc.tab === 'Pending' ? 'Nothing is waiting for review.' : 'No documents match this filter.') + '</div></div>';
+  _focusBar('document', grid, _dc.data.length); _focusFlash('document');
   var pages = Math.ceil(_dc.total / _dc.limit), pg = document.getElementById('doc-pagination');
   if (pg) pg.innerHTML = pages > 1 ? '<button class="pg-btn" data-act="page" data-page="' + (_dc.page - 1) + '"' + (_dc.page <= 1 ? ' disabled' : '') + '>‹</button><span style="font-size:12px;color:var(--muted);padding:0 8px">Page ' + _dc.page + ' of ' + pages + ' · ' + _dc.total + ' documents</span><button class="pg-btn" data-act="page" data-page="' + (_dc.page + 1) + '"' + (_dc.page >= pages ? ' disabled' : '') + '>›</button>' : '';
   var n = Object.keys(_dc.sel).length, bar = document.getElementById('doc-bulkbar');
@@ -9145,6 +9273,7 @@ function renderJobs() {
            (j.employer||'').toLowerCase().includes(jobF) ||
            (j.country||'').toLowerCase().includes(jobF);
   });
+  if (_focusOn('job')) jobs = _focusFilter('job', _scopedJobs);
   var sfEl = document.getElementById('job-status-filter');
   var sf = sfEl ? sfEl.value : '';
   var filtered = !sf ? jobs
@@ -9280,6 +9409,7 @@ function renderJobs() {
         var el = document.getElementById('sb-job-count');
         if (el) el.textContent = _grps.size;
       })();
+  _focusBar('job', container, jobs.length); _focusFlash('job');
 }
 // ── Position row counter ─────────────────────────────────────────────
 var _posRowIdx = 0;
@@ -13150,7 +13280,7 @@ function _ovPaint() {
   if (d.actions.length) {
     h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin:16px 0">' + d.actions.map(function(a) {
       var col = a.severity === 'warning' ? 'var(--amber)' : 'var(--brand)';
-      return '<div onclick="_ovGo(\'' + escapeHtml(a.tab) + '\')" style="cursor:pointer;flex:1;min-width:190px;padding:12px 16px;background:var(--card);border:1px solid var(--border);border-left:3px solid ' + col + ';border-radius:10px">' +
+      return '<div data-ov-action="' + d.actions.indexOf(a) + '" style="cursor:pointer;flex:1;min-width:190px;padding:12px 16px;background:var(--card);border:1px solid var(--border);border-left:3px solid ' + col + ';border-radius:10px">' +
         '<div style="font-size:18px;font-weight:800;color:' + col + '">' + a.count + (a.amount !== null ? '<span style="font-size:12px;color:var(--muted);font-weight:600"> · ' + _ovM(a.amount, a.currency) + '</span>' : '') + '</div>' +
         '<div style="font-size:11px;color:var(--muted)">' + escapeHtml(a.label) + '</div></div>';
     }).join('') + '</div>';
@@ -13164,7 +13294,7 @@ function _ovPaint() {
     }).join(' · ');
     return '<div class="alert-card ' + (a.severity === 'critical' ? 'danger' : '') + '" style="margin-bottom:8px"><div class="alert-icon">' + sevIcon[a.severity] + '</div><div class="alert-body">' +
       '<div class="alert-title">' + escapeHtml(a.title) + '</div><div class="alert-sub">' + escapeHtml(a.detail) + (items ? '<br>' + items + (a.count > 3 ? ' · +' + (a.count - 3) + ' more' : '') : '') + '</div>' +
-      '<button class="alert-action" onclick="_ovGo(\'' + escapeHtml(a.tab) + '\')">Open →</button></div></div>';
+      '<button class="alert-action" data-ov-alert="' + d.alerts.indexOf(a) + '">' + (a.focus && a.focus.ids && a.focus.ids.length ? 'Show ' + (a.focus.ids.length === 1 ? 'it' : 'these ' + a.focus.ids.length) + ' →' : 'Open →') + '</button></div></div>';
   }).join('') : '<div class="empty-state" style="padding:24px"><div class="empty-icon">✅</div><div class="empty-title">Nothing needs attention</div><div class="empty-sub">The books reconcile and no deadlines are due.</div></div>';
 
   var agentRows = function(list, title, note) {
@@ -13212,6 +13342,8 @@ function _ovPaint() {
     }).join('') : '<div style="color:var(--muted);font-size:12px;padding:12px 0">No recent activity</div>') + '</div>';
 
   root.innerHTML = h;
+  root.querySelectorAll('[data-ov-alert]').forEach(function(b) { b.onclick = function() { var a = d.alerts[+b.getAttribute('data-ov-alert')]; if (a && a.focus) goFocus(a.focus); else if (a) _ovGo(a.tab); }; });
+  root.querySelectorAll('[data-ov-action]').forEach(function(b) { b.onclick = function() { var a = d.actions[+b.getAttribute('data-ov-action')]; if (a && a.focus) goFocus(a.focus); else if (a) _ovGo(a.tab); }; });
 }
 function _ovSetPeriod(v) { _ovSet('period', v); }
 function _ovSetCur(v) { _ovSet('currency', v); }
@@ -13228,6 +13360,7 @@ function renderAgentGrid(query) {
       return (a.name||'').toLowerCase().includes(q) || (a.country||'').toLowerCase().includes(q) || (a.code||'').toLowerCase().includes(q);
     });
   }
+  if (_focusOn('agent')) agents = _focusFilter('agent', all);
   var countEl = document.getElementById('agent-count-lbl');
   if (countEl) countEl.innerHTML = agents.length + ' agent' + (agents.length!==1?'s':'') +
     (archivedN ? ' · <a href="#" onclick="toggleArchivedAgents();return false" style="color:var(--brand)">' + (_showArchivedAgents ? 'hide' : 'show') + ' ' + archivedN + ' archived</a>' : '');
@@ -13276,6 +13409,7 @@ function renderAgentGrid(query) {
       '</div>'+
     '</div>';
   }).join('');
+  _focusMark('agent', grid, agents); _focusBar('agent', grid, agents.length); _focusFlash('agent');
 }
 
 function filterAgents(q) { renderAgentGrid(q || ''); }
@@ -13777,7 +13911,7 @@ function renderCommissions() {
       if (coSel.value !== _prevCo) coSel.value = '';
     }
 
-    var filtered = _getFilteredCommissions();
+    var filtered = _focusOn('commission') ? _focusFilter('commission', DB.commissions || []) : _getFilteredCommissions();
     renderAgentPayoutSummary(filtered);
 
     var countEl = document.getElementById('comm-filter-count');
@@ -13855,6 +13989,7 @@ function renderCommissions() {
         '</td>'+
       '</tr>';
         }).join('') : '<tr><td colspan="9" style="text-align:center;padding:40px 20px;color:var(--muted)">No commissions match the current filters</td></tr>';
+    _focusMark('commission', tbody, filtered); _focusBar('commission', tbody, filtered.length); _focusFlash('commission');
   }
 }
 
@@ -15007,15 +15142,17 @@ async function renderAccControls() {
     var items = [];
     if (al.guarantee_ready) items.push('<b>' + al.guarantee_ready + '</b> commission(s) finished their guarantee period' + (hasPermission('Release/Reverse Commissions') ? ' <button class="btn btn-s btn-xs" onclick="advanceGuaranteeUi()">Mark ready to release</button>' : ''));
     var soon = (al.guarantee_expiring || []).filter(function(x) { return x.days > 0; });
-    if (soon.length) items.push('<b>' + soon.length + '</b> guarantee period(s) end within 30 days: ' + soon.slice(0, 6).map(function(x) { return escapeHtml(x.applicant_name || '—') + ' T' + x.tranche + ' (' + x.days + 'd)'; }).join(', ') + (soon.length > 6 ? '…' : ''));
-    if (al.stale_pending_expenses && al.stale_pending_expenses.length) items.push('<b>' + al.stale_pending_expenses.length + '</b> expense(s) have been Pending for over 14 days');
+    if (soon.length) items.push('<b>' + soon.length + '</b> guarantee period(s) end within 30 days: ' + soon.slice(0, 6).map(function(x) { return escapeHtml(x.applicant_name || '—') + ' T' + x.tranche + ' (' + x.days + 'd)'; }).join(', ') + (soon.length > 6 ? '…' : '') + _go({ entity: 'commission', ids: soon.map(function(x) { return x.id; }), label: 'Guarantee ending within 30 days' }));
+    var _go = function(spec) { return ' <a href="#" data-go="' + escapeHtml(JSON.stringify(spec)) + '" style="color:var(--brand);font-weight:700">Show →</a>'; };
+    if (al.stale_pending_expenses && al.stale_pending_expenses.length) items.push('<b>' + al.stale_pending_expenses.length + '</b> expense(s) have been Pending for over 14 days' + _go({ entity: 'expense', ids: al.stale_pending_expenses.map(function(x) { return x.id; }), label: 'Expenses pending 14+ days' }));
     var _an = al.expense_anomalies || {};
-    if ((_an.duplicates || []).length) items.push('<b>' + _an.duplicates.length + '</b> possible duplicate expense(s): ' + _an.duplicates.slice(0, 3).map(function(d) { return escapeHtml(d.description) + ' ×' + d.n; }).join(', '));
-    if ((_an.unusually_large || []).length) items.push('<b>' + _an.unusually_large.length + '</b> unpaid expense(s) are over 3× the usual for their category: ' + _an.unusually_large.slice(0, 3).map(function(d) { return escapeHtml(d.description) + ' (' + _fmtAmt(d.amount, d.currency) + ')'; }).join(', '));
-    if (al.negative_agent_balances && al.negative_agent_balances.length) items.push('<b>' + al.negative_agent_balances.length + '</b> agent(s) owe the agency money: ' + al.negative_agent_balances.slice(0, 5).map(function(a) { return escapeHtml(a.name) + ' ' + _money(a.balance, 'PHP'); }).join(', '));
+    if ((_an.duplicates || []).length) items.push('<b>' + _an.duplicates.length + '</b> possible duplicate expense(s): ' + _an.duplicates.slice(0, 3).map(function(d) { return escapeHtml(d.description) + ' ×' + d.n; }).join(', ') + _go({ entity: 'expense', ids: [].concat.apply([], _an.duplicates.map(function(d) { return d.ids || [d.sample_id]; })), label: 'Possible duplicate expenses' }));
+    if ((_an.unusually_large || []).length) items.push('<b>' + _an.unusually_large.length + '</b> unpaid expense(s) are over 3× the usual for their category: ' + _an.unusually_large.slice(0, 3).map(function(d) { return escapeHtml(d.description) + ' (' + _fmtAmt(d.amount, d.currency) + ')'; }).join(', ') + _go({ entity: 'expense', ids: _an.unusually_large.map(function(x) { return x.id; }), label: 'Unusually large expenses' }));
+    if (al.negative_agent_balances && al.negative_agent_balances.length) items.push('<b>' + al.negative_agent_balances.length + '</b> agent(s) owe the agency money: ' + al.negative_agent_balances.slice(0, 5).map(function(a) { return escapeHtml(a.name) + ' ' + _money(a.balance, 'PHP'); }).join(', ') + _go({ entity: 'agent', ids: al.negative_agent_balances.map(function(x) { return x.id; }), label: 'Agents who owe the agency' }));
     if (al.office_negative && (al.office_negative.php || al.office_negative.usd)) items.push('Office fund balance is negative' + (al.office_negative.php ? ' (PHP)' : '') + (al.office_negative.usd ? ' (USD)' : ''));
     if (al.previous_period_open) items.push('Last month (' + al.previous_period + ') is not closed yet');
     if (al.reconciliation_issues) items.push('<b>' + al.reconciliation_issues + '</b> reconciliation issue(s) — see below');
+    setTimeout(function() { _focusBindGo(document.getElementById('acc-controls')); }, 0);
     html += card('🔔 Needs attention', items.length ? '<ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.9">' + items.map(function(i) { return '<li>' + i + '</li>'; }).join('') + '</ul>' : '<div style="color:var(--green);font-size:13px">✅ Nothing needs attention right now.</div>');
   }
 
@@ -15354,7 +15491,7 @@ function _renderExpensesTabInner() {
   _loadExpSummary().then(_expKpis);
   _expKpis();
 
-  var list = _expFiltered();
+  var list = _focusOn('expense') ? _focusFilter('expense', DB.expenses || []) : _expFiltered();
   var pages = Math.max(1, Math.ceil(list.length / EXP_PAGE_SIZE));
   if ((f.page || 1) > pages) f.page = pages;
   var page = f.page || 1;
@@ -15378,6 +15515,7 @@ function _renderExpensesTabInner() {
 
   var tbody = document.getElementById('expense-tbody'); if (!tbody) return;
   var pager = document.getElementById('exp-pager');
+  _focusBar('expense', tbody, list.length);
   if (!list.length) {
     tbody.innerHTML = '<tr><td colspan="9"><div class="empty-state"><div class="empty-icon">💸</div><div class="empty-title">' + (f.voided ? 'No voided expenses' : 'No expenses found') + '</div></div></td></tr>';
     if (pager) pager.innerHTML = '';
@@ -15418,6 +15556,7 @@ function _renderExpensesTabInner() {
       '<td>' + pillHtml(e.status) + pay + '</td>' +
       '<td style="text-align:right;white-space:nowrap">' + acts + '</td></tr>';
   }).join('');
+  _focusMark('expense', tbody, slice); _focusFlash('expense');
   if (pager) {
     pager.innerHTML = pages > 1
       ? '<div style="display:flex;gap:8px;align-items:center;justify-content:flex-end;padding:10px 16px;font-size:12px;color:var(--muted)">' + list.length + ' expenses · page ' + page + ' of ' + pages +
@@ -16074,7 +16213,7 @@ async function _renderOfficeExtras() {
   var btn = function(label, fn, perm) { return !perm || hasPermission(perm) ? '<button class="btn btn-ghost btn-sm" onclick="' + fn + '">' + label + '</button>' : ''; };
   var accts = _officeAccounts(true);
   var chips = accts.map(function(a) {
-    return '<span style="display:inline-flex;gap:6px;align-items:center;border:1px solid var(--border);border-radius:99px;padding:3px 10px;font-size:12px;background:var(--s2)">' +
+    return '<span data-focus="cash_account:' + escapeHtml(a.id) + '" style="display:inline-flex;gap:6px;align-items:center;border:1px solid var(--border);border-radius:99px;padding:3px 10px;font-size:12px;background:var(--s2)">' +
       escapeHtml(a.name) + ' <b style="font-family:monospace;color:' + (a.balance < 0 ? 'var(--red)' : 'var(--text)') + '">' + _fmtAmt(a.balance, a.currency) + '</b></span>';
   }).join(' ');
   var html = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">' + chips + '</div>' +
@@ -16082,15 +16221,17 @@ async function _renderOfficeExtras() {
       btn('⇄ Transfer / convert', 'openOfficeTransfer()', 'Manage Accounting') + btn('🧮 Cash count', 'openCashCount()', 'Manage Accounting') +
       btn('🏦 Accounts', 'openCashAccounts()', 'View Accounting') + btn('📈 Forecast', 'openCashForecast()', 'View Accounting') +
       btn('🗑 Voided entries', 'openVoidedOffice()', 'Manage Accounting') + '</div><div id="office-alerts" style="margin-top:8px"></div>';
-  host.innerHTML = html;
+  host.innerHTML = html; _focusFlash('cash_account');
   var ar = await apiFetch('/accounting/alerts');
   var al = document.getElementById('office-alerts');
   if (!ar.ok || !ar.data || !al) return;
   var d = ar.data, msgs = [];
-  (d.office_negative_accounts || []).forEach(function(a) { msgs.push('🔴 ' + escapeHtml(a.name) + ' is negative (' + _fmtAmt(a.balance, a.currency) + ')'); });
-  (d.office_low_accounts || []).forEach(function(a) { msgs.push('🟠 ' + escapeHtml(a.name) + ' is low (' + _fmtAmt(a.balance, a.currency) + ')'); });
-  if (d.fx_stale) msgs.push('🟡 The exchange rate has not been updated ' + (d.fx_stale.days == null ? 'yet' : 'in ' + d.fx_stale.days + ' days') + ' — check it before converting or posting USD');
+  var _go = function(spec) { return ' <a href="#" data-go="' + escapeHtml(JSON.stringify(spec)) + '" style="color:var(--brand);font-weight:700">Show →</a>'; };
+  (d.office_negative_accounts || []).forEach(function(a) { msgs.push('🔴 ' + escapeHtml(a.name) + ' is negative (' + _fmtAmt(a.balance, a.currency) + ')' + _go({ entity: 'cash_account', ids: [a.id], label: a.name + ' is negative' })); });
+  (d.office_low_accounts || []).forEach(function(a) { msgs.push('🟠 ' + escapeHtml(a.name) + ' is low (' + _fmtAmt(a.balance, a.currency) + ')' + _go({ entity: 'cash_account', ids: [a.id], label: a.name + ' is low' })); });
+  if (d.fx_stale) msgs.push('🟡 The exchange rate has not been updated ' + (d.fx_stale.days == null ? 'yet' : 'in ' + d.fx_stale.days + ' days') + ' — check it before converting or posting USD' + _go({ entity: 'fx' }));
   al.innerHTML = msgs.map(function(m) { return '<div style="font-size:12.5px;padding:4px 0">' + m + '</div>'; }).join('');
+  _focusBindGo(al);
 }
 
 function openOfficeTransfer() {
@@ -17732,6 +17873,7 @@ function renderEmployerFees() {
     if (employerFilter && f.employer !== employerFilter) return false;
     return true;
   }).sort(function(a,b){ return (b.createdAt||'').localeCompare(a.createdAt||''); });
+  if (_focusOn('employer_fee')) fees = _focusFilter('employer_fee', _feePool);
 
   // KPIs — filtered by employer selection
   var kpiEl = document.getElementById('ef-kpis');
@@ -17820,6 +17962,7 @@ function renderEmployerFees() {
       '<td style="padding:11px 16px;text-align:right">' + actionsHtml + '</td>' +
     '</tr>';
   }).join('');
+  _focusMark('employer_fee', tbody, fees); _focusBar('employer_fee', tbody, fees.length); _focusFlash('employer_fee');
 }
 
 function _efKpi(icon, label, val, color) {
@@ -18523,6 +18666,7 @@ function renderComplaints() {
              && !(c.type||'').toLowerCase().includes(srch)) return false;
     return true;
   }).sort(function(a,b){ return (b.reportedDate||'').localeCompare(a.reportedDate||''); });
+  if (_focusOn('complaint')) list = _focusFilter('complaint', _visible);
 
   // KPIs
   var kEl = document.getElementById('complaints-kpis');
@@ -18586,6 +18730,7 @@ function renderComplaints() {
       '</td>'+
     '</tr>';
   }).join('');
+  _focusMark('complaint', tbody, list); _focusBar('complaint', tbody, list.length); _focusFlash('complaint');
   _updateComplaintsBadge();
 }
 
@@ -19383,7 +19528,7 @@ function _invLoadMore() { apiFetchInvoices({ append:true }); }
 function renderInvoices() {
   var el = document.getElementById('acc-invoices')||document.getElementById('inv-list');
   if (!el) return;
-  var invs = (DB.invoices||[]).slice();
+  var invs = _focusOn('invoice') ? _focusFilter('invoice', DB.invoices || []) : (DB.invoices||[]).slice();
   if (!_isLiveSession()) invs.sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
   var canManage = hasPermission('Manage Invoices');
   var employers = {}; invs.forEach(function(i){ if (i.employer) employers[i.employer] = 1; }); (_invEmployers||[]).forEach(function(e){ employers[e.name] = 1; });
@@ -19415,6 +19560,7 @@ function renderInvoices() {
       if (draft && hasPermission('Delete Invoices')) acts += btn('🗑', 'deleteInvoice(\'' + id + '\')', 'btn-ghost');
       return '<tr style="border-bottom:1px solid var(--border);' + (voided ? 'opacity:.6' : '') + '"><td style="padding:11px 14px;font-family:monospace;font-size:12px;font-weight:700;color:var(--brand)">' + (draft ? 'Draft' : '#' + escapeHtml(inv.number)) + '<div style="margin-top:3px">' + _invBadge(inv) + '</div></td><td style="padding:11px 14px;font-size:12px;color:var(--muted)">' + escapeHtml(String(inv.date || '').slice(0, 10)) + '</td><td style="padding:11px 14px;font-size:13px;font-weight:600">' + escapeHtml(inv.employer) + '</td><td style="padding:11px 14px">' + due + '</td><td style="padding:11px 14px;text-align:right;font-family:monospace;font-weight:700">$' + _invFmt(total) + '</td><td style="padding:11px 14px;text-align:right;font-family:monospace;font-weight:700">' + balCell + '</td><td style="padding:11px 14px;text-align:right;white-space:nowrap">' + acts + '</td></tr>';
     }).join('') + '</tbody></table></div>' + (_invHasMore ? '<div style="text-align:center;margin-top:12px"><button class="btn btn-s" onclick="_invLoadMore()">Load more</button></div>' : '');
+  (function() { var tb = el.querySelector('tbody'); _focusMark('invoice', tb, invs); _focusBar('invoice', tb, invs.length); _focusFlash('invoice'); })();
   _renderInvoiceSummary();
 }
 function _invSetLocked(locked) {
@@ -23783,6 +23929,10 @@ async function loadSharedPermissions() {
 
 <style>
 @keyframes spin { to { transform: rotate(360deg); } }
+.focus-hit { background: var(--abg) !important; box-shadow: inset 3px 0 0 var(--amber); }
+.doc-card.focus-hit, .agent-card.focus-hit { outline: 2px solid var(--amber); outline-offset: 2px; }
+@keyframes focusFlash { 0%,100% { box-shadow: inset 3px 0 0 var(--amber), 0 0 0 0 rgba(245,158,11,0); } 50% { box-shadow: inset 3px 0 0 var(--amber), 0 0 0 6px rgba(245,158,11,.35); } }
+.focus-flash { animation: focusFlash 1.1s ease 3; }
 </style>
 
 <!-- ═══════════════════════════════════════════════════════════════════════════ -->
