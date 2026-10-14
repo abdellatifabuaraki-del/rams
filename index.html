@@ -1338,6 +1338,7 @@ button[disabled][data-rbac-locked] {
       <div class="pg-hdr">
         <div class="pg-hdr-l"><h1>Documents</h1><p>Every upload is reviewed by someone else before it counts. Views and downloads are recorded.</p></div>
         <div class="pg-hdr-r">
+          <button class="btn btn-ghost btn-sm" id="doc-storage-btn" onclick="openStorageCheck()" style="display:none" title="Test the connection to cloud file storage">☁ Check storage</button>
           <button class="btn btn-ghost btn-sm" id="doc-req-btn" onclick="openDocRequirements()" style="display:none">⚙ Required documents</button>
           <button class="btn btn-s btn-sm" id="doc-export-btn" onclick="exportData('docs')">Export</button>
           <button class="btn btn-p btn-sm" id="doc-upload-btn" onclick="openUploadDoc()">+ Upload Document</button>
@@ -8644,7 +8645,7 @@ function _dcPaint() {
   var typeSel = document.getElementById('doc-type-filter');
   if (typeSel && _dc.meta && typeSel.options.length <= 1) typeSel.innerHTML = '<option value="">All types</option>' + _dc.meta.types.map(function(t) { return '<option>' + escapeHtml(t) + '</option>'; }).join('');
   var show = function(id, on) { var el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
-  show('doc-upload-btn', P.upload); show('doc-req-btn', P.settings); show('doc-export-btn', P.export);
+  show('doc-upload-btn', P.upload); show('doc-req-btn', P.settings); show('doc-storage-btn', P.settings); show('doc-export-btn', P.export);
   var sb = document.getElementById('sb-doc-count'); if (sb && C.Pending !== undefined) sb.textContent = C.Pending;
   if (!_dc.data) { grid.innerHTML = '<div class="card cp" style="color:' + (_dc.err ? 'var(--red)' : 'var(--muted)') + '">' + escapeHtml(_dc.err || 'Loading documents…') + '</div>'; return; }
   grid.innerHTML = _dc.data.length ? _dc.data.map(function(d) { return _dcCard(d, P); }).join('') :
@@ -8943,6 +8944,35 @@ async function apiUploadDocument(doc, fileBlob) {
   var r = await apiFetch('/documents/upload', { method: 'POST', body: form, _noContentType: true });
   if (r.ok && r.data && r.data.id) { doc._dbId = r.data.id; doc.id = r.data.id; }
   return r;
+}
+
+// ── cloud storage check (System Settings) ─────────────────────────────────
+async function openStorageCheck() {
+  if (!hasPermission('System Settings')) { toast('Only roles with System Settings can run the storage check', 'error'); return; }
+  var ov = document.getElementById('overlay-storage-check');
+  if (!ov) { ov = document.createElement('div'); ov.className = 'overlay'; ov.id = 'overlay-storage-check'; ov.setAttribute('role', 'dialog'); document.body.appendChild(ov); }
+  ov.innerHTML = '<div class="modal modal-md"><div class="modal-hdr"><div><h2>☁ Cloud storage check</h2><p>Writes, reads, opens and deletes a small test file, then checks that recent documents are really in the bucket.</p></div><button class="close-btn" onclick="closeOverlay(\'overlay-storage-check\')">✕</button></div>' +
+    '<div class="modal-body" id="storage-check-body"><div style="color:var(--muted)">Running the check… (a few seconds)</div></div>' +
+    '<div class="modal-foot"><button class="btn btn-ghost" onclick="closeOverlay(\'overlay-storage-check\')">Close</button><button class="btn btn-p" onclick="openStorageCheck()">↻ Run again</button></div></div>';
+  openOverlay('overlay-storage-check');
+  var r = await apiFetch('/system/storage?_=' + Date.now());
+  var box = document.getElementById('storage-check-body'); if (!box) return;
+  if (!r.ok || !r.data) { box.innerHTML = '<div style="color:var(--red)">⛔ ' + escapeHtml(_acctMsg(r, 'The check could not run')) + '</div>'; return; }
+  var d = r.data, c = d.config || {}, F = d.files;
+  var row = function(s) {
+    var ic = s.ok ? (s.warn ? '⚠️' : '✅') : (s.warn ? '⚠️' : '❌');
+    return '<div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)"><div>' + ic + '</div><div style="flex:1"><div style="font-weight:700;font-size:12.5px">' + escapeHtml(s.name) + (s.ms !== undefined ? ' <span style="font-weight:400;color:var(--muted)">' + s.ms + ' ms</span>' : '') + '</div>' +
+      '<div style="font-size:12px;color:var(--muted)">' + escapeHtml(s.detail || '') + '</div>' + (s.fix ? '<div style="font-size:12px;color:var(--red)">→ ' + escapeHtml(s.fix) + '</div>' : '') + '</div></div>';
+  };
+  box.innerHTML = '<div style="padding:10px 12px;border-radius:8px;margin-bottom:10px;font-weight:700;background:' + (d.ok ? 'var(--gbg)' : 'var(--rbg)') + ';color:' + (d.ok ? 'var(--green)' : 'var(--red)') + '">' + (d.ok ? '✅ ' : '❌ ') + escapeHtml((d.summary || []).join(' ')) + '</div>' +
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">' + escapeHtml([c.provider, c.bucket ? 'bucket ' + c.bucket : '', c.endpoint_host, c.region ? 'region ' + c.region : '', c.access_key_hint ? 'key ' + c.access_key_hint : ''].filter(Boolean).join(' · ')) + '</div>' +
+    (d.steps || []).map(row).join('') +
+    (F ? '<div style="margin-top:10px;font-size:12px">' + escapeHtml(F.documents.with_file + ' of ' + F.documents.total + ' documents have a stored file · ' + F.sample_checked + ' most recent checked in ' + F.ms + ' ms (' + (F.avg_ms || 0) + ' ms each)') +
+      (F.receipts ? '<br>' + escapeHtml('Expense receipts: ' + F.receipts.checked + ' checked, ' + F.receipts.missing + ' missing') : '') +
+      (F.missing && F.missing.length ? '<div style="margin-top:6px;color:var(--red)">Missing in the bucket: ' + F.missing.slice(0, 10).map(function(m) { return escapeHtml(m.name || m.id); }).join(', ') + (F.missing_count > 10 ? ' …' : '') + '</div>' : '') +
+      (F.other_bucket && F.other_bucket.length ? '<div style="margin-top:6px;color:var(--amber)">Stored in another bucket: ' + F.other_bucket.map(function(m) { return escapeHtml(m.name + ' (' + m.bucket + ')'); }).join(', ') + '</div>' : '') +
+      (F.size_mismatch && F.size_mismatch.length ? '<div style="margin-top:6px;color:var(--amber)">Size differs from the record: ' + F.size_mismatch.map(function(m) { return escapeHtml(m.name); }).join(', ') + '</div>' : '') + '</div>' : '') +
+    '<div style="font-size:11px;color:var(--muted);margin-top:10px">Checked ' + escapeHtml(new Date(d.checked_at).toLocaleString()) + '. Recorded in the audit log.</div>';
 }
 
 // ── requirements editor (System Settings) ─────────────────────────────────
