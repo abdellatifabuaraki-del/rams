@@ -1177,7 +1177,7 @@ button[disabled][data-rbac-locked] {
       <div class="pg-hdr">
         <div class="pg-hdr-l">
           <h1 id="dash-greeting">Good morning 👋</h1>
-          <p>Here's what's happening at My Recruitment Company today.</p>
+          <p>Here's what's happening today.</p>
         </div>
         <div class="pg-hdr-r">
           <button class="btn btn-s btn-sm" id="dash-export-btn" onclick="exportData('dashboard')">
@@ -1187,48 +1187,7 @@ button[disabled][data-rbac-locked] {
           <button class="btn btn-p btn-sm" id="dash-new-applicant-btn" onclick="nav('applicants')">+ New Applicant</button>
         </div>
       </div>
-      <div class="stat-grid" id="dash-stats"></div>
-      <div class="dash-grid">
-        <div class="card">
-          <div class="cp" style="padding-bottom:0">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-              <div>
-                <div style="font-size:14px;font-weight:800;margin-bottom:2px">Deployment Pipeline</div>
-                <div style="font-size:12px;color:var(--muted)">Applicants by stage this month</div>
-              </div>
-              <div style="display:flex;gap:12px;font-size:11px;color:var(--muted)">
-                <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:3px;background:var(--brand);display:inline-block"></span>Current</span>
-                <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:3px;background:var(--border);display:inline-block"></span>Last Mo.</span>
-              </div>
-            </div>
-          </div>
-          <div class="chart-placeholder" id="dash-chart">
-            <div style="width:100%;display:flex;align-items:flex-end;justify-content:space-around;padding:0 16px 20px;gap:10px" id="chart-bars"></div>
-          </div>
-          <div style="display:flex;justify-content:space-around;padding:0 32px 16px;font-size:10.5px;font-family:'IBM Plex Mono',monospace;color:var(--muted)" id="chart-labels"></div>
-        </div>
-        <div class="card cp">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-            <div style="font-size:14px;font-weight:800">Recent Activity</div>
-            <button class="btn btn-ghost btn-xs">View all</button>
-          </div>
-          <div id="activity-feed"></div>
-        </div>
-      </div>
-      <div style="margin-top:18px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px">
-        <div class="card cp">
-          <div style="font-size:13.5px;font-weight:800;margin-bottom:14px">Top Jobs Open</div>
-          <div id="top-jobs"></div>
-        </div>
-        <div class="card cp">
-          <div style="font-size:13.5px;font-weight:800;margin-bottom:14px">Document Status</div>
-          <div id="doc-status-summary"></div>
-        </div>
-        <div class="card cp">
-          <div style="font-size:13.5px;font-weight:800;margin-bottom:14px">Quick Actions</div>
-          <div style="display:flex;flex-direction:column;gap:6px" id="quick-actions"></div>
-        </div>
-      </div>
+      <div id="dash-root"></div>
     </div>
 
     <!-- ══════════════════════════════════════
@@ -7217,252 +7176,193 @@ function addAudit(action, entity, detail) {
 // ════════════════════════════════════════════════════════
 // DASHBOARD
 // ════════════════════════════════════════════════════════
-function renderDashboard() {
+function _dashGreet() {
   // Greeting follows the business-timezone hour (morning / afternoon / evening)
   try {
     var _gh = parseInt(new Intl.DateTimeFormat('en-GB', { timeZone: _ramsTz(), hour: '2-digit', hour12: false }).format(new Date()), 10) % 24;
     var _ge = document.getElementById('dash-greeting');
     if (_ge) _ge.textContent = (_gh < 12 ? 'Good morning' : _gh < 18 ? 'Good afternoon' : 'Good evening') + ' 👋';
   } catch (e) {}
-  const _dashApps = getScopedApplicants();
-  const _dashJobs = getScopedJobs();
+}
 
-  // ── Computed metrics ─────────────────────────────────────────────
-  const totalApps    = _dashApps.length;
-  const deployed     = _dashApps.filter(a=>a.status==='Deployed').length;
-  const inPipeline   = _dashApps.filter(a=>!['Deployed','Repatriated','Rejected','Backout'].includes(a.status)).length;
-  const repatriated  = _dashApps.filter(a=>a.status==='Repatriated').length;
-  // Job Orders KPI card only counts active postings — Open or In Progress.
-  // Filled and Closed job orders are excluded entirely from this card.
-  const _activeJobs  = _dashJobs.filter(j=>j.status==='Open' || j.status==='In Progress');
-  const openJobs     = _activeJobs.length;
-  const filledJobs   = _activeJobs.filter(j=>(parseInt(j.filled)||0) >= (parseInt(j.slots)||0) && (parseInt(j.slots)||0) > 0).length;
-  const isViewer     = getCurrentRole && getCurrentRole() === 'Viewer';
-  const _scopedNames = new Set(_dashApps.map(function(a){ return a.name; }));
-  const _scopedDocs  = isViewer
-    ? DB.documents.filter(function(d){ return _scopedNames.has(d.applicant); })
-    : DB.documents;
-  const pendingDocs  = _scopedDocs.filter(d=>d.status==='Pending').length;
-  const approvedDocs = _scopedDocs.filter(d=>d.status==='Approved').length;
+// The Dashboard renders ONE server snapshot (GET /dashboard): counts are done in SQL with no row cap,
+// viewer scoping and permissions are applied on the server, and nothing here is counted from the local cache.
+var _dash = { period: 'month', data: null, err: null, loading: false, seq: 0, at: 0, stageSel: null };
 
-  // Hide write-only header buttons for viewers
-  var _exportBtn = document.getElementById('dash-export-btn');
-  var _newAppBtn = document.getElementById('dash-new-applicant-btn');
-  if (_exportBtn) _exportBtn.style.display = isViewer ? 'none' : '';
-  if (_newAppBtn) _newAppBtn.style.display = isViewer ? 'none' : '';
-  const totalSlots   = _activeJobs.reduce(function(s,j){return s+(j.slots||0);},0);
-  const filledSlots  = _activeJobs.reduce(function(s,j){return s+(j.filled||0);},0);
-  const deployRate   = totalApps ? Math.round(deployed/totalApps*100) : 0;
-  const slotUtilRate = totalSlots ? Math.round(filledSlots/totalSlots*100) : 0;
+function renderDashboard(force) {
+  _dashGreet();
+  var root = document.getElementById('dash-root'); if (!root) return;
+  if (!_isLiveSession()) { _dashDemo(root); return; }
+  _dashPaint();
+  if (force === true || !_dash.data || (Date.now() - _dash.at) > 8000) _dashLoad();
+}
 
-  // ── Pipeline breakdown ───────────────────────────────────────────
-  var pipelineStages = ['For Selection','Applied','Screening','Interview','Selected','Medical','Processing','Visa','OWWA'];
-  var pipelineCounts = pipelineStages.map(function(s){
-    return { stage: s, count: _dashApps.filter(function(a){return a.status===s;}).length };
-  }).filter(function(x){return x.count>0;});
+async function _dashLoad() {
+  if (!_isLiveSession()) return;
+  var seq = ++_dash.seq; _dash.loading = true;
+  var r = await apiFetch('/dashboard?period=' + encodeURIComponent(_dash.period) + '&_=' + Date.now());
+  if (seq !== _dash.seq) return;                       // a newer request superseded this one
+  _dash.loading = false;
+  if (!r.ok || !r.data) { _dash.err = _acctMsg(r, 'Could not load the dashboard'); }
+  else { _dash.data = r.data; _dash.err = null; _dash.at = Date.now(); }
+  if (document.getElementById('dash-root') && currentPage === 'dashboard') _dashPaint();
+}
+function _dashReset() { _dash.data = null; _dash.err = null; _dash.at = 0; _dash.seq++; }
+function _dashSetPeriod(v) { _dash.period = v; _dash.data = null; renderDashboard(true); }
 
-  // ── Status distribution for donut ───────────────────────────────
-  var statusColors = {
-    'Deployed':'var(--green)','In Pipeline':'var(--brand)',
-    'Repatriated':'var(--red)','Backout':'var(--amber)','Rejected':'#94a3b8'
+// Sign-in without a server (demo): a small local summary, clearly labelled
+function _dashDemo(root) {
+  var apps = getScopedApplicants();
+  var dep = apps.filter(function(a) { return a.status === 'Deployed'; }).length;
+  root.innerHTML = '<div class="card cp" style="color:var(--muted)">Demo mode — the live dashboard is calculated on the server. Local sample: ' +
+    apps.length + ' applicants, ' + dep + ' deployed.</div>';
+}
+
+// ── click-through to the list behind a number ─────────────────────────
+var _DASH_END = ['Deployed', 'Repatriated', 'Rejected', 'Backout'];
+function _dashGo(key, arg) {
+  if (key === 'stage') { analyticsDrill({ status: arg }); return; }
+  if (key === 'stuck') {
+    var days = Number(arg) || 14;
+    window._appExtraFilter = {
+      label: 'Unchanged for ' + days + '+ days',
+      fn: function(x) { return _DASH_END.indexOf(x.status) === -1 && (Date.now() - new Date(x._statusUpdatedAt || x._updatedAt || 0).getTime()) > days * 86400000; }
+    };
+    nav('applicants');
+    setTimeout(function() {
+      ['app-search', 'app-medical-filter', 'app-joborder-filter', 'app-status-filter', 'app-agent-filter', 'app-country-filter', 'app-category-filter'].forEach(function(id) { var el = document.getElementById(id); if (el) el.value = ''; });
+      if (typeof syncStatusFilterUI === 'function') syncStatusFilterUI();
+      filterApplicants();
+    }, 80);
+    return;
+  }
+  if (key === 'docs') {
+    nav('documents');
+    var tab = document.querySelector('.tabs .tab[onclick*="\'' + arg + '\'"]');
+    filterDocs(arg || 'all', tab);
+    return;
+  }
+  if (key === 'accounting') { nav('accounting'); switchAccTab('overview'); return; }
+  if (key === 'job') { nav('jobs'); return; }
+  nav(key);
+}
+
+function _dashKpi(label, value, color, sub, go, hint) {
+  return '<div class="stat-card" style="border-left:3px solid ' + color + ';cursor:' + (go ? 'pointer' : 'default') + '" ' + (go ? 'onclick="' + go + '" ' : '') + (hint ? 'title="' + escapeHtml(hint) + '"' : '') + '>' +
+    '<div style="font-size:10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.07em">' + escapeHtml(label) + '</div>' +
+    '<div style="font-size:28px;font-weight:800;line-height:1.15;color:' + color + '">' + value + '</div>' +
+    (sub ? '<div style="font-size:11px;color:var(--muted);margin-top:6px">' + sub + '</div>' : '') + '</div>';
+}
+function _dashDelta(d, goodWhenUp) {
+  if (!d) return '';
+  if (d.change === 0) return '<span style="color:var(--muted)">no change</span>';
+  var up = d.change > 0, good = goodWhenUp ? up : !up;
+  return '<span style="color:' + (good ? 'var(--green)' : 'var(--red)') + '">' + (up ? '▲ ' : '▼ ') + Math.abs(d.change) + (d.pct === null ? '' : ' (' + Math.abs(d.pct) + '%)') + '</span>';
+}
+
+function _dashPaint() {
+  var root = document.getElementById('dash-root'); if (!root) return;
+  var d = _dash.data, h = '';
+  var sel = '<select class="f-inp" style="width:auto" onchange="_dashSetPeriod(this.value)">' +
+    [['week', 'This week'], ['month', 'This month'], ['year', 'This year']].map(function(o) { return '<option value="' + o[0] + '"' + (o[0] === _dash.period ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>';
+  h += '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">' + sel +
+    '<button class="btn btn-s btn-sm" onclick="renderDashboard(true)">↻ Refresh</button>' +
+    '<span style="font-size:11.5px;color:var(--muted)">' + (_dash.loading ? 'Updating…' : (d ? 'As of ' + escapeHtml(new Date(d.as_of).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) + (d.scoped ? ' · limited to your assigned job orders' : '') : '')) + '</span></div>';
+
+  var hasBtns = d && d.actions;
+  var ex = document.getElementById('dash-export-btn'), na = document.getElementById('dash-new-applicant-btn');
+  if (ex) ex.style.display = hasBtns && d.actions.export ? '' : 'none';
+  if (na) na.style.display = hasBtns && d.actions.new_applicant ? '' : 'none';
+
+  if (_dash.err && !d) { root.innerHTML = h + '<div class="card cp" style="color:var(--red)">' + escapeHtml(_dash.err) + '</div>'; return; }
+  if (!d) {
+    var sk = '<div class="stat-card" style="opacity:.5"><div style="font-size:28px;font-weight:800">…</div><div class="stat-lbl">Loading</div></div>';
+    root.innerHTML = h + '<div class="stat-grid">' + sk + sk + sk + sk + '</div>'; return;
+  }
+  if (_dash.err) h += '<div class="card cp" style="color:var(--red);margin-bottom:10px">' + escapeHtml(_dash.err) + ' — showing the last snapshot.</div>';
+  var K = d.kpis, P = K.period, dl = K.deltas || {}, J = d.jobs, D = d.documents;
+  var cmp = d.period.compare_label ? ' vs ' + escapeHtml(d.period.compare_label) : '';
+
+  h += '<div class="stat-grid" style="opacity:' + (_dash.loading ? '.6' : '1') + '">' +
+    _dashKpi('Total applicants', K.total, 'var(--brand)', '🔵 ' + K.active + ' active · ✈ ' + K.deployed + ' deployed', "_dashGo('applicants')", d.definitions.active) +
+    _dashKpi('Deployed · ' + d.period.label, P.deployed, 'var(--green)', _dashDelta(dl.deployed, true) + cmp + '<br>' + K.deployed + ' all-time', "_dashGo('stage','Deployed')") +
+    _dashKpi('Success rate', K.success_rate === null ? '—' : K.success_rate + '%', 'var(--teal, #0891B2)', K.deployed + ' deployed of ' + (K.deployed + K.lost) + ' decided · ' + K.repatriated + ' repatriated', null, d.definitions.success) +
+    _dashKpi('New applicants · ' + d.period.label, P.new_applicants, 'var(--purple)', _dashDelta(dl.new_applicants, true) + cmp, "_dashGo('applicants')") +
+    _dashKpi('Job orders open', J.open, 'var(--amber)', J.placed + '/' + J.slots + ' slots placed · ' + J.fully_filled + ' fully filled', "_dashGo('job')", d.definitions.slots) +
+    _dashKpi('Documents pending', D.pending, 'var(--purple)', D.approved + ' approved · ' + D.rejected + ' rejected', "_dashGo('docs','Pending')") +
+    '</div>';
+
+  // needs attention
+  if (d.attention.length) {
+    var col = { critical: 'var(--red)', warning: 'var(--amber)', info: 'var(--brand)' };
+    h += '<div style="font-size:14px;font-weight:800;margin:18px 0 10px">⚠ Needs attention</div><div style="display:flex;gap:10px;flex-wrap:wrap">' + d.attention.map(function(a) {
+      var arg = a.key === 'docs_pending' ? "'docs','Pending'" : a.key === 'stuck' ? "'stuck'," + Number(a.filter && a.filter.stuck || 14) : a.page === 'accounting' ? "'accounting'" : "'" + escapeHtml(a.page) + "'";
+      return '<div onclick="_dashGo(' + arg + ')" style="cursor:pointer;flex:1;min-width:200px;padding:12px 16px;background:var(--card);border:1px solid var(--border);border-left:3px solid ' + col[a.severity] + ';border-radius:10px">' +
+        '<div style="font-size:20px;font-weight:800;color:' + col[a.severity] + '">' + Number(a.count) + '</div><div style="font-size:11.5px;color:var(--muted)">' + escapeHtml(a.label) + '</div></div>';
+    }).join('') + '</div>';
+  }
+
+  // pipeline by stage (all stages, adds up to the total) + activity
+  var maxC = Math.max.apply(null, d.stages.map(function(s) { return s.count; }).concat([1]));
+  var stageCol = { 'For Selection': '#94a3b8', Applied: 'var(--brand)', Screening: 'var(--purple)', Interview: 'var(--amber)', Selected: 'var(--green)', Medical: 'var(--teal)', Processing: '#0891B2', Visa: 'var(--purple)', OWWA: 'var(--teal)', 'With Complaint': 'var(--red)', Deployed: 'var(--green)', Backout: 'var(--amber)', Repatriated: 'var(--red)', Rejected: '#94a3b8' };
+  var bars = d.stages.length ? d.stages.map(function(s) {
+    var pct = Math.max(Math.round(s.count / maxC * 100), 3), c = stageCol[s.stage] || 'var(--brand)';
+    return '<div style="flex:1;min-width:34px;max-width:70px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:170px" onclick="_dashGo(\'stage\',\'' + escapeHtml(s.stage) + '\')" title="' + escapeHtml(s.stage) + ': ' + s.count + '">' +
+      '<span style="font-size:10px;font-weight:700;color:' + c + '">' + s.count + '</span>' +
+      '<div style="width:100%;height:' + pct + '%;background:' + c + ';opacity:' + (s.end ? '.5' : '.9') + ';border-radius:4px 4px 0 0"></div>' +
+      '<span style="font-size:9px;color:var(--muted);margin-top:4px;text-align:center;line-height:1.1">' + escapeHtml(s.stage) + '</span></div>';
+  }).join('') : '<div style="height:140px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px;width:100%">No applicants yet</div>';
+  var icons = { create: '＋', update: '✎', delete: '✕', export: '↓' }, kc = { create: 'var(--green)', update: 'var(--brand)', delete: 'var(--red)', export: 'var(--amber)' };
+  var act = d.activity.length ? d.activity.map(function(a) {
+    var c = kc[a.kind] || 'var(--dim)';
+    return '<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)"><div style="width:24px;height:24px;border-radius:50%;background:' + c + '22;color:' + c + ';display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">' + (icons[a.kind] || '•') + '</div>' +
+      '<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(a.text) + '</div>' +
+      '<div style="font-size:11px;color:var(--muted)">' + escapeHtml(a.who) + ' · ' + escapeHtml(new Date(a.at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })) + '</div></div></div>';
+  }).join('') : '<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">No recent activity</div>';
+  h += '<div class="dash-grid" style="margin-top:18px"><div class="card cp"><div style="font-size:14px;font-weight:800;margin-bottom:2px">Pipeline by stage</div>' +
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:12px">Every applicant, by current stage (' + K.total + ' total) — click a bar to open the list</div>' +
+    '<div style="display:flex;align-items:flex-end;gap:6px">' + bars + '</div></div>' +
+    '<div class="card cp"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><div style="font-size:14px;font-weight:800">Recent activity</div>' +
+    (d.actions.audit ? '<button class="btn btn-ghost btn-xs" onclick="nav(\'audit\')">View all</button>' : '') + '</div>' + act + '</div></div>';
+
+  // jobs (needing candidates / nearly full), documents, quick actions
+  var jobRow = function(j, i, n) {
+    var pct = j.slots ? Math.min(Math.round(j.placed / j.slots * 100), 100) : 0;
+    return '<div style="padding:10px 0;' + (i === n - 1 ? '' : 'border-bottom:1px solid var(--border)') + '"><div style="display:flex;justify-content:space-between;margin-bottom:6px"><div style="min-width:0;flex:1;margin-right:10px">' +
+      '<div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(j.title) + '</div>' +
+      '<div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(j.employer) + ' · ' + escapeHtml(j.country) + ' · ' + j.candidates + ' candidate' + (j.candidates === 1 ? '' : 's') + '</div></div>' +
+      '<div style="text-align:right"><div style="font-size:13px;font-weight:800">' + j.placed + '<span style="color:var(--muted);font-weight:400">/' + j.slots + '</span></div>' +
+      '<div style="font-size:10px;font-weight:600;color:' + (j.candidates < j.remaining ? 'var(--red)' : 'var(--green)') + '">' + j.remaining + ' to fill</div></div></div>' +
+      '<div style="height:4px;border-radius:2px;background:var(--border)"><div style="height:4px;border-radius:2px;background:' + (pct >= 75 ? 'var(--amber)' : 'var(--brand)') + ';width:' + pct + '%"></div></div></div>';
   };
+  var jobsList = function(list, empty) { return list.length ? list.map(function(j, i) { return jobRow(j, i, list.length); }).join('') : '<div style="text-align:center;padding:22px 0;color:var(--muted);font-size:12px">' + empty + '</div>'; };
+  var tabOn = _dash.jobTab !== 'full';
+  var docTotal = D.total;
+  var docBox = [['Approved', D.approved, 'var(--green)', 'var(--gbg)'], ['Pending', D.pending, 'var(--amber)', 'var(--abg)'], ['Rejected', D.rejected, 'var(--red)', 'var(--rbg)']].map(function(x) {
+    return '<div onclick="_dashGo(\'docs\',\'' + x[0] + '\')" style="cursor:pointer;background:' + x[3] + ';border-radius:10px;padding:14px 8px;text-align:center"><div style="font-size:26px;font-weight:800;color:' + x[2] + ';line-height:1">' + x[1] + '</div><div style="font-size:11px;color:' + x[2] + ';font-weight:600;margin-top:4px">' + x[0] + '</div></div>';
+  }).join('');
+  var A = d.actions;
+  var qa = [
+    A.new_applicant && ['New Applicant', 'openAddApplicant()', 'var(--brand)', 'var(--brand-l)', '\u{1F464}'],
+    A.new_job && ['New Job Order', 'openAddJob()', 'var(--amber)', 'var(--abg)', '\u{1F4BC}'],
+    A.upload_doc && ['Upload Doc', 'openUploadDoc()', 'var(--purple)', 'var(--pbg)', '\u{1F4CE}'],
+    ['Pipeline', "nav('pipeline')", 'var(--green)', 'var(--gbg)', '\u{1F504}'],
+    A.analytics && ['Analytics', "nav('analytics')", 'var(--teal)', '#E0F2FE', '\u{1F4CA}'],
+    A.audit && ['Audit Trail', "nav('audit')", '#7C3AED', '#F5F3FF', '\u{1F4CB}'],
+    !A.new_applicant && ['My Applicants', "nav('applicants')", 'var(--brand)', 'var(--brand-l)', '\u{1F465}'],
+    !A.new_applicant && ['My Documents', "nav('documents')", 'var(--purple)', 'var(--pbg)', '\u{1F4C4}'],
+  ].filter(Boolean).slice(0, 6);
+  h += '<div style="margin-top:18px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px">' +
+    '<div class="card cp"><div style="display:flex;gap:6px;margin-bottom:10px"><button class="btn btn-sm ' + (tabOn ? 'btn-p' : 'btn-s') + '" onclick="_dash.jobTab=\'need\';_dashPaint()">Need candidates</button>' +
+    '<button class="btn btn-sm ' + (tabOn ? 'btn-s' : 'btn-p') + '" onclick="_dash.jobTab=\'full\';_dashPaint()">Nearly full</button></div>' +
+    (tabOn ? jobsList(J.needing, 'Every open job order has candidates') : jobsList(J.nearly_full, 'No job order is nearly full')) + '</div>' +
+    '<div class="card cp"><div style="font-size:13.5px;font-weight:800;margin-bottom:14px">Document status</div><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">' + docBox + '</div>' +
+    (docTotal ? '<div style="font-size:11px;color:var(--muted);text-align:center;margin-top:10px">' + docTotal + ' total document' + (docTotal === 1 ? '' : 's') + (d.scoped ? ' in your scope' : '') + '</div>' : '') + '</div>' +
+    '<div class="card cp"><div style="font-size:13.5px;font-weight:800;margin-bottom:14px">Quick actions</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' + qa.map(function(a) {
+      return '<button onclick="' + a[1] + '" style="background:' + a[3] + ';color:' + a[2] + ';border:none;border-radius:10px;padding:13px 8px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;font-weight:600;font-size:12px;text-align:center"><span style="font-size:20px">' + a[4] + '</span><span style="line-height:1.2">' + a[0] + '</span></button>';
+    }).join('') + '</div></div></div>';
 
-  // ── KPI Cards ────────────────────────────────────────────────────
-  document.getElementById('dash-stats').innerHTML = `
-    <div class="stat-card" style="border-left:3px solid var(--brand)">
-      <div class="stat-top">
-        <div class="stat-icon" style="background:var(--brand-l);color:var(--brand);font-size:20px">👥</div>
-        <div style="text-align:right">
-          <div style="font-size:10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.07em">Total Applicants</div>
-          <div style="font-size:28px;font-weight:800;line-height:1.1;color:var(--brand)">${totalApps}</div>
-        </div>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:10px">
-        <span style="font-size:11px;background:var(--brand-l);color:var(--brand);padding:2px 8px;border-radius:99px;font-weight:600">🔵 ${inPipeline} active</span>
-        <span style="font-size:11px;background:var(--gbg);color:var(--green);padding:2px 8px;border-radius:99px;font-weight:600">✈ ${deployed} deployed</span>
-      </div>
-    </div>
-    <div class="stat-card" style="border-left:3px solid var(--green)">
-      <div class="stat-top">
-        <div class="stat-icon" style="background:var(--gbg);color:var(--green);font-size:20px">✈️</div>
-        <div style="text-align:right">
-          <div style="font-size:10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.07em">Deploy Rate</div>
-          <div style="font-size:28px;font-weight:800;line-height:1.1;color:var(--green)">${deployRate}%</div>
-        </div>
-      </div>
-      <div style="margin-top:10px">
-        <div class="prog-bar" style="height:6px;border-radius:3px">
-          <div class="prog-fill" style="background:var(--green);width:${deployRate}%;border-radius:3px"></div>
-        </div>
-        <div style="font-size:11px;color:var(--muted);margin-top:4px">${repatriated} repatriated</div>
-      </div>
-    </div>
-    <div class="stat-card" style="border-left:3px solid var(--amber)">
-      <div class="stat-top">
-        <div class="stat-icon" style="background:var(--abg);color:var(--amber);font-size:20px">💼</div>
-        <div style="text-align:right">
-          <div style="font-size:10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.07em">Job Orders</div>
-          <div style="font-size:28px;font-weight:800;line-height:1.1;color:var(--amber)">${openJobs} <span style="font-size:14px;color:var(--muted)">open</span></div>
-        </div>
-      </div>
-      <div style="margin-top:10px">
-        <div class="prog-bar" style="height:6px;border-radius:3px">
-          <div class="prog-fill" style="background:var(--amber);width:${slotUtilRate}%;border-radius:3px"></div>
-        </div>
-        <div style="font-size:11px;color:var(--muted);margin-top:4px">${filledSlots}/${totalSlots} slots filled · ${filledJobs} fully filled</div>
-      </div>
-    </div>
-    <div class="stat-card" style="border-left:3px solid var(--purple)">
-      <div class="stat-top">
-        <div class="stat-icon" style="background:var(--pbg);color:var(--purple);font-size:20px">📄</div>
-        <div style="text-align:right">
-          <div style="font-size:10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.07em">Documents</div>
-          <div style="font-size:28px;font-weight:800;line-height:1.1;color:var(--purple)">${pendingDocs} <span style="font-size:14px;color:var(--muted)">pending</span></div>
-        </div>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:10px">
-        <span style="font-size:11px;background:var(--gbg);color:var(--green);padding:2px 8px;border-radius:99px;font-weight:600">✓ ${approvedDocs} approved</span>
-      </div>
-    </div>
-  `;
-
-  // ── Pipeline funnel chart ─────────────────────────────────────────
-  const chartEl = document.getElementById('chart-bars');
-  const labelsEl = document.getElementById('chart-labels');
-  if (chartEl && labelsEl) {
-    if (pipelineCounts.length === 0) {
-      chartEl.innerHTML = '<div style="height:140px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px">No pipeline data</div>';
-      labelsEl.innerHTML = '';
-    } else {
-      const maxCount = Math.max(...pipelineCounts.map(function(x){return x.count;}), 1);
-      const stageColors = {
-        'For Selection':'#94a3b8','Applied':'var(--brand)','Screening':'var(--purple)',
-        'Interview':'var(--amber)','Selected':'var(--green)','Medical':'var(--teal)',
-        'Processing':'#0891B2','Visa':'var(--purple)','OWWA':'var(--teal)',
-        'With Complaint':'var(--red)'
-      };
-      chartEl.innerHTML = pipelineCounts.map(function(x) {
-        var pct = Math.round(x.count/maxCount*100);
-        var color = stageColors[x.stage] || 'var(--brand)';
-        return '<div class="bar-group" style="position:relative">' +
-          '<div style="display:flex;gap:3px;align-items:flex-end;height:140px;width:100%">' +
-            '<div class="bar" style="background:'+color+';height:'+pct+'%;opacity:.85;border-radius:4px 4px 0 0;position:relative" title="'+x.stage+': '+x.count+'">' +
-              '<span style="position:absolute;top:-18px;left:50%;transform:translateX(-50%);font-size:10px;font-weight:700;color:'+color+'">'+x.count+'</span>' +
-            '</div>' +
-          '</div>' +
-        '</div>';
-      }).join('');
-      labelsEl.innerHTML = pipelineCounts.map(function(x){
-        return '<span style="font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:50px;display:inline-block;text-align:center">'+x.stage+'</span>';
-      }).join('');
-    }
-  }
-
-  // ── Recent Activity ───────────────────────────────────────────────
-  const actEl = document.getElementById('activity-feed');
-  if (actEl) {
-    const actionColors = { create:'var(--green)', update:'var(--brand)', delete:'var(--red)', export:'var(--amber)' };
-    const actionIcons  = { create:'＋', update:'✎', delete:'✕', export:'↓' };
-    // Viewers only see activity about their scoped applicants
-    var auditEntries = isViewer
-      ? DB.auditLog.filter(function(l){
-          var detail = (l.detail||'').toLowerCase();
-          return Array.from(_scopedNames).some(function(n){ return detail.includes(n.toLowerCase()); })
-              || detail.includes('job order') || detail.includes('document');
-        }).slice(0,8)
-      : DB.auditLog.slice(0,8);
-    actEl.innerHTML = auditEntries.map(function(l){
-      var col = actionColors[l.type] || 'var(--dim)';
-      var ico = actionIcons[l.type] || '•';
-      return '<div class="activity-item" style="padding:8px 0;border-bottom:1px solid var(--border)">' +
-        '<div style="width:24px;height:24px;border-radius:50%;background:'+col+'22;color:'+col+';display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">'+ico+'</div>' +
-        '<div class="activity-text" style="flex:1;min-width:0">' +
-          '<div class="activity-title" style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+l.detail+'</div>' +
-          '<div class="activity-time" style="font-size:11px;color:var(--muted)">'+l.user+' · '+l.time+'</div>' +
-        '</div>' +
-      '</div>';
-    }).join('') || '<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">No activity yet</div>';
-  }
-
-  // ── Top Job Orders ────────────────────────────────────────────────────
-  const jobsEl = document.getElementById('top-jobs');
-  if (jobsEl) {
-    var openJobsSorted = _activeJobs
-      .sort(function(a,b){return (b.filled/Math.max(b.slots,1))-(a.filled/Math.max(a.slots,1))})
-      .slice(0,5);
-    if (!openJobsSorted.length) {
-      jobsEl.innerHTML = '<div style="text-align:center;padding:28px 0;color:var(--muted)"><div style="font-size:28px;margin-bottom:6px">💼</div><div style="font-size:12px">No open job orders</div></div>';
-    } else {
-      jobsEl.innerHTML = openJobsSorted.map(function(j,i){
-        var pct = j.slots ? Math.min(Math.round(j.filled/j.slots*100),100) : 0;
-        var remaining = Math.max((j.slots||0)-(j.filled||0),0);
-        var barColor = pct>=80?'var(--amber)':'var(--brand)';
-        var isLast = i===openJobsSorted.length-1;
-        return '<div style="padding:10px 0;'+(isLast?'':'border-bottom:1px solid var(--border)')+'">' +
-          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">' +
-            '<div style="min-width:0;flex:1;margin-right:10px">' +
-              '<div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+j.title+'</div>' +
-              '<div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+j.employer+' · '+j.country+'</div>' +
-            '</div>' +
-            '<div style="flex-shrink:0;text-align:right">' +
-              '<div style="font-size:13px;font-weight:800">'+j.filled+'<span style="color:var(--muted);font-weight:400">/'+j.slots+'</span></div>' +
-              '<div style="font-size:10px;font-weight:600;color:'+(remaining<=2?'var(--red)':'var(--green)')+'">'+remaining+' left</div>' +
-            '</div>' +
-          '</div>' +
-          '<div style="height:4px;border-radius:2px;background:var(--border)">' +
-            '<div style="height:4px;border-radius:2px;background:'+barColor+';width:'+pct+'%"></div>' +
-          '</div>' +
-        '</div>';
-      }).join('');
-    }
-  }
-  // ── Document Status Summary ───────────────────────────────────────────
-  const docEl = document.getElementById('doc-status-summary');
-  if (docEl) {
-    var rejectedDocs = _scopedDocs.filter(function(d){return d.status==='Rejected';}).length;
-    var totalDocs    = _scopedDocs.length;
-    var docStats = [
-      { k:'Approved', v:approvedDocs, color:'var(--green)', bg:'var(--gbg)' },
-      { k:'Pending',  v:pendingDocs,  color:'var(--amber)', bg:'var(--abg)' },
-      { k:'Rejected', v:rejectedDocs, color:'var(--red)',   bg:'var(--rbg)' },
-    ];
-    docEl.innerHTML =
-      '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">' +
-        docStats.map(function(d){
-          return '<div style="background:'+d.bg+';border-radius:10px;padding:14px 8px;text-align:center">' +
-            '<div style="font-size:26px;font-weight:800;color:'+d.color+';line-height:1">'+d.v+'</div>' +
-            '<div style="font-size:11px;color:'+d.color+';font-weight:600;margin-top:4px">'+d.k+'</div>' +
-          '</div>';
-        }).join('') +
-      '</div>' +
-      (totalDocs ? '<div style="font-size:11px;color:var(--muted);text-align:center;margin-top:10px">'+totalDocs+' total document'+(totalDocs!==1?'s':'')+(isViewer?' in your scope':'')+'</div>' : '');
-  }
-  // ── Quick Actions ─────────────────────────────────────────────────────
-  const qaEl = document.getElementById('quick-actions');
-  if (qaEl) {
-    var actions = isViewer ? [
-      { lbl:'My Applicants',  fn:"nav('applicants')", color:'var(--brand)',  bg:'var(--brand-l)', icon:'\u{1F465}' },
-      { lbl:'My Documents',   fn:"nav('documents')",  color:'var(--purple)', bg:'var(--pbg)',     icon:'\u{1F4C4}' },
-      { lbl:'Pipeline View',  fn:"nav('pipeline')",   color:'var(--green)',  bg:'var(--gbg)',     icon:'\u{1F504}' },
-      { lbl:'Analytics',      fn:"nav('analytics')",  color:'var(--teal)',   bg:'#E0F2FE',        icon:'\u{1F4CA}' },
-    ] : [
-      { lbl:'New Applicant', fn:'openAddApplicant()', color:'var(--brand)',  bg:'var(--brand-l)', icon:'\u{1F464}' },
-      { lbl:'New Job Order', fn:'openAddJob()',        color:'var(--amber)',  bg:'var(--abg)',     icon:'\u{1F4BC}' },
-      { lbl:'Upload Doc',    fn:'openUploadDoc()',     color:'var(--purple)', bg:'var(--pbg)',     icon:'\u{1F4CE}' },
-      { lbl:'Analytics',     fn:"nav('analytics')",   color:'var(--teal)',   bg:'#E0F2FE',        icon:'\u{1F4CA}' },
-      { lbl:'Pipeline',      fn:"nav('pipeline')",    color:'var(--green)',  bg:'var(--gbg)',     icon:'\u{1F504}' },
-      { lbl:'Audit Trail',   fn:"nav('audit')",       color:'#7C3AED',      bg:'#F5F3FF',        icon:'\u{1F4CB}' },
-    ];
-    qaEl.innerHTML =
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
-        actions.map(function(a){
-          return '<button onclick="'+a.fn+'" style="background:'+a.bg+';color:'+a.color+';border:none;border-radius:10px;padding:13px 8px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;font-weight:600;font-size:12px;text-align:center" onmouseover="this.style.opacity=.8" onmouseout="this.style.opacity=1">' +
-            '<span style="font-size:20px">'+a.icon+'</span>' +
-            '<span style="line-height:1.2">'+a.lbl+'</span>' +
-          '</button>';
-        }).join('') +
-      '</div>';
-  }
+  root.innerHTML = h;
 }
 
 // ════════════════════════════════════════════════════════
@@ -22434,7 +22334,7 @@ function saveViewerScope() {
 
 // ── Clear local cache + re-sync from PostgreSQL ───────────────────────
 async function clearLocalCache() {
-  DB.applicants = []; DB.jobs = []; DB.expenses = []; DB.users = []; DB.auditLog = [];
+  DB.applicants = []; DB.jobs = []; DB.expenses = []; DB.users = []; DB.auditLog = []; if (typeof _dashReset === 'function') _dashReset(); if (typeof _ov !== 'undefined') { _ov.data = null; _ov.at = 0; }
   filteredApps = [];
   await Store.clear();
   toast('Cache cleared — re-syncing from server…', 'info');
