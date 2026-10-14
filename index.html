@@ -1336,18 +1336,21 @@ button[disabled][data-rbac-locked] {
     ══════════════════════════════════════ -->
     <div class="page content-pad" id="page-documents">
       <div class="pg-hdr">
-        <div class="pg-hdr-l"><h1>Documents</h1><p>Manage applicant document submissions and approvals.</p></div>
+        <div class="pg-hdr-l"><h1>Documents</h1><p>Every upload is reviewed by someone else before it counts. Views and downloads are recorded.</p></div>
         <div class="pg-hdr-r">
-          <button class="btn btn-s btn-sm" onclick="exportData('docs')">Export</button>
-          <button class="btn btn-p btn-sm" onclick="openUploadDoc()">+ Upload Document</button>
+          <button class="btn btn-ghost btn-sm" id="doc-req-btn" onclick="openDocRequirements()" style="display:none">⚙ Required documents</button>
+          <button class="btn btn-s btn-sm" id="doc-export-btn" onclick="exportData('docs')">Export</button>
+          <button class="btn btn-p btn-sm" id="doc-upload-btn" onclick="openUploadDoc()">+ Upload Document</button>
         </div>
       </div>
-      <div class="tabs">
-        <button class="tab active" onclick="filterDocs('all',this)">All Documents</button>
-        <button class="tab" onclick="filterDocs('Approved',this)">Approved</button>
-        <button class="tab" onclick="filterDocs('Rejected',this)">Rejected</button>
+      <div class="tabs" id="doc-tabs"></div>
+      <div class="filter-bar" style="margin:10px 0">
+        <div class="filter-search"><input type="text" id="doc-search" placeholder="Search applicant, APP-ID or document…" oninput="_dcSearch(this.value)" aria-label="Search documents"></div>
+        <select class="filter-select" id="doc-type-filter" onchange="_dcSetType(this.value)" aria-label="Document type"><option value="">All types</option></select>
       </div>
+      <div id="doc-bulkbar" style="display:none;gap:8px;align-items:center;margin-bottom:10px;padding:8px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card)"></div>
       <div id="doc-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px"></div>
+      <div id="doc-pagination" style="display:flex;justify-content:center;align-items:center;margin-top:14px"></div>
     </div>
 
     <!-- ══════════════════════════════════════
@@ -2876,33 +2879,21 @@ button[disabled][data-rbac-locked] {
       <button class="close-btn" onclick="closeOverlay('overlay-doc')" aria-label="Close">✕</button>
     </div>
     <div class="modal-body">
+      <div id="d-replace-note" style="display:none;margin-bottom:10px;padding:8px 10px;border-radius:8px;background:var(--brand-l);color:var(--brand);font-size:12px"></div>
       <div class="f-grp">
         <label class="f-lbl">Applicant <span class="req">*</span></label>
-        <select class="f-inp" id="d-applicant">
-          <option value="">— Select Applicant —</option>
-        </select>
-      </div>
-      <div class="f-grp">
-        <label class="f-lbl">Document Name <span class="req">*</span></label>
-        <input type="text" class="f-inp" id="d-name" placeholder="e.g. NBI Clearance – Maria Santos">
+        <div id="d-app-chosen" style="display:none;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px"></div>
+        <div id="d-app-search-wrap"><input type="text" class="f-inp" id="d-app-search" placeholder="Type a name or APP-ID…" oninput="_dcAppSearch(this.value)" autocomplete="off">
+          <div id="d-app-results" style="max-height:180px;overflow:auto;border-radius:8px"></div></div>
       </div>
       <div class="f-row">
-        <div class="f-grp">
-          <label class="f-lbl">Document Type</label>
-          <select class="f-inp" id="d-type">
-            <option value="Government ID">Government ID</option>
-            <option value="Medical Report">Medical Report</option>
-            <option value="Medical Certificate">Medical Certificate</option>
-            <option value="Work Contract">Work Contract</option>
-            <option value="Work Permit">Work Permit</option>
-            <option value="Training Cert">Training Cert</option>
-            <option value="Visa Document">Visa Document</option>
-            <option value="OWWA Document">OWWA Document</option>
-            <option value="Other">Other</option>
-          </select>
-        </div>
-        </div>
-
+        <div class="f-grp"><label class="f-lbl">Document Type <span class="req">*</span></label><select class="f-inp" id="d-type"></select></div>
+        <div class="f-grp"><label class="f-lbl">Name <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="text" class="f-inp" id="d-name" maxlength="160" placeholder="Defaults to type — applicant"></div>
+      </div>
+      <div class="f-row">
+        <div class="f-grp"><label class="f-lbl">Issued on</label><input type="date" class="f-inp" id="d-issued"></div>
+        <div class="f-grp"><label class="f-lbl">Expires on</label><input type="date" class="f-inp" id="d-expires"></div>
+      </div>
       <!-- File upload zone -->
       <div class="f-grp">
         <label class="f-lbl">File</label>
@@ -2913,7 +2904,7 @@ button[disabled][data-rbac-locked] {
              ondrop="docDrop(event)"
              role="button" tabindex="0"
              onkeydown="if(event.key==='Enter'||event.key===' ')document.getElementById('doc-file-input').click()">
-          <input type="file" id="doc-file-input" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.xlsx"
+          <input type="file" id="doc-file-input" accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx"
                  style="display:none" onchange="docFileSelected(this)">
           <div id="doc-upload-icon" style="font-size:32px;margin-bottom:8px">📎</div>
           <div id="doc-upload-label" style="font-size:13px;font-weight:700;color:var(--text2)">
@@ -2933,6 +2924,7 @@ button[disabled][data-rbac-locked] {
           </div>
         </div>
         <div id="doc-upload-error" style="display:none;color:var(--red);font-size:12px;margin-top:5px"></div>
+        <div id="d-progress" style="display:none;margin-top:8px;height:6px;border-radius:3px;background:var(--border);overflow:hidden"><div id="d-progress-fill" style="height:6px;width:0;background:var(--brand);transition:width .2s"></div></div>
       </div>
 
       <div class="f-grp">
@@ -3980,98 +3972,9 @@ async function apiDeleteCountryRule(id) {
 }
 
 // ── DOCUMENT API ──────────────────────────────────────────────────────
-function mapDocument(row) {
-  var c = function(v) { return (v && v !== 'undefined' && v !== 'null') ? String(v) : ''; };
-  return {
-    id:          c(row.id)           || c(row._id),
-    _dbId:       c(row.id)           || c(row._id),
-    name:        c(row.name)         || c(row.file_name) || '',
-    type:        c(row.type)         || c(row.doc_type)  || 'Other',
-    status:      c(row.status)       || 'Pending',
-    applicant:   c(row.applicant_name) || c(row.applicant) || '',
-    applicantId: c(row.applicant_id) || '',
-    notes:       c(row.notes)        || '',
-    date:        row.created_at ? String(row.created_at).slice(0,10) : c(row.date),
-    size:        c(row.size)         || '',
-    fileName:    c(row.file_name)    || c(row.name) || '',
-    mimeType:    c(row.mime_type)    || '',
-    ext:         c(row.file_name)    ? c(row.file_name).split('.').pop().toLowerCase() : '',
-    dataUrl:     null,  // never persisted — always fetched fresh from R2
-    _pendingUpload: false,
-  };
-}
-async function apiFetchDocuments() {
-  var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
-  if (!isLive) return;
 
-  // Bust cache if another user uploaded recently (shared timestamp signal)
-  try {
-    var tsRaw    = await Store.get('rams:shared:documents:ts', true);
-    var serverTs = tsRaw ? parseInt(typeof tsRaw === 'string' ? tsRaw : (tsRaw.value || '0')) : 0;
-    if (serverTs > (window._lastDocumentStoreTs || 0)) {
-      Object.keys(_cache || {}).forEach(function(k) { if (k.includes('/documents')) delete _cache[k]; });
-      if (window._inFlight) Object.keys(_inFlight).forEach(function(k) { if (k.includes('/documents')) delete _inFlight[k]; });
-      window._lastDocumentStoreTs = serverTs;
-    }
-  } catch(e) {}
 
-  var r = await apiFetch('/documents');
-  if (!r.ok || !Array.isArray(r.data)) return;
 
-  // Build server doc list — preserve local dataUrl/mimeType/ext from current session
-  var serverDocs = r.data.map(function(row) {
-    var mapped = mapDocument(row);
-    // Re-attach in-memory file data from uploader's session (not stored on server)
-    var existing = (DB.documents || []).find(function(d) {
-      return (mapped._dbId && (d._dbId === mapped._dbId || d.id === mapped._dbId)) ||
-             (mapped.id    && (d.id    === mapped.id    || d._dbId === mapped.id));
-    });
-    if (existing) {
-      if (existing.dataUrl)  mapped.dataUrl  = existing.dataUrl;
-      if (existing.mimeType) mapped.mimeType = existing.mimeType;
-      if (existing.ext)      mapped.ext      = existing.ext;
-      if (!mapped.size  && existing.size)  mapped.size  = existing.size;
-      if (!mapped.notes && existing.notes) mapped.notes = existing.notes;
-    }
-    return mapped;
-  });
-
-  // Preserve any locally-pending docs (mid-upload) that the server hasn't confirmed yet
-  var serverIds = new Set(serverDocs.map(function(d) { return d._dbId || d.id; }).filter(Boolean));
-  var pending = (DB.documents || []).filter(function(d) {
-    return d._pendingUpload === true &&
-           !serverIds.has(d._dbId) && !serverIds.has(d.id);
-  });
-
-  // Filter out permanently deleted
-  var deleted = window._deletedDocumentIds || new Set();
-  var allDocs = serverDocs.concat(pending).filter(function(d) {
-    return !deleted.has(String(d._dbId || '')) && !deleted.has(String(d.id || ''));
-  });
-
-  DB.documents = allDocs;
-  autosave('documents');
-  if (currentPage === 'documents') renderDocs();
-  // Also refresh drawer docs tab if open
-  if (currentDrawerApplicant) {
-    var dtab = document.getElementById('dtab-docs');
-    if (dtab && dtab.classList.contains('active')) switchDrawerTab('docs', null);
-  }
-}
-async function apiUploadDocument(doc, fileBlob) {
-  var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
-  if (!isLive) return { ok: true };
-  var form = new FormData();
-  form.append('file', fileBlob, doc.fileName || doc.name || 'document');
-  form.append('name',         doc.name        || '');
-  form.append('type',         doc.type        || 'Other');
-  form.append('applicant_name', doc.applicant || '');
-  form.append('applicant_id',   (doc.applicantId && isUUID(doc.applicantId)) ? doc.applicantId : '');
-  form.append('notes',        doc.notes       || '');
-  var r = await apiFetch('/documents/upload', { method:'POST', body: form, _noContentType: true });
-  if (r.ok && r.data && r.data.id) { doc._dbId = r.data.id; doc.id = r.data.id; }
-  return r;
-}
 
 // 🔄  SMART SYNC ENGINE — Stale-While-Revalidate · Per-Page · Adaptive Polling
 // ════════════════════════════════════════════════════════
@@ -6860,35 +6763,7 @@ function switchDrawerTab(tab, btn) {
 
     `;
   }
-  if (tab === 'docs') {
-    var _isViewerDoc = (typeof getCurrentRole === 'function') && getCurrentRole() === 'Viewer';
-    var _canEditDoc  = !_isViewerDoc;
-    var docs = DB.documents.filter(function(d){ return d.applicant === app.name; });
-    var docHeader = _canEditDoc ? `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-        <div style="font-size:12px;font-weight:700;color:var(--muted)">${docs.length} document${docs.length!==1?'s':''}</div>
-        <button class="btn btn-p btn-sm" onclick="openUploadDoc(${escapeHtml(JSON.stringify(app.name || ''))})">📎 Upload Document</button>
-      </div>` : '';
-    var docList = docs.length ? docs.map(function(d){
-      return `<div class="doc-card" style="margin-bottom:8px">
-          <div class="doc-icon" style="background:var(--brand-l);font-size:20px">📄</div>
-          <div style="flex:1;min-width:0">
-            <div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${d.name}</div>
-            <div style="font-size:11px;color:var(--muted)">${d.type||''} · ${d.size||''} · ${d.date||''}</div>
-          </div>
-          <div style="display:flex;gap:5px;align-items:center;flex-shrink:0">
-            <span class="pill ${d.status==='Approved'?'pill-green':d.status==='Pending'?'pill-amber':'pill-red'}">${d.status}</span>
-            <button class="btn btn-ghost btn-xs" onclick="previewDoc('${d.id}')" title="Preview">👁</button>
-            ${_canEditDoc ? `<button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="confirmDelete('document','${d.id}')">🗑</button>` : ''}
-          </div>
-        </div>`;
-    }).join('') : `<div style="text-align:center;padding:24px 0;color:var(--muted)">
-        <div style="font-size:32px;margin-bottom:8px">📂</div>
-        <div style="font-size:13px;font-weight:600">No documents yet</div>
-        ${_canEditDoc ? '<div style="font-size:12px;margin-top:8px;color:var(--muted)">Use the button above to upload</div>' : ''}
-      </div>`;
-    panel.innerHTML = docHeader + docList;
-  }
+  if (tab === 'docs') { _dcDrawerTab(app, panel); }
   if (tab === 'expenses') {
     var _canExp    = getCurrentRole && !['Viewer'].includes(getCurrentRole());
     var _isAdminExp = hasPermission('Delete Expenses');
@@ -7199,7 +7074,7 @@ function _dashPaint() {
   if (d.attention.length) {
     var col = { critical: 'var(--red)', warning: 'var(--amber)', info: 'var(--brand)' };
     h += '<div style="font-size:14px;font-weight:800;margin:18px 0 10px">⚠ Needs attention</div><div style="display:flex;gap:10px;flex-wrap:wrap">' + d.attention.map(function(a) {
-      var arg = a.key === 'docs_pending' ? "'docs','Pending'" : a.key === 'stuck' ? "'stuck'," + Number(a.filter && a.filter.stuck || 14) : a.page === 'accounting' ? "'accounting'" : "'" + escapeHtml(a.page) + "'";
+      var arg = a.key === 'docs_pending' ? "'docs','Pending'" : a.key === 'docs_expired' ? "'docs','Expired'" : a.key === 'docs_expiring' ? "'docs','Expiring'" : a.key === 'stuck' ? "'stuck'," + Number(a.filter && a.filter.stuck || 14) : a.page === 'accounting' ? "'accounting'" : "'" + escapeHtml(a.page) + "'";
       return '<div onclick="_dashGo(' + arg + ')" style="cursor:pointer;flex:1;min-width:200px;padding:12px 16px;background:var(--card);border:1px solid var(--border);border-left:3px solid ' + col[a.severity] + ';border-radius:10px">' +
         '<div style="font-size:20px;font-weight:800;color:' + col[a.severity] + '">' + Number(a.count) + '</div><div style="font-size:11.5px;color:var(--muted)">' + escapeHtml(a.label) + '</div></div>';
     }).join('') + '</div>';
@@ -7586,6 +7461,15 @@ async function _plDoMove(uuid, to, from, reason, deploymentDate) {
     if (d && d.blockers && d.blockers.length) msg = msg + ' (' + d.blockers.join('; ') + ')';
     toast('⛔ ' + msg, 'error');
     if (d && d.error === 'status_conflict') { _pl.data = null; try { await fetchApplicants(); } catch (e) {} }
+    if (d && d.documents_blocking && d.documents_blocking.length && d.can_override_documents && !(d.blockers || []).some(function(b) { return b.indexOf('required documents') !== 0; })
+        && confirm('Required documents are not approved:\n• ' + d.documents_blocking.join('\n• ') + '\n\nDeploy anyway as an Admin override? This is recorded in the audit trail.')) {
+      var why = _askReason('Why is this applicant deployed without the required documents?');
+      if (why) {
+        var r2 = await apiFetch('/applicants/' + encodeURIComponent(uuid) + '/status', { method: 'POST', body: JSON.stringify(Object.assign({}, body, { override_documents: true, reason: (reason ? reason + ' — ' : '') + why })) });
+        if (r2.ok && r2.data) { _plAfterMove(uuid, r2.data, to); return true; }
+        toast('⛔ ' + _acctMsg(r2, 'The move was not accepted'), 'error');
+      }
+    }
     renderKanban(true); if (currentPage === 'applicants') renderApplicants(true);
     return false;
   }
@@ -8488,6 +8372,7 @@ function renderPagination(pages) {
 // CONFIRM DELETE
 // ════════════════════════════════════════════════════════
 function confirmDelete(type, id) {
+  if (type === 'document') { _dcVoid(id); return; }   // documents are voided with a reason, never deleted from here
   if (type === 'applicant') { archiveApplicant(id); return; }   // applicants are archived, never deleted from here
   if (type === 'expense') { voidExpense(id); return; }   // expenses are voided with a reason, never deleted
   let name = '';
@@ -8621,110 +8506,430 @@ function confirmDelete(type, id) {
 // ════════════════════════════════════════════════════════
 // DOCUMENTS
 // ════════════════════════════════════════════════════════
-function filterDocs(status, btn) {
-  docFilter = status;
-  document.querySelectorAll('.tabs .tab').forEach(t => t.classList.remove('active'));
-  if (btn) btn.classList.add('active');
-  renderDocs();
+
+// ════════════════════════════════════════════════════════
+// DOCUMENTS (server-owned)
+// Every upload starts Pending and is reviewed by someone else. Files never live in the browser: previews and
+// downloads use a 5-minute link that the server issues (and audits) each time. Lists, counts and the
+// required-documents checklist come from the server.
+// ════════════════════════════════════════════════════════
+var DOC_TYPE_ICONS = { 'Passport': '🛂', 'Government ID': '🪪', 'Medical Certificate': '🏥', 'Visa': '🛃', 'Work Contract': '📝', 'Work Permit': '📋', 'OWWA': '🏛', 'Training Certificate': '🎓', 'NBI Clearance': '🔎', 'Photo': '🖼', 'Other': '📎' };
+var _dc = { tab: 'Pending', q: '', type: '', page: 1, limit: 24, data: null, total: 0, counts: {}, meta: null, sel: {}, loading: false, seq: 0, at: 0, err: null, bound: false };
+var _dcUp = { applicant: null, replaces: null, xhr: null, results: [] };
+var _previewDocList = [], _previewDocIdx = 0, _previewDocId = null, _previewBlobUrl = null;
+
+function _dcIsUUID(v) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v || '')); }
+function _dcFind(id) { return ((_dc.data || []).concat(_dcDrawerDocs || [])).find(function(d) { return d.id === id; }) || null; }
+function _dcSize(n) { n = Number(n) || 0; return !n ? '' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(2) + ' MB'; }
+function _dcStatusPill(d) {
+  var cls = { Approved: 'pill-green', Pending: 'pill-amber', Rejected: 'pill-red', Expired: 'pill-red', Superseded: 'pill-gray', Voided: 'pill-gray' }[d.status] || 'pill-gray';
+  return '<span class="pill ' + cls + '">' + escapeHtml(d.status) + '</span>';
 }
-function renderDocs() {
-  var docs = DB.documents.filter(function(d) { return docFilter === 'all' || d.status === docFilter; });
-  var grid = document.getElementById('doc-grid');
-  if (!grid) return;
-  var sbCount = document.getElementById('sb-doc-count');
-  if (sbCount) sbCount.textContent = DB.documents.filter(function(d){ return d.status === 'Pending'; }).length;
-  if (!docs.length) {
-    grid.innerHTML = '<div class="empty-state"><div class="empty-icon">\u{1F4C2}</div><div class="empty-title">No Documents</div><div class="empty-sub">No documents match this filter.</div><button class="btn btn-p" onclick="openUploadDoc()">Upload Document</button></div>';
-    return;
-  }
-  var icons = { Government:'\u{1FAA9}', Medical:'\u{1F3E5}', Work:'\u{1F4CB}', Contract:'\u{1F4DD}', Training:'\u{1F393}', Visa:'\u{1F6C2}', OWWA:'\u{1F3DB}', Other:'\u{1F4CE}' };
-  var bgs   = { Government:'var(--brand-l)', Medical:'var(--gbg)', Work:'var(--abg)', Contract:'var(--pbg)', Training:'var(--rbg)', Other:'var(--s2)' };
-  grid.innerHTML = docs.map(function(d) {
-    var typeKey  = d.type ? d.type.split(' ')[0] : 'Other';
-    var icon     = icons[typeKey]  || '\u{1F4C4}';
-    var bg       = bgs[typeKey]    || 'var(--s2)';
-    var isPending = d._pendingUpload;
-    var isFailed  = d._uploadFailed;
-    var safeId    = String(d.id || '').replace(/'/g, "\\'");
-    var statusBadge = isPending
-      ? '<span style="font-size:10px;background:var(--abg);color:var(--amber);border:1px solid var(--amber);border-radius:4px;padding:1px 6px;font-weight:700">\u23F3 Uploading\u2026</span>'
-      : isFailed
-        ? '<span style="font-size:10px;background:var(--rbg);color:var(--red);border:1px solid var(--red);border-radius:4px;padding:1px 6px;font-weight:700">\u26A0 Upload failed</span>'
-        : '';
-    var actions = (isPending || isFailed) ? '' :
-      '<button class="btn btn-s btn-xs doc-preview-btn" onclick="event.stopPropagation();previewDoc(\'' + safeId + '\')" title="Preview">\u{1F441} Preview</button>' +
-      '<button class="btn btn-ghost btn-xs" onclick="event.stopPropagation();confirmDelete(\'document\',\'' + safeId + '\')" title="Delete">\u{1F5D1}</button>';
-    var docApp = d.applicant ? DB.applicants.find(function(a){ return a.name === d.applicant; }) : null;
-    return '<div class="doc-card" data-doc-id="' + safeId + '" onclick="' + ((isPending || isFailed) ? '' : 'previewDoc(\'' + safeId + '\')') + '" style="cursor:' + ((isPending || isFailed) ? 'default' : 'pointer') + ';opacity:' + (isPending ? '.7' : '1') + '">' +
-      '<div class="doc-icon" style="background:' + bg + '">' + icon + '</div>' +
-      '<div class="doc-info">' +
-        '<div class="doc-name">' + (d.name || '\u2014') + '</div>' +
-        '<div class="doc-meta"' + noteTip(docApp) + '>' + (d.applicant || '\u2014') + ' &middot; ' + (d.type || '\u2014') + '</div>' +
-        '<div class="doc-meta" style="font-family:monospace;font-size:10.5px">' + (d.date || '') + (d.size ? ' &middot; ' + d.size : '') + '</div>' +
-      '</div>' +
-      '<div class="doc-actions">' +
-        statusBadge +
-        (actions ? '<div style="display:flex;gap:5px;margin-top:4px">' + actions + '</div>' : '') +
-      '</div>' +
-    '</div>';
-  }).join('');
+async function _dcMeta() {
+  if (_dc.meta) return _dc.meta;
+  var r = await apiFetch('/documents/meta');
+  _dc.meta = r.ok && r.data ? r.data : { types: Object.keys(DOC_TYPE_ICONS), required: {}, accepted: ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'doc', 'docx', 'xls', 'xlsx'], max_mb: 20, expiring_days: 60 };
+  return _dc.meta;
 }
 
-function approveDoc(id) {
-  const d = DB.documents.find(x=>x.id===id);
-  if (!d) return;
-  d.status = 'Approved';
-  addAudit('UPDATE','Document',`Approved ${d.name}`);
-  pushNotif('Document Approved', d.name + (d.applicant ? ' for ' + d.applicant : '') + ' has been approved', 'document',
-    { page: 'documents', id: d.id });
-  if (isUUID(d._dbId||d.id)) {
-    apiFetch('/documents/'+(d._dbId||d.id)+'/review',{method:'PATCH',body:JSON.stringify({status:'Approved'})})
-      .then(r=>{ if(!r.ok) toast('Sync failed: '+r.error,'error'); });
-  }
-  autosave('documents');
-  renderDocs();
-  toast(`${d.name} approved`,'success');
+// legacy cache (complaints, counters) — metadata only, never file contents
+function mapDocument(row) {
+  return { id: row.id, _dbId: row.id, name: row.name || '', type: row.type || 'Other', status: row.status || 'Pending', applicant: row.applicant_name || '', applicantId: row.applicant_id || '',
+    notes: row.notes || '', date: row.created_at ? String(row.created_at).slice(0, 10) : '', size: _dcSize(row.file_size), fileName: row.file_name || '', mimeType: row.mime_type || '',
+    expiresOn: row.expires_on || null, dataUrl: null, _pendingUpload: false };
 }
-function openUploadDoc(preselectedApplicant) {
-  // Reset form
-  document.getElementById('d-name').value    = '';
-  document.getElementById('d-notes') && (document.getElementById('d-notes').value = '');
-  clearDocFile();
+async function apiFetchDocuments() {
+  if (!_isLiveSession()) return;
+  var r = await apiFetch('/documents?limit=200&status=&_=' + Date.now());
+  if (!r.ok || !r.data || !Array.isArray(r.data.data)) return;
+  DB.documents = r.data.data.map(mapDocument);   // replaces any old copy that still held file data
+  try { autosave('documents'); } catch (e) {}
+  var sb = document.getElementById('sb-doc-count'); if (sb && r.data.counts) sb.textContent = r.data.counts.Pending || 0;
+  if (currentPage === 'documents') renderDocs();
+}
 
-  // Populate applicant dropdown from DB
-  var sel = document.getElementById('d-applicant');
-  if (sel) {
-    sel.innerHTML = '<option value="">— Select Applicant —</option>' +
-      DB.applicants.map(function(a) {
-        return '<option value="' + a.name + '"' +
-          (a.name === preselectedApplicant ? ' selected' : '') +
-          '>' + a.name + ' (' + a.id + ' · ' + a.status + ')</option>';
-      }).join('');
-    // Auto-name the document when applicant is selected
-    sel.onchange = function() {
-      var nameEl = document.getElementById('d-name');
-      var typeEl = document.getElementById('d-type');
-      if (this.value && nameEl && !nameEl.value) {
-        nameEl.value = typeEl.value + ' - ' + this.value;
-      }
-    };
+// ── the page ──────────────────────────────────────────────────────────────
+function filterDocs(status, btn) { _dc.tab = status === 'all' ? 'All' : status; _dc.page = 1; _dc.sel = {}; renderDocs(true); }
+function _dcSearch(v) { clearTimeout(window._dcQT); window._dcQT = setTimeout(function() { _dc.q = v; _dc.page = 1; renderDocs(true); }, 300); }
+function _dcSetType(v) { _dc.type = v; _dc.page = 1; renderDocs(true); }
+function renderDocs(force) {
+  _dcBind();
+  if (!_isLiveSession()) { var g = document.getElementById('doc-grid'); if (g) g.innerHTML = '<div class="card cp" style="color:var(--muted)">Documents are stored on the server — sign in to a live session.</div>'; return; }
+  _dcPaint();
+  if (force === true || !_dc.data || (Date.now() - _dc.at) > 10000) _dcLoad();
+}
+async function _dcLoad() {
+  var seq = ++_dc.seq; _dc.loading = true;
+  await _dcMeta();
+  var p = { status: _dc.tab === 'All' ? '' : _dc.tab, q: _dc.q, type: _dc.type, page: _dc.page, limit: _dc.limit, _: Date.now() };
+  if (_dc.tab === 'Expiring') p.sort = 'expires_on', p.order = 'asc';
+  var qs = Object.keys(p).filter(function(k) { return p[k] !== '' && p[k] !== undefined; }).map(function(k) { return k + '=' + encodeURIComponent(p[k]); }).join('&');
+  var r = await apiFetch('/documents?' + qs);
+  if (seq !== _dc.seq) return;
+  _dc.loading = false;
+  if (!r.ok || !r.data) { _dc.err = _acctMsg(r, 'Could not load documents'); }
+  else { _dc.err = null; _dc.data = r.data.data; _dc.total = r.data.total; _dc.counts = r.data.counts || {}; _dc.at = Date.now(); }
+  if (currentPage === 'documents') _dcPaint();
+}
+function _dcPerms() {
+  return { review: hasPermission('Approve Documents'), upload: hasPermission('Upload Documents'), void: hasPermission('Delete Documents'),
+    admin: getCurrentRole() === 'Admin', settings: hasPermission('System Settings'), export: hasPermission('Export Applicant Data') };
+}
+function _dcCard(d, P) {
+  var id = escapeHtml(d.id);
+  var exp = d.expires_on ? '<span title="Expiry date" style="font-size:10.5px;color:' + (d.status === 'Expired' ? 'var(--red)' : d.expiring ? 'var(--amber)' : 'var(--muted)') + '">⏳ ' + escapeHtml(d.expires_on) + '</span>' : '';
+  var acts = '<button class="btn btn-s btn-xs" data-act="preview" data-id="' + id + '">👁 View</button>';
+  if (P.review && d.status === 'Pending' && !d.own_upload && !d.voided) acts += '<button class="btn btn-xs" style="background:var(--gbg);color:var(--green);border:1px solid #86efac" data-act="approve" data-id="' + id + '">✓ Approve</button><button class="btn btn-xs" style="background:var(--rbg);color:var(--red);border:1px solid #fca5a5" data-act="reject" data-id="' + id + '">✗ Reject</button>';
+  if (P.upload && !d.voided && ['Approved', 'Rejected', 'Expired', 'Pending'].indexOf(d.status) !== -1) acts += '<button class="btn btn-ghost btn-xs" data-act="replace" data-id="' + id + '" title="Upload a new version">↻ Replace</button>';
+  if (P.void && !d.voided) acts += '<button class="btn btn-ghost btn-xs" data-act="void" data-id="' + id + '" title="Void (kept, hidden)">🗄</button>';
+  if (P.admin && d.voided) acts += '<button class="btn btn-ghost btn-xs" style="color:var(--red)" data-act="purge" data-id="' + id + '">Delete permanently</button>';
+  var who = d.status === 'Pending' ? 'Uploaded by ' + (d.uploaded_by || '—') + (d.own_upload ? ' (you — someone else must review)' : '') :
+    (d.reviewed_by ? d.status + ' by ' + d.reviewed_by : '') + (d.review_reason ? ' — ' + d.review_reason : '') + (d.voided ? 'Voided: ' + (d.void_reason || '') : '');
+  return '<div class="doc-card" data-id="' + id + '" style="flex-direction:column;align-items:stretch;gap:6px">' +
+    '<div style="display:flex;gap:10px;align-items:flex-start">' +
+      (P.review && d.status === 'Pending' && !d.own_upload ? '<input type="checkbox" data-act="pick" data-id="' + id + '"' + (_dc.sel[d.id] ? ' checked' : '') + ' style="margin-top:6px" aria-label="Select">' : '') +
+      '<div class="doc-icon" style="background:var(--s2)">' + (DOC_TYPE_ICONS[d.type] || '📄') + '</div>' +
+      '<div class="doc-info" style="flex:1;min-width:0"><div class="doc-name" data-act="preview" data-id="' + id + '" style="cursor:pointer">' + escapeHtml(d.name || '—') + (d.version > 1 ? ' <span style="font-size:10px;color:var(--muted)">v' + d.version + '</span>' : '') + '</div>' +
+        '<div class="doc-meta">' + escapeHtml(d.applicant_name || '—') + (d.applicant_display_id ? ' · ' + escapeHtml(d.applicant_display_id) : '') + ' · ' + escapeHtml(d.type) + '</div>' +
+        '<div class="doc-meta" style="font-family:monospace;font-size:10.5px">' + escapeHtml(String(d.created_at || '').slice(0, 10)) + (d.file_size ? ' · ' + _dcSize(d.file_size) : '') + ' ' + exp + '</div></div>' +
+      '<div>' + _dcStatusPill(d) + '</div></div>' +
+    (who ? '<div style="font-size:11px;color:' + (d.status === 'Rejected' ? 'var(--red)' : 'var(--muted)') + '">' + escapeHtml(who) + '</div>' : '') +
+    '<div style="display:flex;gap:5px;flex-wrap:wrap">' + acts + '</div></div>';
+}
+function _dcPaint() {
+  var grid = document.getElementById('doc-grid'); if (!grid) return;
+  var P = _dcPerms(), C = _dc.counts || {};
+  var tabs = document.getElementById('doc-tabs');
+  if (tabs) {
+    var list = [['Pending', 'Pending review'], ['Approved', 'Approved'], ['Rejected', 'Rejected'], ['Expiring', 'Expiring soon'], ['Expired', 'Expired'], ['All', 'All']];
+    if (P.void) list.push(['Voided', 'Voided']);
+    tabs.innerHTML = list.map(function(t) { return '<button class="tab' + (_dc.tab === t[0] ? ' active' : '') + '" data-act="tab" data-tab="' + t[0] + '">' + t[1] + (C[t[0]] !== undefined ? ' <span style="font-size:10.5px;opacity:.75">(' + C[t[0]] + ')</span>' : '') + '</button>'; }).join('');
   }
+  var typeSel = document.getElementById('doc-type-filter');
+  if (typeSel && _dc.meta && typeSel.options.length <= 1) typeSel.innerHTML = '<option value="">All types</option>' + _dc.meta.types.map(function(t) { return '<option>' + escapeHtml(t) + '</option>'; }).join('');
+  var show = function(id, on) { var el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+  show('doc-upload-btn', P.upload); show('doc-req-btn', P.settings); show('doc-export-btn', P.export);
+  var sb = document.getElementById('sb-doc-count'); if (sb && C.Pending !== undefined) sb.textContent = C.Pending;
+  if (!_dc.data) { grid.innerHTML = '<div class="card cp" style="color:' + (_dc.err ? 'var(--red)' : 'var(--muted)') + '">' + escapeHtml(_dc.err || 'Loading documents…') + '</div>'; return; }
+  grid.innerHTML = _dc.data.length ? _dc.data.map(function(d) { return _dcCard(d, P); }).join('') :
+    '<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">📂</div><div class="empty-title">No documents here</div><div class="empty-sub">' + (_dc.tab === 'Pending' ? 'Nothing is waiting for review.' : 'No documents match this filter.') + '</div></div>';
+  var pages = Math.ceil(_dc.total / _dc.limit), pg = document.getElementById('doc-pagination');
+  if (pg) pg.innerHTML = pages > 1 ? '<button class="pg-btn" data-act="page" data-page="' + (_dc.page - 1) + '"' + (_dc.page <= 1 ? ' disabled' : '') + '>‹</button><span style="font-size:12px;color:var(--muted);padding:0 8px">Page ' + _dc.page + ' of ' + pages + ' · ' + _dc.total + ' documents</span><button class="pg-btn" data-act="page" data-page="' + (_dc.page + 1) + '"' + (_dc.page >= pages ? ' disabled' : '') + '>›</button>' : '';
+  var n = Object.keys(_dc.sel).length, bar = document.getElementById('doc-bulkbar');
+  if (bar) { bar.style.display = n ? 'flex' : 'none'; bar.innerHTML = n ? '<b>' + n + ' selected</b><button class="btn btn-sm" style="background:var(--gbg);color:var(--green)" data-act="bulk-approve">✓ Approve selected</button><button class="btn btn-sm" style="background:var(--rbg);color:var(--red)" data-act="bulk-reject">✗ Reject selected</button><button class="btn btn-ghost btn-sm" data-act="bulk-clear">Clear</button>' : ''; }
+}
+function _dcBind() {
+  if (_dc.bound) return; var page = document.getElementById('page-documents'); if (!page) return; _dc.bound = true;
+  page.addEventListener('click', function(e) {
+    var t = e.target.closest('[data-act]'); if (!t) return;
+    var a = t.dataset.act, id = t.dataset.id;
+    if (a === 'tab') { filterDocs(t.dataset.tab); return; }
+    if (a === 'page') { if (!t.disabled) { _dc.page = parseInt(t.dataset.page) || 1; renderDocs(true); } return; }
+    if (a === 'pick') { if (t.checked) _dc.sel[id] = 1; else delete _dc.sel[id]; _dcPaint(); return; }
+    if (a === 'preview') { previewDoc(id); return; }
+    if (a === 'approve') { _dcReview(id, 'Approved'); return; }
+    if (a === 'reject') { _dcReview(id, 'Rejected'); return; }
+    if (a === 'replace') { var d = _dcFind(id); if (d) openUploadDoc({ applicantId: d.applicant_id, applicantName: d.applicant_name, type: d.type, replacesId: d.id, replacesName: d.name }); return; }
+    if (a === 'void') { _dcVoid(id); return; }
+    if (a === 'purge') { _dcPurge(id); return; }
+    if (a === 'bulk-approve') { _dcBulk('Approved'); return; }
+    if (a === 'bulk-reject') { _dcBulk('Rejected'); return; }
+    if (a === 'bulk-clear') { _dc.sel = {}; _dcPaint(); return; }
+  });
+}
+function _dcAfterChange() {
+  _dc.at = 0; if (typeof _dashReset === 'function') _dashReset();
+  if (typeof _cache !== 'undefined') Object.keys(_cache).forEach(function(k) { if (k.indexOf('/documents') !== -1) delete _cache[k]; });
+  if (currentPage === 'documents') renderDocs(true);
+  if (typeof currentDrawerApplicant !== 'undefined' && currentDrawerApplicant) { var dt = document.getElementById('dtab-docs'); if (dt && dt.classList.contains('active')) switchDrawerTab('docs', null); }
+  try { apiFetchDocuments(); } catch (e) {}
+}
 
-  // Auto-fill name when type changes
+// ── review / void / purge ─────────────────────────────────────────────────
+async function _dcReview(id, decision) {
+  var d = _dcFind(id) || { name: 'this document' };
+  var body = { decision: decision };
+  if (decision === 'Rejected') { var why = _askReason('Why is "' + d.name + '" rejected? The uploader will see this.'); if (!why) return null; body.reason = why; }
+  var r = await apiFetch('/documents/' + encodeURIComponent(id) + '/review', { method: 'POST', body: JSON.stringify(body) });
+  if (!r.ok) { toast('⛔ ' + _acctMsg(r, 'Review not saved'), 'error'); _dcAfterChange(); return null; }
+  toast((decision === 'Approved' ? '✓ Approved: ' : '✗ Rejected: ') + d.name, decision === 'Approved' ? 'success' : 'info');
+  _dcAfterChange();
+  return r.data;
+}
+function approveDoc(id) { return _dcReview(id, 'Approved'); }
+async function _dcBulk(decision) {
+  var ids = Object.keys(_dc.sel); if (!ids.length) return;
+  var body = { ids: ids, decision: decision };
+  if (decision === 'Rejected') { var why = _askReason('Why are these ' + ids.length + ' documents rejected?'); if (!why) return; body.reason = why; }
+  var r = await apiFetch('/documents/bulk-review', { method: 'POST', body: JSON.stringify(body) });
+  if (!r.ok) { toast(_acctMsg(r, 'Bulk review failed'), 'error'); return; }
+  var bad = r.data.results.filter(function(x) { return !x.ok; });
+  toast(r.data.done + ' ' + decision.toLowerCase() + (bad.length ? ' · ' + bad.length + ' skipped: ' + bad.map(function(x) { return (x.name || '') + ' — ' + x.message; }).slice(0, 3).join('; ') : ''), bad.length ? 'error' : 'success');
+  _dc.sel = {}; _dcAfterChange();
+}
+async function _dcVoid(id) {
+  var d = _dcFind(id) || { name: 'this document' };
+  var why = _askReason('Void "' + d.name + '"? It is kept (and can be audited) but leaves every list.\nWhy is it being voided?'); if (!why) return;
+  var r = await apiFetch('/documents/' + encodeURIComponent(id) + '/void', { method: 'POST', body: JSON.stringify({ reason: why }) });
+  if (!r.ok) { toast('⛔ ' + _acctMsg(r, 'Void failed'), 'error'); return; }
+  toast('🗄 Voided: ' + d.name, 'success'); closeOverlay('overlay-doc-preview'); _dcAfterChange();
+}
+async function _dcPurge(id) {
+  var d = _dcFind(id) || { name: 'this document' };
+  if (!confirm('Permanently delete "' + d.name + '" and its file? This cannot be undone.')) return;
+  var why = _askReason('Why is it being permanently deleted?'); if (!why) return;
+  var r = await apiFetch('/documents/' + encodeURIComponent(id), { method: 'DELETE', body: JSON.stringify({ reason: why }) });
+  if (!r.ok) { toast('⛔ ' + _acctMsg(r, 'Delete failed'), 'error'); return; }
+  toast('Deleted permanently: ' + d.name, 'success'); _dcAfterChange();
+}
+function deleteDocFromPreview() { if (_previewDocId) _dcVoid(_previewDocId); }
+
+// ── preview / download (short-lived, audited links) ───────────────────────
+function previewDoc(docId) {
+  var d = _dcFind(docId);
+  if (!d) { toast('Document not found — refresh the list', 'error'); return; }
+  _previewDocList = (_dc.data && _dc.data.some(function(x) { return x.id === docId; })) ? _dc.data : (_dcDrawerDocs || [d]);
+  _previewDocIdx = Math.max(0, _previewDocList.findIndex(function(x) { return x.id === docId; }));
+  _previewDocId = docId;
+  _renderPreviewModal(d);
+  openOverlay('overlay-doc-preview');
+}
+function navigateDocPreview(dir) {
+  if (!_previewDocList.length) return;
+  _previewDocIdx = (_previewDocIdx + dir + _previewDocList.length) % _previewDocList.length;
+  var d = _previewDocList[_previewDocIdx]; if (!d) return; _previewDocId = d.id; _renderPreviewModal(d);
+}
+function _dcSetText(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; }
+async function _renderPreviewModal(d) {
+  var P = _dcPerms();
+  _dcSetText('doc-preview-icon', DOC_TYPE_ICONS[d.type] || '📄');
+  _dcSetText('doc-preview-name', (d.name || '(Unnamed)') + (d.version > 1 ? ' (v' + d.version + ')' : ''));
+  _dcSetText('doc-preview-meta', [d.applicant_name, d.applicant_display_id, d.type, String(d.created_at || '').slice(0, 10), _dcSize(d.file_size), d.expires_on ? 'expires ' + d.expires_on : ''].filter(Boolean).join(' · '));
+  var pill = document.getElementById('doc-preview-status-pill'); if (pill) pill.innerHTML = _dcStatusPill(d);
+  _dcSetText('doc-preview-review-info', d.status === 'Pending' ? 'Uploaded by ' + (d.uploaded_by || '—') + (d.own_upload ? ' — you uploaded it, someone else must review' : '') :
+    (d.reviewed_by ? d.status + ' by ' + d.reviewed_by + (d.review_reason ? ': ' + d.review_reason : '') : ''));
+  var canReview = P.review && d.status === 'Pending' && !d.own_upload && !d.voided;
+  var vis = function(id, on) { var el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+  vis('doc-preview-approve-btn', canReview); vis('doc-preview-reject-btn', canReview);
+  vis('doc-preview-replace-btn', P.upload && !d.voided && d.status !== 'Superseded'); vis('doc-preview-void-btn', P.void && !d.voided);
+  vis('doc-preview-download', d.has_file); vis('doc-preview-dl-btn', d.has_file);
+  _dcSetText('doc-preview-nav-label', (_previewDocIdx + 1) + ' / ' + _previewDocList.length);
+  var det = document.getElementById('doc-preview-details');
+  if (det) det.innerHTML = [['Applicant', d.applicant_name], ['Type', d.type], ['Status', d.status], ['Issued', d.issued_on], ['Expires', d.expires_on], ['File', d.file_name], ['Uploaded by', d.uploaded_by], ['Notes', d.notes]]
+    .map(function(r) { return '<div><span style="color:#5a6a8a;display:inline-block;min-width:90px">' + escapeHtml(r[0]) + '</span><span style="color:#c8d8f8;font-weight:600">' + escapeHtml(r[1] || '—') + '</span></div>'; }).join('');
+  _showPreviewPane('loading');
+  if (_previewBlobUrl) { try { URL.revokeObjectURL(_previewBlobUrl); } catch (e) {} _previewBlobUrl = null; }
+  if (!d.has_file) { _dcFallback(d, 'No file attached to this record.'); return; }
+  var ext = (d.file_name || '').split('.').pop().toLowerCase();
+  var isImg = ['jpg', 'jpeg', 'png', 'webp'].indexOf(ext) !== -1, isPdf = ext === 'pdf';
+  if (!isImg && !isPdf) { _dcFallback(d, 'Preview is not available for .' + ext.toUpperCase() + ' files — use Download.'); return; }
+  var r = await apiFetch('/documents/' + encodeURIComponent(d.id) + '/download?inline=1&_=' + Date.now());
+  if (_previewDocId !== d.id) return;                // user moved on
+  if (!r.ok || !r.data || !r.data.url) { _dcFallback(d, _acctMsg(r, 'Could not load the file')); return; }
+  if (isImg) { var img = document.getElementById('doc-preview-img'); img.onload = function() { _showPreviewPane('image'); }; img.onerror = function() { _dcFallback(d, 'Image could not be displayed — use Download.'); }; img.src = r.data.url; }
+  else { var fr = document.getElementById('doc-preview-pdf'); fr.src = r.data.url; fr.onload = function() { _showPreviewPane('pdf'); }; setTimeout(function() { var l = document.getElementById('doc-preview-loading'); if (l && l.style.display !== 'none') _showPreviewPane('pdf'); }, 2000); }
+}
+function _dcFallback(d, msg) {
+  _dcSetText('doc-preview-fallback-icon', DOC_TYPE_ICONS[d.type] || '📄'); _dcSetText('doc-preview-fallback-name', d.name || '—'); _dcSetText('doc-preview-fallback-info', msg);
+  _showPreviewPane('fallback');
+}
+async function downloadDoc() {
+  var id = _previewDocId; if (!id) return;
+  var r = await apiFetch('/documents/' + encodeURIComponent(id) + '/download?_=' + Date.now());
+  if (!r.ok || !r.data || !r.data.url) { toast('⛔ ' + _acctMsg(r, 'Download failed'), 'error'); return; }
+  var a = document.createElement('a'); a.href = r.data.url; a.rel = 'noopener'; a.target = '_blank'; document.body.appendChild(a); a.click(); a.remove();
+  toast('Download started (link valid for 5 minutes)', 'success');
+}
+async function approveDocFromPreview() { if (!_previewDocId) return; var d = await _dcReview(_previewDocId, 'Approved'); if (d) _dcRefreshPreview(d); }
+async function rejectDocFromPreview() { if (!_previewDocId) return; var d = await _dcReview(_previewDocId, 'Rejected'); if (d) _dcRefreshPreview(d); }
+function replaceDocFromPreview() { var d = _dcFind(_previewDocId); if (!d) return; closeOverlay('overlay-doc-preview'); openUploadDoc({ applicantId: d.applicant_id, applicantName: d.applicant_name, type: d.type, replacesId: d.id, replacesName: d.name }); }
+function _dcRefreshPreview(nd) {
+  var i = _previewDocList.findIndex(function(x) { return x.id === nd.id; }); if (i !== -1) _previewDocList[i] = nd;
+  var pill = document.getElementById('doc-preview-status-pill'); if (pill) pill.innerHTML = _dcStatusPill(nd);
+  ['doc-preview-approve-btn', 'doc-preview-reject-btn'].forEach(function(x) { var el = document.getElementById(x); if (el) el.style.display = 'none'; });
+  _dcSetText('doc-preview-review-info', nd.status + ' by ' + (nd.reviewed_by || 'you') + (nd.review_reason ? ': ' + nd.review_reason : ''));
+}
+
+// ── upload (waits for the server; progress bar) ───────────────────────────
+async function openUploadDoc(opts) {
+  if (!hasPermission('Upload Documents')) { toast('Your role cannot upload documents', 'error'); return; }
+  if (typeof opts === 'string') opts = { search: opts };
+  opts = opts || {};
+  var meta = await _dcMeta();
+  _dcUp = { applicant: opts.applicantId ? { id: opts.applicantId, name: opts.applicantName || '' } : null, replaces: opts.replacesId || null, xhr: null, results: [] };
   var typeEl = document.getElementById('d-type');
-  if (typeEl) {
-    typeEl.onchange = function() {
-      var nameEl  = document.getElementById('d-name');
-      var appSel  = document.getElementById('d-applicant');
-      if (appSel && appSel.value && nameEl) {
-        nameEl.value = this.value + ' - ' + appSel.value;
-      }
-    };
-  }
-
+  if (typeEl) { typeEl.innerHTML = meta.types.map(function(t) { return '<option' + (t === opts.type ? ' selected' : '') + '>' + escapeHtml(t) + '</option>'; }).join(''); typeEl.disabled = !!opts.replacesId; }
+  var set = function(id, v) { var el = document.getElementById(id); if (el) el.value = v || ''; };
+  set('d-name', ''); set('d-notes', ''); set('d-issued', ''); set('d-expires', ''); set('d-app-search', opts.search || '');
+  var ex = document.getElementById('d-expires'); if (ex) ex.min = _ymd(new Date());
+  var is = document.getElementById('d-issued'); if (is) is.max = _ymd(new Date());
+  var fi = document.getElementById('doc-file-input'); if (fi) fi.accept = meta.accepted.map(function(x) { return '.' + x; }).join(',');
+  var sub = document.getElementById('doc-upload-sub'); if (sub) sub.textContent = meta.accepted.join(', ').toUpperCase() + ' — max ' + meta.max_mb + ' MB';
+  _dcShowApplicant();
+  var rp = document.getElementById('d-replace-note'); if (rp) { rp.style.display = opts.replacesId ? 'block' : 'none'; rp.textContent = opts.replacesId ? 'New version of "' + (opts.replacesName || '') + '" — the current one stays valid until this one is approved.' : ''; }
+  _dcUpError('');
+  var pr = document.getElementById('d-progress'); if (pr) pr.style.display = 'none';
+  clearDocFile();
   openOverlay('overlay-doc');
-  setTimeout(function(){ var s=document.getElementById('d-applicant'); if(s) s.focus(); }, 100);
+  if (!_dcUp.applicant && opts.search) _dcAppSearch(opts.search);
 }
+function _dcShowApplicant() {
+  var box = document.getElementById('d-app-chosen'), srch = document.getElementById('d-app-search-wrap');
+  if (box) { box.style.display = _dcUp.applicant ? 'flex' : 'none'; box.innerHTML = _dcUp.applicant ? '<b>' + escapeHtml(_dcUp.applicant.name || 'Applicant') + '</b>' + (_dcUp.applicant.display_id ? ' <span style="font-family:monospace;font-size:11px;color:var(--muted)">' + escapeHtml(_dcUp.applicant.display_id) + '</span>' : '') + (_dcUp.replaces ? '' : ' <button type="button" class="btn btn-ghost btn-xs" onclick="_dcUp.applicant=null;_dcShowApplicant()">Change</button>') : ''; }
+  if (srch) srch.style.display = _dcUp.applicant ? 'none' : '';
+}
+function _dcAppSearch(v) {
+  clearTimeout(window._dcAT);
+  window._dcAT = setTimeout(async function() {
+    var box = document.getElementById('d-app-results'); if (!box) return;
+    if (!v || v.trim().length < 2) { box.innerHTML = ''; return; }
+    var r = await apiFetch('/applicants?limit=8&q=' + encodeURIComponent(v.trim()) + '&_=' + Date.now());
+    var list = r.ok && r.data && r.data.data ? r.data.data : [];
+    _dcUp.results = list;
+    box.innerHTML = list.length ? list.map(function(a, i) { return '<div data-pick="' + i + '" style="padding:6px 8px;cursor:pointer;border-bottom:1px solid var(--border);font-size:12.5px"><b>' + escapeHtml(a.full_name || '') + '</b> <span style="font-family:monospace;font-size:11px;color:var(--muted)">' + escapeHtml(a.display_id || '') + '</span> <span style="font-size:11px;color:var(--muted)">· ' + escapeHtml(a.status || '') + '</span></div>'; }).join('')
+      : '<div style="padding:6px 8px;font-size:12px;color:var(--muted)">No applicant found</div>';
+    box.querySelectorAll('[data-pick]').forEach(function(el) { el.onclick = function() { var a = _dcUp.results[parseInt(el.getAttribute('data-pick'))]; _dcUp.applicant = { id: a.id, name: a.full_name, display_id: a.display_id }; box.innerHTML = ''; _dcShowApplicant(); }; });
+  }, 250);
+}
+function _dcUpError(msg) { var el = document.getElementById('doc-upload-error'); if (el) { el.textContent = msg ? '⛔ ' + msg : ''; el.style.display = msg ? 'block' : 'none'; } }
+function _setDocFile(file) {
+  var meta = _dc.meta || { accepted: ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'doc', 'docx', 'xls', 'xlsx'], max_mb: 20 };
+  _dcUpError('');
+  var ext = (file.name.split('.').pop() || '').toLowerCase();
+  if (meta.accepted.indexOf(ext) === -1) { _dcUpError('File type not allowed. Use ' + meta.accepted.join(', ').toUpperCase() + '.'); return; }
+  if (file.size > meta.max_mb * 1024 * 1024) { _dcUpError('File is larger than ' + meta.max_mb + ' MB.'); return; }
+  _docFile = file;   // the File object only — its contents are never copied into page data or storage
+  var zone = document.getElementById('doc-upload-zone'); if (zone) zone.classList.add('has-file');
+  _dcSetText('doc-upload-icon', '📄'); _dcSetText('doc-upload-label', 'File selected');
+  var sub = document.getElementById('doc-upload-sub'); if (sub) sub.style.display = 'none';
+  var prev = document.getElementById('doc-upload-preview'); if (prev) prev.style.display = 'flex';
+  _dcSetText('doc-upload-filename', file.name); _dcSetText('doc-upload-filesize', _dcSize(file.size));
+}
+function saveDoc() {
+  if (!hasPermission('Upload Documents')) { toast('Your role cannot upload documents', 'error'); return; }
+  _dcUpError('');
+  if (!_dcUp.applicant) { _dcUpError('Choose the applicant'); return; }
+  if (!_docFile) { _dcUpError('Choose a file to upload'); return; }
+  var v = function(id) { var el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+  var form = new FormData();
+  form.append('applicant_id', _dcUp.applicant.id); form.append('type', v('d-type')); form.append('name', v('d-name')); form.append('notes', v('d-notes'));
+  if (v('d-issued')) form.append('issued_on', v('d-issued')); if (v('d-expires')) form.append('expires_on', v('d-expires'));
+  if (_dcUp.replaces) form.append('replaces_id', _dcUp.replaces);
+  form.append('file', _docFile, _docFile.name);
+  var btn = document.getElementById('save-doc-btn'), bar = document.getElementById('d-progress'), fill = document.getElementById('d-progress-fill');
+  if (btn) { btn.disabled = true; btn.textContent = 'Uploading…'; }
+  if (bar) bar.style.display = 'block'; if (fill) fill.style.width = '0%';
+  var xhr = new XMLHttpRequest(); _dcUp.xhr = xhr;
+  xhr.open('POST', RAILWAY_URL + '/api/documents/upload');
+  xhr.setRequestHeader('Authorization', 'Bearer ' + (window._ramsSessionToken || ''));
+  xhr.upload.onprogress = function(e) { if (e.lengthComputable && fill) fill.style.width = Math.round(e.loaded / e.total * 100) + '%'; };
+  var done = function() { if (btn) { btn.disabled = false; btn.textContent = 'Upload Document'; } if (bar) bar.style.display = 'none'; _dcUp.xhr = null; };
+  xhr.onerror = function() { done(); _dcUpError('Network error — nothing was saved. Try again.'); };
+  xhr.onload = function() {
+    done();
+    var data = null; try { data = JSON.parse(xhr.responseText); } catch (e) {}
+    if (xhr.status < 200 || xhr.status >= 300) {
+      var msg = (data && (data.message || data.error)) || ('Upload failed (HTTP ' + xhr.status + ')');
+      if (data && data.error === 'duplicate_file') msg += ' — open the existing one instead.';
+      _dcUpError(msg + ' Nothing was saved.'); return;
+    }
+    closeOverlay('overlay-doc'); clearDocFile();
+    toast('✓ ' + (data && data.name ? data.name : 'Document') + ' uploaded — waiting for review', 'success');
+    _dcAfterChange();
+  };
+  xhr.send(form);
+}
+
+// used by complaint evidence uploads — same server rules (Pending, real file checks, linked by applicant id)
+async function apiUploadDocument(doc, fileBlob) {
+  if (!_isLiveSession()) return { ok: true };
+  if (!_dcIsUUID(doc.applicantId)) return { ok: false, error: 'Link the complaint to an applicant before attaching files' };
+  var meta = await _dcMeta();
+  var form = new FormData();
+  form.append('applicant_id', doc.applicantId);
+  form.append('type', meta.types.indexOf(doc.type) !== -1 ? doc.type : 'Other');
+  form.append('name', doc.name || '');
+  form.append('notes', doc.notes || '');
+  form.append('file', fileBlob, doc.fileName || doc.name || 'document');
+  var r = await apiFetch('/documents/upload', { method: 'POST', body: form, _noContentType: true });
+  if (r.ok && r.data && r.data.id) { doc._dbId = r.data.id; doc.id = r.data.id; }
+  return r;
+}
+
+// ── requirements editor (System Settings) ─────────────────────────────────
+async function openDocRequirements() {
+  if (!hasPermission('System Settings')) { toast('Only roles with System Settings can change document requirements', 'error'); return; }
+  var meta = await _dcMeta(); _dc.meta = null; meta = await _dcMeta();
+  var ov = document.getElementById('overlay-doc-req');
+  if (!ov) { ov = document.createElement('div'); ov.className = 'overlay'; ov.id = 'overlay-doc-req'; ov.setAttribute('role', 'dialog'); document.body.appendChild(ov); }
+  var cats = Object.keys(meta.required || {});
+  ov.innerHTML = '<div class="modal modal-md"><div class="modal-hdr"><div><h2>Required documents</h2><p>An applicant cannot be deployed until each required document is approved and not expired (Admins can override with a reason).</p></div><button class="close-btn" onclick="closeOverlay(\'overlay-doc-req\')">✕</button></div>' +
+    '<div class="modal-body" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">' + cats.map(function(c) {
+      return '<div><div style="font-weight:800;margin-bottom:8px">' + escapeHtml(c) + '</div>' + meta.types.filter(function(t) { return t !== 'Other'; }).map(function(t) {
+        return '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;padding:3px 0"><input type="checkbox" data-cat="' + escapeHtml(c) + '" value="' + escapeHtml(t) + '"' + ((meta.required[c] || []).indexOf(t) !== -1 ? ' checked' : '') + '> ' + escapeHtml(t) + '</label>'; }).join('') + '</div>';
+    }).join('') + '</div><div class="modal-foot"><button class="btn btn-ghost" onclick="closeOverlay(\'overlay-doc-req\')">Cancel</button><button class="btn btn-p" id="doc-req-save">Save</button></div></div>';
+  openOverlay('overlay-doc-req');
+  document.getElementById('doc-req-save').onclick = async function() {
+    var body = {}; cats.forEach(function(c) { body[c] = []; });
+    ov.querySelectorAll('input[data-cat]').forEach(function(cb) { if (cb.checked) body[cb.getAttribute('data-cat')].push(cb.value); });
+    var r = await apiFetch('/documents/requirements', { method: 'PUT', body: JSON.stringify(body) });
+    if (!r.ok) { toast(_acctMsg(r, 'Not saved'), 'error'); return; }
+    _dc.meta = null; closeOverlay('overlay-doc-req'); toast('Document requirements saved', 'success');
+  };
+}
+
+// ── applicant drawer: checklist + documents ───────────────────────────────
+var _dcDrawerDocs = [];
+async function _dcDrawerTab(app, panel) {
+  var uuid = app._dbId || app.id;
+  panel.innerHTML = '<div style="color:var(--muted);padding:12px">Loading documents…</div>';
+  if (!_isLiveSession() || !_dcIsUUID(uuid)) { panel.innerHTML = '<div class="empty-state"><div class="empty-title">Documents are available for saved applicants only</div></div>'; return; }
+  var res = await Promise.all([apiFetch('/applicants/' + uuid + '/documents/checklist?_=' + Date.now()), apiFetch('/documents?applicant_id=' + uuid + '&limit=100&status=&_=' + Date.now())]);
+  var cl = res[0].ok ? res[0].data : null, list = res[1].ok && res[1].data ? res[1].data.data : [];
+  if (!res[1].ok) { panel.innerHTML = '<div style="color:var(--red);padding:12px">' + escapeHtml(_acctMsg(res[1], 'Could not load documents')) + '</div>'; return; }
+  _dcDrawerDocs = list;
+  var P = _dcPerms();
+  var stIcon = { approved: '✅', expiring: '⚠️', pending: '⏳', rejected: '❌', expired: '⛔', missing: '○' };
+  var stLabel = { approved: 'approved', expiring: 'expiring soon', pending: 'waiting for review', rejected: 'rejected — upload again', expired: 'expired', missing: 'missing' };
+  var h = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:6px;flex-wrap:wrap">' +
+    '<div style="font-size:12px;font-weight:700;color:var(--muted)">' + list.length + ' document' + (list.length === 1 ? '' : 's') + '</div><div style="display:flex;gap:6px">' +
+    (list.some(function(d) { return d.status === 'Approved'; }) ? '<button class="btn btn-s btn-sm" id="dc-zip-btn">⬇ All approved (zip)</button>' : '') +
+    (P.upload ? '<button class="btn btn-p btn-sm" id="dc-up-btn">📎 Upload</button>' : '') + '</div></div>';
+  if (cl && cl.required.length) {
+    h += '<div style="padding:10px 12px;border:1px solid ' + (cl.complete ? '#86efac' : 'var(--amber)') + ';border-radius:8px;margin-bottom:12px;background:' + (cl.complete ? 'var(--gbg)' : 'var(--abg)') + '">' +
+      '<div style="font-size:12px;font-weight:800;margin-bottom:6px">' + (cl.complete ? '✅ All required documents approved' : '⚠ Required for deployment (' + escapeHtml(cl.category || '') + ')') + '</div>' +
+      cl.items.map(function(i) { return '<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0"><span>' + stIcon[i.state] + ' ' + escapeHtml(i.type) + '</span><span style="color:var(--muted)">' + escapeHtml(stLabel[i.state] + (i.expires_on ? ' · ' + i.expires_on : '')) +
+        (i.state === 'missing' || i.state === 'rejected' || i.state === 'expired' ? (P.upload ? ' <a href="#" data-up-type="' + escapeHtml(i.type) + '" style="color:var(--brand)">upload</a>' : '') : '') + '</span></div>'; }).join('') + '</div>';
+  } else if (cl) h += '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">No required documents are set for ' + escapeHtml(cl.category || 'this applicant\'s category') + '.</div>';
+  h += list.length ? list.map(function(d) {
+    return '<div class="doc-card" style="margin-bottom:8px"><div class="doc-icon" style="background:var(--s2);font-size:20px">' + (DOC_TYPE_ICONS[d.type] || '📄') + '</div>' +
+      '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(d.name) + (d.version > 1 ? ' <span style="font-size:10px;color:var(--muted)">v' + d.version + '</span>' : '') + '</div>' +
+      '<div style="font-size:11px;color:var(--muted)">' + escapeHtml(d.type) + ' · ' + _dcSize(d.file_size) + ' · ' + escapeHtml(String(d.created_at || '').slice(0, 10)) + (d.expires_on ? ' · expires ' + escapeHtml(d.expires_on) : '') + '</div>' +
+      (d.review_reason && d.status === 'Rejected' ? '<div style="font-size:11px;color:var(--red)">' + escapeHtml(d.review_reason) + '</div>' : '') + '</div>' +
+      '<div style="display:flex;gap:5px;align-items:center;flex-shrink:0">' + _dcStatusPill(d) + '<button class="btn btn-ghost btn-xs" data-dc-prev="' + escapeHtml(d.id) + '" title="View">👁</button></div></div>';
+  }).join('') : '<div style="text-align:center;padding:24px 0;color:var(--muted)"><div style="font-size:32px;margin-bottom:8px">📂</div><div style="font-size:13px;font-weight:600">No documents yet</div></div>';
+  panel.innerHTML = h;
+  var appName = app.name || '';
+  panel.querySelectorAll('[data-dc-prev]').forEach(function(b) { b.onclick = function() { previewDoc(b.getAttribute('data-dc-prev')); }; });
+  panel.querySelectorAll('[data-up-type]').forEach(function(b) { b.onclick = function(e) { e.preventDefault(); openUploadDoc({ applicantId: uuid, applicantName: appName, type: b.getAttribute('data-up-type') }); }; });
+  var ub = document.getElementById('dc-up-btn'); if (ub) ub.onclick = function() { openUploadDoc({ applicantId: uuid, applicantName: appName }); };
+  var zb = document.getElementById('dc-zip-btn'); if (zb) zb.onclick = function() { _dcZip(uuid, zb); };
+}
+async function _dcZip(uuid, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Preparing…'; }
+  try {
+    var res = await fetch(RAILWAY_URL + '/api/applicants/' + uuid + '/documents/zip', { headers: { Authorization: 'Bearer ' + (window._ramsSessionToken || '') } });
+    if (!res.ok) { var j = null; try { j = await res.json(); } catch (e) {} toast('⛔ ' + ((j && (j.message || j.error)) || 'Zip failed'), 'error'); return; }
+    var cd = res.headers.get('Content-Disposition') || '', m = cd.match(/filename="([^"]+)"/);
+    _saveBlob(await res.blob(), m ? m[1] : 'documents.zip');
+    toast('Zip downloaded', 'success');
+  } finally { if (btn) { btn.disabled = false; btn.textContent = '⬇ All approved (zip)'; } }
+}
+
+
+
+
+
 
 // ── File upload helpers ───────────────────────────────────────────────
 var _docFile = null;
@@ -8751,58 +8956,7 @@ function docDrop(e) {
   if (files && files[0]) _setDocFile(files[0]);
 }
 
-function _setDocFile(file) {
-  var maxMB = 20;
-  var errEl = document.getElementById('doc-upload-error');
-  if (errEl) errEl.style.display = 'none';
 
-  // Validate type
-  var allowed = ['pdf','doc','docx','jpg','jpeg','png','xlsx'];
-  var ext = file.name.split('.').pop().toLowerCase();
-  if (!allowed.includes(ext)) {
-    if (errEl) { errEl.textContent = 'File type not allowed. Use PDF, DOC, DOCX, JPG, PNG or XLSX.'; errEl.style.display = 'block'; }
-    return;
-  }
-  // Validate size
-  if (file.size > maxMB * 1024 * 1024) {
-    if (errEl) { errEl.textContent = 'File is too large. Maximum size is ' + maxMB + ' MB.'; errEl.style.display = 'block'; }
-    return;
-  }
-
-  _docFile = file;
-  var zone  = document.getElementById('doc-upload-zone');
-  var icon  = document.getElementById('doc-upload-icon');
-  var lbl   = document.getElementById('doc-upload-label');
-  var sub   = document.getElementById('doc-upload-sub');
-  var prev  = document.getElementById('doc-upload-preview');
-  var fname = document.getElementById('doc-upload-filename');
-  var fsize = document.getElementById('doc-upload-filesize');
-
-  if (zone)  zone.classList.add('has-file');
-  if (icon)  icon.textContent = _docExtIcon(ext);
-  if (lbl)   lbl.textContent  = 'File selected';
-  if (sub)   sub.style.display = 'none';
-  if (prev)  { prev.style.display = 'flex'; }
-  if (fname) fname.textContent = file.name;
-  if (fsize) fsize.textContent = (file.size / 1024 < 1000
-    ? (file.size / 1024).toFixed(1) + ' KB'
-    : (file.size / 1048576).toFixed(2) + ' MB');
-
-  // Auto-fill doc name from filename if empty
-  var nameEl = document.getElementById('d-name');
-  if (nameEl && !nameEl.value) {
-    nameEl.value = file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
-  }
-
-  // Store base64 data URL for preview
-  var reader = new FileReader();
-  reader.onload = function(ev) {
-    _docFile._dataUrl  = ev.target.result;
-    _docFile._ext      = ext;
-    _docFile._mimeType = file.type || _mimeFromExt(ext);
-  };
-  reader.readAsDataURL(file);
-}
 
 function _mimeFromExt(ext) {
   var m = {pdf:'application/pdf',jpg:'image/jpeg',jpeg:'image/jpeg',
@@ -8834,147 +8988,7 @@ function clearDocFile() {
   if (fi)    fi.value = '';
   if (errEl) errEl.style.display = 'none';
 }
-function saveDoc() {
-  if (!hasPermission('Upload Documents')) { toast('Your role cannot upload documents', 'error'); return; }
 
-  var appSel  = document.getElementById('d-applicant');
-  var nameEl  = document.getElementById('d-name');
-  var typeEl  = document.getElementById('d-type');
-  var notesEl = document.getElementById('d-notes');
-  var btn     = document.getElementById('save-doc-btn');
-  var errEl   = document.getElementById('doc-upload-error');
-  if (errEl) errEl.style.display = 'none';
-
-  var applicant = appSel ? appSel.value.trim() : '';
-  var name      = nameEl ? nameEl.value.trim() : '';
-  if (!applicant) { toast('Please select an applicant', 'error'); if (appSel) appSel.focus(); return; }
-  if (!name)      { toast('Document name is required',  'error'); if (nameEl) nameEl.focus(); return; }
-
-  // Find applicant record for its UUID
-  var appRecord   = DB.applicants.find(function(a) { return a.name === applicant; });
-  var applicantId = appRecord ? (appRecord._dbId || appRecord.id || '') : '';
-
-  var sizeStr = '—';
-  if (_docFile) {
-    sizeStr = _docFile.size < 1048576
-      ? (_docFile.size / 1024).toFixed(1) + ' KB'
-      : (_docFile.size / 1048576).toFixed(2) + ' MB';
-  }
-
-  // Build the doc record immediately — add to DB and show it
-  var doc = {
-    id:             'DOC-PENDING-' + Date.now(),  // temporary id — replaced by server UUID
-    _dbId:          null,
-    name:           name,
-    type:           typeEl  ? typeEl.value  : 'Other',
-    status:         'Approved',
-    applicant:      applicant,
-    applicantId:    applicantId,
-    date:           _ymd(new Date()),
-    size:           sizeStr,
-    notes:          notesEl ? notesEl.value.trim() : '',
-    fileName:       _docFile ? _docFile.name   : null,
-    mimeType:       _docFile ? (_docFile.type || _docFile._mimeType || '') : null,
-    ext:            _docFile ? (_docFile.name.split('.').pop().toLowerCase() || _docFile._ext || '') : null,
-    dataUrl:        _docFile ? (_docFile._dataUrl  || null) : null,
-    _pendingUpload: true,
-  };
-
-  // Add to top of list immediately — user sees it right away
-  DB.documents.unshift(doc);
-  autosave('documents');
-  renderDocs();
-  addAudit('CREATE', 'Document', 'Uploaded ' + name + ' for ' + applicant);
-
-  // Close modal and reset — don't wait for backend
-  if (btn) { btn.textContent = 'Uploading…'; btn.disabled = true; }
-  closeOverlay('overlay-doc');
-
-  // Capture file blob now before clearDocFile nulls _docFile
-  var fileToUpload = _docFile;
-  clearDocFile();
-  if (btn) { btn.textContent = 'Upload Document'; btn.disabled = false; }
-
-  toast('Uploading ' + name + '…', 'info');
-
-  // Refresh drawer if open for this applicant
-  if (currentDrawerApplicant && currentDrawerApplicant.name === applicant) {
-    switchDrawerTab('docs', null);
-  }
-
-  // Upload to backend — either with file blob or metadata only
-  function _doUpload(blob) {
-    var form = new FormData();
-    form.append('name',           doc.name         || '');
-    form.append('type',           doc.type         || 'Other');
-    form.append('applicant_name', doc.applicant    || '');
-    form.append('applicant_id',   applicantId      || '');
-    form.append('notes',          doc.notes        || '');
-    form.append('status',         doc.status       || 'Pending');
-    form.append('date',           doc.date         || '');
-    if (blob) form.append('file', blob, doc.fileName || doc.name || 'document');
-
-    apiFetch('/documents/upload', { method: 'POST', body: form, _noContentType: true })
-      .then(function(r) {
-        if (r && r.ok && r.data && r.data.id) {
-          // Update local record with real server UUID — in-place, no re-sort
-          doc.id    = r.data.id;
-          doc._dbId = r.data.id;
-          doc._pendingUpload = false;
-          // If backend warned about S3, mark doc as having no stored file
-          if (r.data._warning) {
-            doc._noFile = true;
-            console.warn('[upload] server warning:', r.data._warning);
-          }
-          autosave('documents');
-          renderDocs();
-          if (r.data._warning) {
-            toast('⚠ Metadata saved but file not stored — R2/S3 not configured on server', 'error');
-          } else {
-            toast('✓ ' + name + ' uploaded', 'success');
-          }
-          pushNotif('Document Uploaded',
-            name + ' uploaded for ' + applicant + ' — awaiting review',
-            'document', { page: 'documents', id: doc.id });
-          // Signal other users to bust their cache on next poll
-          if (typeof Store !== 'undefined') {
-            Store.set('rams:shared:documents:ts', String(Date.now()), true).catch(function(){});
-          }
-          // Bust own cache so next poll gets fresh server list
-          Object.keys(_cache || {}).forEach(function(k) {
-            if (k.includes('/documents')) delete _cache[k];
-          });
-          if (window._inFlight) Object.keys(_inFlight).forEach(function(k) {
-            if (k.includes('/documents')) delete _inFlight[k];
-          });
-        } else {
-          // Upload failed — mark clearly but keep visible
-          doc._pendingUpload = false;
-          doc._uploadFailed  = true;
-          autosave('documents');
-          renderDocs();
-          var errMsg = (r && r.error) ? r.error : ('HTTP ' + (r && r.httpStatus || '?'));
-          console.error('[saveDoc] upload failed:', errMsg, r);
-          toast('Upload failed: ' + errMsg, 'error');
-        }
-      })
-      .catch(function(err) {
-        doc._pendingUpload = false;
-        doc._uploadFailed  = true;
-        autosave('documents');
-        renderDocs();
-        toast('Upload error: ' + (err && err.message || 'network error'), 'error');
-      });
-  }
-
-  if (fileToUpload) {
-    // Pass the raw File object directly to FormData — fast, no async FileReader needed
-    // The dataUrl on doc is only for local preview; the actual upload uses the File
-    _doUpload(fileToUpload);
-  } else {
-    _doUpload(null);
-  }
-}
 
 // ════════════════════════════════════════════════════════
 // JOBS
@@ -21017,14 +21031,8 @@ function renderAgentSummaryInDrawer(app) {
 // ════════════════════════════════════════════════════════
 
 var _previewDocId   = null;
-var _previewDocList = [];
-var _previewDocIdx  = 0;
-var _previewBlobUrl = null;
 
-var DOC_TYPE_ICONS = {
-  Government:'🪪', Medical:'🏥', Work:'📋', Contract:'📝',
-  Training:'🎓', Visa:'🛂', OWWA:'🏛', Other:'📎',
-};
+
 
 // ── Helper: is this string a real UUID? ───────────────────────────────
 function _isRealUUID(s) {
@@ -21032,153 +21040,13 @@ function _isRealUUID(s) {
 }
 
 // ── Open preview modal ────────────────────────────────────────────────
-function previewDoc(docId) {
-  var doc = DB.documents.find(function(d) {
-    return d.id === docId || d._dbId === docId;
-  });
-  if (!doc) { toast('Document not found — try refreshing', 'error'); return; }
 
-  _previewDocList = DB.documents.filter(function(d) {
-    return docFilter === 'all' || d.status === docFilter;
-  });
-  _previewDocIdx = _previewDocList.findIndex(function(d) {
-    return d.id === doc.id || d._dbId === doc._dbId;
-  });
-  if (_previewDocIdx < 0) _previewDocIdx = 0;
-  _previewDocId = doc.id;
-
-  _renderPreviewModal(doc);
-  openOverlay('overlay-doc-preview');
-}
 
 // ── Render/update the preview modal for a given doc ───────────────────
-function _renderPreviewModal(doc) {
-  if (!doc) return;
 
-  var typeKey = doc.type ? doc.type.split(' ')[0] : 'Other';
-  var icon    = DOC_TYPE_ICONS[typeKey] || '📄';
-  var el;
-
-  el = document.getElementById('doc-preview-icon');    if (el) el.textContent = icon;
-  el = document.getElementById('doc-preview-name');    if (el) el.textContent = doc.name || '(Unnamed)';
-  el = document.getElementById('doc-preview-meta');
-  if (el) el.textContent = [doc.applicant, doc.type, doc.date, doc.size]
-    .filter(function(v){ return v && v !== 'undefined' && v !== '—'; }).join(' · ');
-
-  el = document.getElementById('doc-preview-status-pill');
-  if (el) el.innerHTML = pillHtml(doc.status);
-
-  el = document.getElementById('doc-preview-approve-btn');
-  if (el) el.style.display = 'none';
-
-  el = document.getElementById('doc-preview-nav-label');
-  if (el) el.textContent = (_previewDocIdx + 1) + ' / ' + _previewDocList.length;
-
-  // Download button — always show if doc has a server id
-  el = document.getElementById('doc-preview-download');
-  if (el) el.style.display = (doc.dataUrl || _isRealUUID(doc._dbId || doc.id)) ? '' : 'none';
-
-  // Reset panes — show loading spinner
-  _showPreviewPane('loading');
-
-  // Revoke stale blob URL
-  if (_previewBlobUrl) { URL.revokeObjectURL(_previewBlobUrl); _previewBlobUrl = null; }
-
-  // ── Decide preview strategy ──────────────────────────────────────────
-  if (doc.dataUrl && !doc.dataUrl.startsWith('blob:revoked')) {
-    // We already have a local data URL or a cached blob URL — use it directly
-    _loadPreview(doc);
-  } else {
-    // Need to fetch from backend
-    var serverId = doc._dbId || doc.id;
-    if (!_isRealUUID(serverId)) { _showDocFallback(doc, 'no-file'); return; }
-
-    var BACKEND = typeof RAILWAY_URL !== 'undefined' ? RAILWAY_URL : '';
-    var dlUrl   = BACKEND + '/api/documents/' + serverId + '/download';
-    var token   = window._ramsSessionToken || '';
-
-    fetch(dlUrl, {
-      headers:  { 'Authorization': 'Bearer ' + token },
-      redirect: 'follow',
-    })
-    .then(function(res) {
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      var ct = res.headers.get('Content-Type') || '';
-      if (ct.includes('application/json')) {
-        // Backend returned a presigned R2 URL
-        return res.json().then(function(j) {
-          if (!j || !j.url) throw new Error('No URL in response');
-          doc.ext    = doc.ext || (doc.fileName ? doc.fileName.split('.').pop().toLowerCase() : 'bin');
-          doc.dataUrl = j.url;  // presigned HTTPS URL — valid for 1 hour
-          _loadPreview(doc);
-        });
-      }
-      // Backend streamed the file directly
-      return res.blob().then(function(blob) {
-        _previewBlobUrl = URL.createObjectURL(blob);
-        doc.ext     = doc.ext    || (doc.fileName ? doc.fileName.split('.').pop().toLowerCase() : '')
-                                 || (blob.type ? blob.type.split('/').pop() : 'bin');
-        doc.dataUrl = _previewBlobUrl;
-        _loadPreview(doc);
-      });
-    })
-    .catch(function(err) {
-      console.warn('[previewDoc] fetch failed:', err.message);
-      _showDocFallback(doc, 'fetch-failed');
-    });
-  }
-}
 
 // ── Actually render the preview based on file type ────────────────────
-function _loadPreview(doc) {
-  var ext = doc.ext
-    || (doc.fileName ? doc.fileName.split('.').pop().toLowerCase() : '')
-    || (doc.mimeType ? doc.mimeType.split('/').pop() : '');
 
-  var isImage = ['jpg','jpeg','png','gif','webp','bmp'].indexOf(ext) !== -1;
-  var isPdf   = ext === 'pdf';
-  var isUrl   = doc.dataUrl && (doc.dataUrl.startsWith('http://') || doc.dataUrl.startsWith('https://') || doc.dataUrl.startsWith('blob:'));
-
-  if (isImage) {
-    var img = document.getElementById('doc-preview-img');
-    if (!img) { _showDocFallback(doc, 'no-element'); return; }
-    img.onload  = function() { _showPreviewPane('image'); };
-    img.onerror = function() { _showDocFallback(doc, 'img-error'); };
-    img.src = doc.dataUrl;
-
-  } else if (isPdf) {
-    var iframe = document.getElementById('doc-preview-pdf');
-    if (!iframe) { _showDocFallback(doc, 'no-element'); return; }
-
-    if (isUrl) {
-      // Presigned URL or blob URL — set directly
-      iframe.src = doc.dataUrl;
-    } else {
-      // base64 data URL — convert to blob URL for iframe (atob on HTTPS URL would throw)
-      try {
-        var b64   = doc.dataUrl.split(',')[1];
-        var bin   = atob(b64);
-        var bytes = new Uint8Array(bin.length);
-        for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        _previewBlobUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
-        iframe.src = _previewBlobUrl;
-      } catch(e) {
-        iframe.src = doc.dataUrl;
-      }
-    }
-
-    // iframe onload fires on blank src too — use timeout as belt-and-suspenders
-    iframe.onload = function() { _showPreviewPane('pdf'); };
-    setTimeout(function() {
-      var loading = document.getElementById('doc-preview-loading');
-      if (loading && loading.style.display !== 'none') _showPreviewPane('pdf');
-    }, 2000);
-
-  } else {
-    // DOC, DOCX, XLSX, etc — no in-browser renderer — show fallback + download
-    _showDocFallback(doc, 'unsupported');
-  }
-}
 
 // ── Show/hide the correct content pane ───────────────────────────────
 function _showPreviewPane(which) {
@@ -21200,134 +21068,18 @@ function _showPreviewPane(which) {
 }
 
 // ── Fallback pane — show metadata + download button ──────────────────
-function _showDocFallback(doc, reason) {
-  var ext     = doc.ext || (doc.fileName ? doc.fileName.split('.').pop().toLowerCase() : '');
-  var typeKey = doc.type ? doc.type.split(' ')[0] : 'Other';
-  var extIcons = { pdf:'📄', doc:'📝', docx:'📝', jpg:'🖼', jpeg:'🖼', png:'🖼', xlsx:'📊' };
 
-  var messages = {
-    'no-file':        'No file attached — this is a metadata-only record.',
-    'fetch-failed':   'Could not load the file — check your connection and try again.',
-    'img-error':      'Image could not be displayed — click Download to save it.',
-    'unsupported':    'Preview not available for .' + (ext||'?').toUpperCase() + ' files — click Download to open.',
-    'no-element':     'Preview unavailable — click Download to open the file.',
-  };
-
-  var el;
-  el = document.getElementById('doc-preview-fallback-icon'); if (el) el.textContent = extIcons[ext] || DOC_TYPE_ICONS[typeKey] || '📄';
-  el = document.getElementById('doc-preview-fallback-name'); if (el) el.textContent = doc.name || '—';
-  el = document.getElementById('doc-preview-fallback-info'); if (el) el.textContent = messages[reason] || 'Preview unavailable.';
-  el = document.getElementById('doc-preview-details');
-  if (el) el.innerHTML = [
-    ['Applicant', doc.applicant || '—'],
-    ['Type',      doc.type      || '—'],
-    ['Status',    doc.status    || '—'],
-    ['Date',      doc.date      || '—'],
-    ['Size',      doc.size      || '—'],
-    ['File',      doc.fileName  || 'No file'],
-    ['Notes',     doc.notes     || '—'],
-  ].map(function(r) {
-    return '<div><span style="color:#5a6a8a;display:inline-block;min-width:80px">' + r[0] + '</span>' +
-           '<span style="color:#c8d8f8;font-weight:600">' + r[1] + '</span></div>';
-  }).join('');
-
-  el = document.getElementById('doc-preview-dl-btn');
-  if (el) el.style.display = (_isRealUUID(doc._dbId || doc.id) || doc.dataUrl) ? '' : 'none';
-  el = document.getElementById('doc-preview-download');
-  if (el) el.style.display = (_isRealUUID(doc._dbId || doc.id) || doc.dataUrl) ? '' : 'none';
-
-  _showPreviewPane('fallback');
-}
 
 // ── Navigate prev/next doc ────────────────────────────────────────────
-function navigateDocPreview(dir) {
-  if (!_previewDocList.length) return;
-  _previewDocIdx = (_previewDocIdx + dir + _previewDocList.length) % _previewDocList.length;
-  var doc = _previewDocList[_previewDocIdx];
-  if (!doc) return;
-  _previewDocId = doc.id;
-  _renderPreviewModal(doc);
-}
+
 
 // ── Download the current previewed document ───────────────────────────
-function downloadDoc() {
-  var doc = DB.documents.find(function(d) { return d.id === _previewDocId || d._dbId === _previewDocId; });
-  if (!doc) { toast('Document not found', 'error'); return; }
 
-  // Already have a local/blob URL — trigger download directly
-  if (doc.dataUrl) {
-    // If it's a presigned HTTPS URL (R2), open in new tab — can't use anchor download cross-origin
-    if (doc.dataUrl.startsWith('http://') || doc.dataUrl.startsWith('https://')) {
-      window.open(doc.dataUrl, '_blank');
-      toast('Opening file…', 'success');
-    } else {
-      var a = document.createElement('a');
-      a.href     = doc.dataUrl;
-      a.download = doc.fileName || (doc.name + '.' + (doc.ext || 'bin'));
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      toast('Download started — ' + (doc.fileName || doc.name), 'success');
-    }
-    return;
-  }
-
-  // Fetch from backend
-  var serverId = doc._dbId || doc.id;
-  if (!_isRealUUID(serverId)) { toast('No file available to download', 'info'); return; }
-
-  var BACKEND = typeof RAILWAY_URL !== 'undefined' ? RAILWAY_URL : '';
-  var dlUrl   = BACKEND + '/api/documents/' + serverId + '/download';
-  var token   = window._ramsSessionToken || '';
-
-  toast('Preparing download…', 'info');
-  fetch(dlUrl, { headers: { 'Authorization': 'Bearer ' + token }, redirect: 'follow' })
-    .then(function(res) {
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      var ct = res.headers.get('Content-Type') || '';
-      if (ct.includes('application/json')) {
-        return res.json().then(function(j) {
-          if (!j || !j.url) throw new Error('No URL');
-          window.open(j.url, '_blank');
-          doc.dataUrl = j.url;  // cache for subsequent previews
-          toast('Opening file…', 'success');
-        });
-      }
-      return res.blob().then(function(blob) {
-        var blobUrl = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href     = blobUrl;
-        a.download = doc.fileName || (doc.name + '.' + (doc.ext || 'bin'));
-        document.body.appendChild(a); a.click(); document.body.removeChild(a);
-        setTimeout(function(){ URL.revokeObjectURL(blobUrl); }, 30000);
-        doc.dataUrl = blobUrl;  // cache for subsequent previews
-        toast('Download started — ' + (doc.fileName || doc.name), 'success');
-      });
-    })
-    .catch(function(err) {
-      console.error('[downloadDoc]', err.message);
-      toast('Download failed — ' + err.message, 'error');
-    });
-}
 
 // ── Approve / delete from preview ────────────────────────────────────
-function approveDocFromPreview() {
-  if (!_previewDocId) return;
-  approveDoc(_previewDocId);
-  var doc = DB.documents.find(function(d) { return d.id === _previewDocId; });
-  if (doc) {
-    var statEl = document.getElementById('doc-preview-status-pill');
-    if (statEl) statEl.innerHTML = pillHtml(doc.status);
-    var approveBtn = document.getElementById('doc-preview-approve-btn');
-    if (approveBtn) approveBtn.style.display = 'none';
-  }
-}
 
-function deleteDocFromPreview() {
-  if (!_previewDocId) return;
-  var doc = DB.documents.find(function(d) { return d.id === _previewDocId; });
-  if (!doc) return;
-  closeOverlay('overlay-doc-preview');
-  setTimeout(function() { confirmDelete('document', _previewDocId); }, 200);
-}
+
+
 
 
 // ╔══════════════════════════════════════════════════════════════════════╗
@@ -21991,7 +21743,7 @@ function saveViewerScope() {
 
 // ── Clear local cache + re-sync from PostgreSQL ───────────────────────
 async function clearLocalCache() {
-  DB.applicants = []; DB.jobs = []; DB.expenses = []; DB.users = []; DB.auditLog = []; if (typeof _dashReset === 'function') _dashReset(); if (typeof _plReset === 'function') _plReset(); if (typeof _ap !== 'undefined') { _ap.data = null; _ap.filters = null; _ap.sel = {}; _ap.restored = false; } if (typeof _ov !== 'undefined') { _ov.data = null; _ov.at = 0; }
+  DB.applicants = []; DB.jobs = []; DB.expenses = []; DB.users = []; DB.auditLog = []; if (typeof _dashReset === 'function') _dashReset(); if (typeof _plReset === 'function') _plReset(); if (typeof _dc !== 'undefined') { _dc.data = null; _dc.meta = null; _dc.sel = {}; } if (typeof _ap !== 'undefined') { _ap.data = null; _ap.filters = null; _ap.sel = {}; _ap.restored = false; } if (typeof _ov !== 'undefined') { _ov.data = null; _ov.at = 0; }
   filteredApps = [];
   await Store.clear();
   toast('Cache cleared — re-syncing from server…', 'info');
@@ -23853,8 +23605,9 @@ async function loadSharedPermissions() {
       </div>
       <div style="display:flex;gap:6px;flex-shrink:0">
         <button class="btn btn-s btn-sm" id="doc-preview-download" onclick="downloadDoc()" style="display:none">⬇ Download</button>
-        <button class="btn btn-ghost btn-xs" style="background:var(--rbg);color:var(--red);border:1px solid #fca5a5"
-                id="doc-preview-approve-btn" onclick="approveDocFromPreview()">✓ Approve</button>
+        <button class="btn btn-xs" style="background:var(--gbg);color:var(--green);border:1px solid #86efac;display:none" id="doc-preview-approve-btn" onclick="approveDocFromPreview()">✓ Approve</button>
+        <button class="btn btn-xs" style="background:var(--rbg);color:var(--red);border:1px solid #fca5a5;display:none" id="doc-preview-reject-btn" onclick="rejectDocFromPreview()">✗ Reject</button>
+        <button class="btn btn-ghost btn-xs" style="display:none" id="doc-preview-replace-btn" onclick="replaceDocFromPreview()">↻ Replace</button>
         <button class="close-btn" onclick="closeOverlay('overlay-doc-preview')">✕</button>
       </div>
     </div>
@@ -23900,8 +23653,9 @@ async function loadSharedPermissions() {
         <button class="btn btn-ghost btn-sm" id="doc-preview-next" onclick="navigateDocPreview(1)">Next →</button>
       </div>
       <div style="display:flex;gap:6px">
+        <span id="doc-preview-review-info" style="font-size:11.5px;color:var(--muted);max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
         <span id="doc-preview-status-pill"></span>
-        <button class="btn btn-danger btn-sm" onclick="deleteDocFromPreview()">🗑 Delete</button>
+        <button class="btn btn-danger btn-sm" id="doc-preview-void-btn" onclick="deleteDocFromPreview()">🗄 Void</button>
       </div>
     </div>
   </div>
