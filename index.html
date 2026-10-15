@@ -9483,7 +9483,14 @@ async function _joAct(act, id) {
     r = await _joCall('/job-orders/' + encodeURIComponent(id) + '/status', 'POST', { status: act === 'close' ? 'Closed' : 'On Hold', reason: why, expected_version: ver });
   } else if (act === 'reopen') {
     r = await _joCall('/job-orders/' + encodeURIComponent(id) + '/status', 'POST', { status: 'Active', expected_version: ver });
-    if (!r.ok && r.data && r.data.error === 'deadline_passed') { toast(_acctMsg(r), 'error'); _joEdit(id); return; }
+    if (!r.ok && r.data && r.data.error === 'deadline_passed') {
+      toast('The deadline has passed — choose a new deadline, then save to reopen', 'info');
+      await _joEdit(id);
+      var _st = document.getElementById('j-status'), _dl = document.getElementById('j-deadline');
+      if (_st) { _st.value = 'Active'; _joStatusChanged(); }
+      if (_dl) { _dl.value = ''; _dl.min = _ymd(new Date()); _dl.focus(); }
+      return;
+    }
   } else if (act === 'web') {
     r = await _joCall('/job-orders/' + encodeURIComponent(id) + '/website', 'POST', { post_to_website: !(o && o.post_to_website) });
   } else if (act === 'dup') {
@@ -9626,6 +9633,10 @@ function _toggleJobPostWebsite() {
 function _joStatusChanged() {
   var s = document.getElementById('j-status').value, cur = (_jo.editing && _jo.editing.curManual) || 'Active';
   var row = document.getElementById('j-reason-row'); if (row) row.style.display = (s !== 'Active' && s !== cur && _jo.editing && _jo.editing.order_id) ? 'block' : 'none';
+  // reopening an order whose deadline has passed needs a new deadline — say so right away
+  var dl = document.getElementById('j-deadline'), eb = document.getElementById('j-errors');
+  if (s === 'Active' && dl && dl.value && dl.value < _ymd(new Date()) && eb) { eb.style.display = 'block'; eb.textContent = 'The deadline (' + dl.value + ') has passed — choose a new deadline to reopen this order.'; dl.style.borderColor = 'var(--red)'; dl.focus(); }
+  else if (eb && /has passed/.test(eb.textContent)) { eb.style.display = 'none'; if (dl) dl.style.borderColor = ''; }
 }
 function _joClearErrors() {
   var b = document.getElementById('j-errors'); if (b) { b.style.display = 'none'; b.textContent = ''; }
