@@ -2036,31 +2036,30 @@ button[disabled][data-rbac-locked] {
 
 <div class="page content-pad" id="page-audit">
       <div class="pg-hdr">
-        <div class="pg-hdr-l"><h1>Audit Trail</h1><p>Complete log of all system actions and changes.</p></div>
+        <div class="pg-hdr-l"><h1>Audit Trail</h1><p>Every action in the system — append-only and tamper-evident. Nothing here can be edited or cleared.</p></div>
         <div class="pg-hdr-r">
-          <button class="btn btn-s btn-sm" onclick="exportData('audit')">⬇ Export CSV</button>
-          <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="clearAudit()">Clear Log</button>
+          <button class="btn btn-s btn-sm" onclick="auditExport()">⬇ Export CSV</button>
+          <button class="btn btn-s btn-sm" id="audit-verify-btn" onclick="auditVerify()" title="Recompute the integrity chain (Admin)">🔗 Verify integrity</button>
+          <button class="btn btn-ghost btn-sm" id="audit-archive-btn" onclick="auditArchive()" title="Archive entries older than the retention period (Admin)">🗄 Archive old entries…</button>
         </div>
       </div>
+      <div id="audit-banner"></div>
+      <div id="audit-summary" style="margin-bottom:10px"></div>
       <div class="filter-bar" style="flex-wrap:wrap;gap:8px">
         <div class="filter-search" style="flex:1;min-width:180px">
           <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input type="text" id="audit-search" placeholder="Search actions, users, entities…" oninput="renderAudit()" aria-label="Search audit log">
+          <input type="text" id="audit-search" placeholder="Search details, users, records…" oninput="clearTimeout(window._auT);window._auT=setTimeout(auditFilterChanged,300)" aria-label="Search audit log">
         </div>
-        <select class="filter-select" id="audit-type-filter" onchange="renderAudit()" aria-label="Filter by action">
-          <option value="">All Actions</option>
-          <option value="create">CREATE</option>
-          <option value="update">UPDATE</option>
-          <option value="delete">DELETE</option>
-          <option value="export">EXPORT</option>
-        </select>
-        <select class="filter-select" id="audit-entity-filter" onchange="renderAudit()" aria-label="Filter by entity">
-          <option value="">All Entities</option>
-          <option>Applicant</option><option>Job Order</option><option>Document</option>
-          <option>Expense</option><option>Agent</option><option>User</option>
-          <option>Settings</option><option>Integration</option><option>System</option>
-        </select>
+        <select class="filter-select" id="audit-cat-filter" onchange="auditFilterChanged()" aria-label="Category"><option value="">All categories</option></select>
+        <select class="filter-select" id="audit-action-filter" onchange="auditFilterChanged()" aria-label="Action"><option value="">All actions</option></select>
+        <select class="filter-select" id="audit-user-filter" onchange="auditFilterChanged()" aria-label="User"><option value="">All users</option></select>
+        <select class="filter-select" id="audit-entity-filter" onchange="auditFilterChanged()" aria-label="Record type"><option value="">All records</option></select>
+        <select class="filter-select" id="audit-sev-filter" onchange="auditFilterChanged()" aria-label="Severity"><option value="">Any severity</option><option value="attention">Needs attention</option><option value="warning">Warning</option><option value="critical">Critical</option><option value="info">Info</option></select>
+        <input type="date" class="filter-select" id="audit-from" onchange="auditFilterChanged()" aria-label="From date" title="From">
+        <input type="date" class="filter-select" id="audit-to" onchange="auditFilterChanged()" aria-label="To date" title="To">
+        <button class="btn btn-ghost btn-sm" onclick="auditReset()">Reset</button>
       </div>
+      <div id="audit-chips" style="margin:6px 0"></div>
       <div class="card cp" id="audit-log" style="padding:0;overflow:hidden"></div>
     </div>
 
@@ -2880,6 +2879,18 @@ button[disabled][data-rbac-locked] {
       <button class="btn btn-ghost" onclick="closeOverlay('overlay-job')">Cancel</button>
       <button class="btn btn-p" id="j-submit-btn" onclick="saveJob()">Create Job Order</button>
     </div>
+  </div>
+</div>
+
+<!-- Audit entry detail -->
+<div class="overlay" id="overlay-audit" role="dialog" aria-modal="true" aria-label="Audit entry">
+  <div class="modal" style="max-width:720px;max-height:90vh;overflow-y:auto">
+    <div class="modal-hdr">
+      <div><h2 id="au-title"></h2><p id="au-sub"></p></div>
+      <button class="close-btn" onclick="closeOverlay('overlay-audit')" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body" id="au-body"></div>
+    <div class="modal-foot" style="justify-content:flex-start;flex-wrap:wrap;gap:6px" id="au-actions"></div>
   </div>
 </div>
 
@@ -4169,61 +4180,207 @@ async function fetchUsers() {
   if (currentPage === 'settings') renderSettings();
 }
 
-async function fetchAudit() {
-  var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
-  if (!isLive) return;
-  var r = await apiFetch('/audit?limit=100');
+// ── Audit Trail: the server owns the log (GET /audit-trail …). The page filters, pages and explains; it never edits or clears. ──
+var _au = { f: { q: '', category: '', action: '', user_id: '', entity: '', severity: '', from: '', to: '', entity_id: '', request_id: '' }, entries: [], cursor: null, total: null, summary: null, meta: null,
+  days: 1, err: '', seq: 0, open: null, t: null, loadingMore: false, tz: 'Asia/Manila', demo: false };
+var _AU_CAT = { security: ['🔐', 'Security', 'var(--purple)', 'var(--s2)'], create: ['＋', 'Created', 'var(--green)', 'var(--gbg)'], change: ['✎', 'Changed', 'var(--brand)', 'var(--brand-l)'], delete: ['✕', 'Deleted', 'var(--red)', 'var(--rbg)'],
+  void: ['↺', 'Voided', 'var(--red)', 'var(--rbg)'], override: ['⚠', 'Override', 'var(--amber)', 'var(--abg)'], export: ['↓', 'Export', 'var(--amber)', 'var(--abg)'], system: ['⚙', 'System', 'var(--muted)', 'var(--s2)'] };
+var _AU_SEV = { info: 'var(--muted)', warning: 'var(--amber)', critical: 'var(--red)' };
+function _auIsAdmin() { var r = getCurrentRole(); return r === 'Admin' || r === 'Super Admin'; }
+function _auTime(iso, long) {
+  try { return new Intl.DateTimeFormat('en-GB', { timeZone: _ramsTz(), day: '2-digit', month: 'short', year: long ? 'numeric' : undefined, hour: '2-digit', minute: '2-digit', second: long ? '2-digit' : undefined, hour12: false }).format(new Date(iso)); }
+  catch (e) { return String(iso || ''); }
+}
+function _auParams(extra) {
+  var p = [], add = function(k, v) { if (v !== '' && v !== null && v !== undefined) p.push(k + '=' + encodeURIComponent(v)); };
+  Object.keys(_au.f).forEach(function(k) { add(k, _au.f[k]); });
+  Object.keys(extra || {}).forEach(function(k) { add(k, extra[k]); });
+  return p.join('&');
+}
+function renderAudit() {
+  var box = document.getElementById('audit-log'); if (!box) return;
+  ['audit-verify-btn', 'audit-archive-btn'].forEach(function(i) { var b = document.getElementById(i); if (b) b.style.display = _auIsAdmin() && _isLiveSession() ? '' : 'none'; });
+  if (!_isLiveSession()) { _au.demo = true; _au.entries = _auLocal(); _au.total = { count: _au.entries.length }; _au.cursor = null; _auPaint(); return; }
+  _au.demo = false;
+  if (_au.entries.length) _auPaint(); else box.innerHTML = '<div class="empty-state" style="padding:40px 0"><div class="empty-title">Loading the audit trail…</div></div>';
+  clearTimeout(_au.t); _au.t = setTimeout(function() { _auLoad(true); _auLoadSummary(); if (!_au.meta) _auLoadMeta(); }, 20);
+}
+async function fetchAudit() { if (typeof currentPage !== 'undefined' && currentPage === 'audit' && _isLiveSession()) { _auLoad(true); _auLoadSummary(); } }
+function _updateAuditDOM() { _auPaint(); }
+async function _auLoad(reset) {
+  if (!_isLiveSession()) return;
+  var seq = ++_au.seq;
+  var r = await apiFetch('/audit-trail?' + _auParams({ limit: 50, cursor: reset ? '' : _au.cursor, _: Date.now() }));
+  if (seq !== _au.seq) return;
+  _au.loadingMore = false;
+  if (!r.ok) { _au.err = _acctMsg(r, 'Could not load the audit trail'); if (reset) _au.entries = []; _auPaint(); return; }
+  _au.err = ''; _au.tz = r.data.tz || _au.tz;
+  _au.entries = reset ? r.data.entries : _au.entries.concat(r.data.entries);
+  _au.cursor = r.data.next_cursor; if (r.data.total) _au.total = r.data.total;
+  _auPaint();
+}
+async function _auLoadSummary() {
+  var r = await apiFetch('/audit-trail/summary?days=' + _au.days + '&_=' + Date.now());
+  if (r.ok && r.data && r.data.counts) { _au.summary = r.data; _auPaintSummary(); }
+}
+async function _auLoadMeta() {
+  var r = await apiFetch('/audit-trail/meta?_=' + Date.now());
   if (!r.ok) return;
-  _markFresh('audit');
-  DB.auditLog = r.data.map(function(row) {
-    return { id:row.id, action:row.action, entity:row.entity||'', detail:row.detail||'',
-             user:row.user_name||'System', time:new Date(row.created_at).toLocaleString(), type:(row.action||'').toLowerCase() };
+  _au.meta = r.data; var m = r.data;
+  var fill = function(id, first, items) { var el = document.getElementById(id); if (!el) return; var v = el.value; el.innerHTML = '<option value="">' + first + '</option>' + items.join(''); el.value = v; };
+  fill('audit-cat-filter', 'All categories', m.categories.map(function(c) { return '<option value="' + escapeHtml(c.key) + '">' + escapeHtml(c.label) + '</option>'; }));
+  fill('audit-action-filter', 'All actions', m.actions.map(function(a) { return '<option value="' + escapeHtml(a.action) + '">' + escapeHtml(a.label) + ' (' + a.n + ')</option>'; }));
+  fill('audit-user-filter', 'All users', m.users.filter(function(u) { return u.id; }).map(function(u) { return '<option value="' + escapeHtml(u.id) + '">' + escapeHtml(u.name) + '</option>'; }));
+  fill('audit-entity-filter', 'All records', m.entities.map(function(e) { return '<option value="' + escapeHtml(e.entity) + '">' + escapeHtml(e.entity) + '</option>'; }));
+}
+function auditFilterChanged() {
+  var v = function(id) { var el = document.getElementById(id); return el ? el.value : ''; };
+  var keep = { entity_id: _au.f.entity_id, request_id: _au.f.request_id };
+  _au.f = { q: v('audit-search').trim(), category: v('audit-cat-filter'), action: v('audit-action-filter'), user_id: v('audit-user-filter'), entity: v('audit-entity-filter'), severity: v('audit-sev-filter'),
+    from: v('audit-from'), to: v('audit-to'), entity_id: keep.entity_id, request_id: keep.request_id };
+  _au.cursor = null; renderAudit();
+}
+function auditReset() {
+  _au.f = { q: '', category: '', action: '', user_id: '', entity: '', severity: '', from: '', to: '', entity_id: '', request_id: '' };
+  ['audit-search', 'audit-cat-filter', 'audit-action-filter', 'audit-user-filter', 'audit-entity-filter', 'audit-sev-filter', 'audit-from', 'audit-to'].forEach(function(i) { var el = document.getElementById(i); if (el) el.value = ''; });
+  _au.cursor = null; renderAudit();
+}
+function auditQuick(kind) {                                       // summary tiles → filters
+  var f = { total: {}, logins: { action: 'LOGIN' }, failed: { action: 'LOGIN_FAILED' }, denied: { action: 'ACCESS_DENIED' }, deletes: { category: 'delete' }, voids: { category: 'void' }, overrides: { category: 'override' },
+    exports: { category: 'export' }, security: { category: 'security' }, attention: { severity: 'attention' } }[kind] || {};
+  var d = new Date(), today = _ymd(d), from = _ymd(new Date(d.getTime() - (_au.days - 1) * 86400000));
+  auditReset(); Object.keys(f).forEach(function(k) { _au.f[k] = f[k]; }); _au.f.from = from; _au.f.to = today;
+  ['audit-cat-filter', 'audit-action-filter', 'audit-sev-filter'].forEach(function(id) { var el = document.getElementById(id); if (el) el.value = id === 'audit-cat-filter' ? (_au.f.category || '') : id === 'audit-action-filter' ? (_au.f.action || '') : (_au.f.severity || ''); });
+  var a = document.getElementById('audit-from'), b = document.getElementById('audit-to'); if (a) a.value = from; if (b) b.value = today;
+  renderAudit();
+}
+function auditSetDays(n) { _au.days = n; _auLoadSummary(); }
+function _auLocal() {                                              // demo mode: entries kept on this device
+  var q = (_au.f.q || '').toLowerCase();
+  return (DB.auditLog || []).filter(function(l) { return !q || ((l.detail || '') + (l.user || '') + (l.entity || '') + (l.action || '')).toLowerCase().indexOf(q) >= 0; }).map(function(l, i) {
+    return { id: 'local-' + i, seq: i, at: null, time_text: l.time, user: { name: l.user || 'System', role: '' }, action: l.action || '', label: (l.action || '').charAt(0).toUpperCase() + (l.action || '').slice(1).toLowerCase(), category: /delete/i.test(l.action) ? 'delete' : /create|add/i.test(l.action) ? 'create' : /export/i.test(l.action) ? 'export' : 'change', severity: 'info', entity: l.entity || '', entity_label: '', detail: l.detail || '', sealed: false, link: null };
   });
-  // Only update the audit DOM — never call renderAudit() (avoids recursion)
-  if (currentPage === 'audit') _updateAuditDOM();
+}
+function _auPaintSummary() {
+  var el = document.getElementById('audit-summary'); if (!el) return;
+  var s = _au.summary; if (!s) { el.innerHTML = ''; return; }
+  var c = s.counts, tile = function(k, label, n, warn) { return '<button type="button" class="btn btn-s btn-xs" data-au-quick="' + k + '" style="' + (warn && n ? 'color:var(--red);border-color:var(--red)' : '') + '">' + label + ' <b>' + n + '</b></button>'; };
+  var rng = function(n, l) { return '<button type="button" class="btn btn-xs ' + (_au.days === n ? 'btn-p' : 'btn-ghost') + '" data-au-days="' + n + '">' + l + '</button>'; };
+  var w = s.writer || {}, i = s.integrity || {};
+  el.innerHTML = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' + rng(1, 'Today') + rng(7, '7 days') + rng(30, '30 days') + '<span style="width:8px"></span>' +
+    tile('total', 'Entries', c.total) + tile('logins', 'Logins', c.logins) + tile('failed', 'Failed logins', c.failed_logins, true) + tile('denied', 'Access denied', c.denied, true) + tile('deletes', 'Deletes', c.deletes) +
+    tile('voids', 'Voids', c.voids) + tile('overrides', 'Overrides', c.overrides) + tile('exports', 'Exports', c.exports) + tile('attention', 'Needs attention', c.attention, true) + '</div>' +
+    '<div style="font-size:11.5px;color:var(--muted);margin-top:6px">' + (i.sealed_through ? '🔗 ' + i.sealed_through + ' entries sealed in the integrity chain' + (i.unsealed ? ' · ' + i.unsealed + ' newest still being sealed' : '') : 'Integrity chain starts with the next minute') +
+    ' · times in ' + escapeHtml(_ramsTz()) + (w.ok === false ? ' · <b style="color:var(--red)">⚠ audit writing is degraded (' + w.pending + ' queued) — ' + escapeHtml(w.last_error || '') + '</b>' : '') + '</div>';
+  el.onclick = function(e) { var q = e.target.closest('[data-au-quick]'), d = e.target.closest('[data-au-days]'); if (q) auditQuick(q.getAttribute('data-au-quick')); else if (d) auditSetDays(parseInt(d.getAttribute('data-au-days'))); };
+}
+function _auPaint() {
+  var el = document.getElementById('audit-log'); if (!el) return;
+  _auPaintSummary();
+  var banner = document.getElementById('audit-banner');
+  if (banner) banner.innerHTML = _au.demo ? '<div style="padding:8px 12px;border-radius:8px;background:var(--abg);color:var(--amber);font-size:12.5px;margin-bottom:10px">Demo data — these entries exist only on this device. Sign in to the live system to see the real, tamper-evident audit trail.</div>' : '';
+  var chips = [];
+  if (_au.f.entity_id) chips.push('<span class="pill" style="font-size:11.5px">This record only <a href="#" data-au-clear="entity_id" style="margin-left:6px">✕</a></span>');
+  if (_au.f.request_id) chips.push('<span class="pill" style="font-size:11.5px">Same request <a href="#" data-au-clear="request_id" style="margin-left:6px">✕</a></span>');
+  var chipBox = document.getElementById('audit-chips'); if (chipBox) { chipBox.innerHTML = chips.join(' '); chipBox.onclick = function(e) { var a = e.target.closest('[data-au-clear]'); if (a) { e.preventDefault(); _au.f[a.getAttribute('data-au-clear')] = ''; renderAudit(); } }; }
+  if (_au.err && !_au.entries.length) { el.innerHTML = '<div class="empty-state" style="padding:40px 0"><div class="empty-title" style="color:var(--red)">' + escapeHtml(_au.err) + '</div><button class="btn btn-p btn-sm" onclick="renderAudit()">Try again</button></div>'; return; }
+  if (!_au.entries.length) { el.innerHTML = '<div class="empty-state" style="padding:40px 0"><div class="empty-icon">📋</div><div class="empty-title">No entries found</div><div class="empty-sub">Try adjusting your filters.</div></div>'; return; }
+  var rows = _au.entries.map(function(l, i) {
+    var cat = _AU_CAT[l.category] || _AU_CAT.change, sev = _AU_SEV[l.severity] || _AU_SEV.info;
+    var rec = l.entity_label ? escapeHtml(l.entity_label) : (l.entity ? '<span style="color:var(--muted)">' + escapeHtml(l.entity) + '</span>' : '—');
+    return '<tr data-au-open="' + escapeHtml(l.id) + '" style="border-bottom:1px solid var(--border);background:' + (i % 2 === 0 ? 'var(--surface)' : 'var(--s2)') + ';cursor:pointer">' +
+      '<td style="padding:10px 16px;font-size:11.5px;font-family:monospace;color:var(--muted);white-space:nowrap" title="' + escapeHtml(l.at || '') + '">' + escapeHtml(l.at ? _auTime(l.at) : (l.time_text || '—')) + '</td>' +
+      '<td style="padding:10px 16px;white-space:nowrap"><span style="display:inline-flex;align-items:center;gap:6px;background:' + cat[3] + ';color:' + cat[2] + ';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700" title="' + escapeHtml(cat[1]) + '">' +
+        '<span style="width:7px;height:7px;border-radius:50%;background:' + sev + ';display:inline-block"></span>' + cat[0] + ' ' + escapeHtml(l.label || l.action) + '</span></td>' +
+      '<td style="padding:10px 16px;font-size:13px;max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHtml(l.detail) + '">' + (escapeHtml(l.detail) || '—') + '</td>' +
+      '<td style="padding:10px 16px;font-size:12px;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis">' + rec + '</td>' +
+      '<td style="padding:10px 16px;font-size:12px;font-weight:600;white-space:nowrap">' + escapeHtml(l.user && l.user.name || 'System') + '</td></tr>';
+  }).join('');
+  var shown = _au.entries.length, tot = _au.total ? _au.total.count + (_au.total.capped ? '+' : '') : '';
+  el.innerHTML = '<table style="width:100%;border-collapse:collapse"><thead><tr style="border-bottom:2px solid var(--border);background:var(--s2)">' +
+    ['WHEN', 'ACTION', 'DETAILS', 'RECORD', 'USER'].map(function(h) { return '<th style="padding:10px 16px;font-size:11px;font-weight:700;color:var(--muted);text-align:left">' + h + '</th>'; }).join('') + '</tr></thead><tbody>' + rows + '</tbody></table>' +
+    '<div style="display:flex;align-items:center;gap:12px;justify-content:center;padding:12px;font-size:12px;color:var(--muted)">Showing ' + shown + (tot ? ' of ' + tot : '') + ' entries' +
+    (_au.cursor ? ' <button class="btn btn-s btn-xs" data-au-more="1"' + (_au.loadingMore ? ' disabled' : '') + '>Load more</button>' : '') + '</div>';
+  el.onclick = function(e) {
+    if (e.target.closest('[data-au-more]')) { _au.loadingMore = true; _auLoad(false); return; }
+    var r = e.target.closest('[data-au-open]'); if (r) auditOpen(r.getAttribute('data-au-open'));
+  };
 }
 
-// ── Direct DOM update for audit — no filter logic, just rebuild table ──
-function _updateAuditDOM() {
-  var el = document.getElementById('audit-log');
-  if (!el) return;
-  var q  = (document.getElementById('audit-search')        || {value:''}).value.toLowerCase();
-  var tf = (document.getElementById('audit-type-filter')   || {value:''}).value.toLowerCase();
-  var ef = (document.getElementById('audit-entity-filter') || {value:''}).value.toLowerCase();
-  var logs = DB.auditLog.slice();
-  if (q)  logs = logs.filter(function(l){ return (l.detail+l.user+l.entity).toLowerCase().includes(q); });
-  if (tf) logs = logs.filter(function(l){ return (l.type||'').toLowerCase() === tf; });
-  if (ef) logs = logs.filter(function(l){ return (l.entity||'').toLowerCase().includes(ef); });
-  var typeColors = { create:'var(--gbg)', update:'var(--brand-l)', delete:'var(--rbg)', export:'var(--abg)' };
-  var typeText   = { create:'var(--green)', update:'var(--brand)', delete:'var(--red)', export:'var(--amber)' };
-  var typeIcons  = { create:'＋', update:'✎', delete:'✕', export:'↓', adjustment:'⚙' };
-  if (!logs.length) {
-    el.innerHTML = '<div class="empty-state" style="padding:40px 0"><div class="empty-icon">📋</div><div class="empty-title">No entries found</div><div class="empty-sub">Try adjusting your filters.</div></div>';
-    return;
+// ── detail ────────────────────────────────────────────────────────────
+function auditOpen(id) {
+  var l = (_au.entries || []).filter(function(x) { return x.id === id; })[0]; if (!l) return;
+  _au.open = l;
+  var cat = _AU_CAT[l.category] || _AU_CAT.change, sev = _AU_SEV[l.severity] || _AU_SEV.info;
+  var row = function(k, v) { return v ? '<div style="display:flex;gap:10px;padding:5px 0;border-top:1px solid var(--border);font-size:12.5px"><div style="width:110px;color:var(--muted);flex-shrink:0">' + k + '</div><div style="flex:1;min-width:0;word-break:break-word">' + v + '</div></div>' : ''; };
+  var keys = {}; Object.keys(l.before || {}).concat(Object.keys(l.after || {})).forEach(function(k) { keys[k] = 1; });
+  var cell = function(v) { return v === null || v === undefined ? '<span style="color:var(--muted)">—</span>' : escapeHtml(typeof v === 'object' ? JSON.stringify(v) : String(v)); };
+  var diff = Object.keys(keys).length ? '<div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.07em;margin:14px 0 6px">BEFORE → AFTER</div><table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="color:var(--muted);font-size:11px;text-align:left"><th style="padding:4px 8px">Field</th><th style="padding:4px 8px">Before</th><th style="padding:4px 8px">After</th></tr></thead><tbody>' +
+    Object.keys(keys).map(function(k) { var b = (l.before || {})[k], a = (l.after || {})[k], ch = JSON.stringify(b) !== JSON.stringify(a); return '<tr style="border-top:1px solid var(--border);' + (ch ? 'background:var(--abg)' : '') + '"><td style="padding:5px 8px;font-weight:600">' + escapeHtml(k) + '</td><td style="padding:5px 8px">' + cell(b) + '</td><td style="padding:5px 8px">' + cell(a) + '</td></tr>'; }).join('') + '</tbody></table>' : '';
+  document.getElementById('au-title').innerHTML = escapeHtml(l.label || l.action) + ' <span style="font-size:11px;font-weight:700;color:' + sev + ';border:1px solid ' + sev + ';border-radius:20px;padding:1px 8px;margin-left:6px">' + escapeHtml(l.severity || 'info') + '</span>';
+  document.getElementById('au-sub').textContent = (cat[1]) + ' · ' + (l.at ? _auTime(l.at, true) + ' (' + _ramsTz() + ')' : (l.time_text || ''));
+  document.getElementById('au-body').innerHTML =
+    '<div style="white-space:pre-wrap;font-size:13.5px;line-height:1.5;margin-bottom:10px">' + escapeHtml(l.detail || '—') + '</div>' +
+    row('Who', escapeHtml(l.user && l.user.name || 'System') + (l.user && l.user.role ? ' <span style="color:var(--muted)">(' + escapeHtml(l.user.role) + ')</span>' : '')) +
+    row('Record', l.entity ? escapeHtml(l.entity_label || '') + ' <span style="color:var(--muted)">' + escapeHtml(l.entity) + (l.entity_id ? ' · ' + escapeHtml(l.entity_id) : '') + '</span>' : '') +
+    row('From', escapeHtml(l.ip || '') + (l.user_agent ? '<div style="color:var(--muted);font-size:11.5px">' + escapeHtml(l.user_agent) + '</div>' : '')) +
+    row('UTC time', escapeHtml(l.at || '')) + row('Request', l.request_id ? '<span style="font-family:monospace">' + escapeHtml(l.request_id) + '</span>' : '') +
+    row('Integrity', l.sealed ? '🔗 sealed in the chain (#' + l.chain_no + ')' : (_au.demo ? '' : 'not sealed yet — sealed within a minute')) + diff;
+  var acts = [];
+  if (l.link) acts.push('<button class="btn btn-p btn-sm" data-au-act="record">Open the record →</button>');
+  if (l.entity_id) acts.push('<button class="btn btn-s btn-sm" data-au-act="history">Everything for this record</button>');
+  if (l.request_id) acts.push('<button class="btn btn-s btn-sm" data-au-act="request">Same request</button>');
+  acts.push('<button class="btn btn-ghost btn-sm" data-au-act="copy">Copy</button>');
+  document.getElementById('au-actions').innerHTML = acts.join(' ');
+  var ov = document.getElementById('overlay-audit');
+  ov.onclick = function(e) {
+    var b = e.target.closest('[data-au-act]'); if (!b) { closeOverlayIfBg(e, 'overlay-audit'); return; }
+    var a = b.getAttribute('data-au-act');
+    if (a === 'record') { closeOverlay('overlay-audit'); goFocus(l.link); }
+    else if (a === 'history') { closeOverlay('overlay-audit'); auditReset(); _au.f.entity_id = l.entity_id; _au.f.entity = l.entity; renderAudit(); }
+    else if (a === 'request') { closeOverlay('overlay-audit'); auditReset(); _au.f.request_id = l.request_id; renderAudit(); }
+    else if (a === 'copy') { try { navigator.clipboard.writeText(JSON.stringify(l, null, 2)); toast('Copied', 'success'); } catch (x) { toast('Could not copy', 'error'); } }
+  };
+  openOverlay('overlay-audit');
+}
+
+// ── export / integrity / archive ──────────────────────────────────────
+async function auditExport() {
+  if (!_isLiveSession()) { exportData('audit'); return; }
+  var f = await _srvFile('/audit-trail/export?' + _auParams());
+  if (!f.ok) { toast(f.message, 'error'); return; }
+  _saveBlob(f.blob, f.filename || 'audit-trail.csv'); toast('Exported ' + (f.filename || 'audit-trail.csv'), 'success');
+}
+async function auditVerify() {
+  if (!_isLiveSession()) return;
+  toast('Checking the integrity chain…', 'info');
+  var r = await apiFetch('/audit-trail/verify', { method: 'POST', body: JSON.stringify({ sealAll: true }) });
+  if (!r.ok) { toast(_acctMsg(r, 'Could not verify'), 'error'); return; }
+  var d = r.data;
+  _joChoice(d.ok ? 'Audit log verified ✓' : 'Audit log integrity problem', d.ok ? d.checked + ' sealed entries were recomputed and all match. Nothing was changed, removed or reordered.' :
+    'The chain breaks at entry #' + d.first_break.chain_no + ': ' + d.first_break.reason + '.\n\nThis means the stored log no longer matches what was written. Keep a copy of the database and investigate.', [{ key: 'ok', label: 'Close', primary: true }]);
+  _auLoadSummary(); _auLoad(true);
+}
+async function auditArchive() {
+  if (!_isLiveSession() || !_auIsAdmin()) return;
+  var d = window.prompt('Archive audit entries OLDER than this date (YYYY-MM-DD).\nEntries newer than ' + ((_au.meta && _au.meta.min_retention_days) || 365) + ' days cannot be archived.', '');
+  if (!d) return; d = d.trim();
+  var pv = await apiFetch('/audit-trail/archive/preview?before=' + encodeURIComponent(d) + '&_=' + Date.now());
+  if (!pv.ok) { toast(_acctMsg(pv, 'Cannot archive'), 'error'); return; }
+  if (!pv.data.count) { toast('Nothing older than ' + d + ' to archive', 'info'); return; }
+  var k = await _joChoice('Archive ' + pv.data.count + ' entries?', 'Entries from ' + String(pv.data.oldest).slice(0, 10) + ' to ' + String(pv.data.newest).slice(0, 10) + ' will be removed from the live log. Download the CSV first and keep it safe — this cannot be undone. The archive itself is recorded as a critical entry.',
+    [{ key: 'csv', label: 'Download CSV first', primary: true }, { key: 'go', label: 'Archive now', danger: true }, { key: 'no', label: 'Cancel' }]);
+  if (k === 'csv') {
+    var f = await _srvFile('/audit-trail/archive/export?before=' + encodeURIComponent(d));
+    if (!f.ok) { toast(f.message, 'error'); return; }
+    _saveBlob(f.blob, f.filename || 'audit-archive.csv');
+    k = await _joChoice('CSV downloaded', 'Saved ' + pv.data.count + ' entries. Remove them from the live log now?', [{ key: 'go', label: 'Archive now', danger: true }, { key: 'no', label: 'Not now' }]);
   }
-  var rows = logs.map(function(l, i) {
-    var bg   = i%2===0?'var(--surface)':'var(--s2)';
-    var tCol = typeColors[l.type]||'var(--s2)';
-    var tTxt = typeText[l.type]  ||'var(--muted)';
-    var tIco = typeIcons[l.type] ||'•';
-    return '<tr style="border-bottom:1px solid var(--border);background:'+bg+'">' +
-      '<td style="padding:10px 16px;white-space:nowrap">' +
-        '<div style="display:inline-flex;align-items:center;gap:6px;background:'+tCol+';color:'+tTxt+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700">'+tIco+' '+(l.action||'').toUpperCase()+'</div>' +
-      '</td>' +
-      '<td style="padding:10px 16px;font-size:13px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(l.detail||'')+'">'+( l.detail||'—')+'</td>' +
-      '<td style="padding:10px 16px;font-size:12px;color:var(--muted);white-space:nowrap">'+(l.entity||'—')+'</td>' +
-      '<td style="padding:10px 16px;font-size:12px;font-weight:600;white-space:nowrap">'+(l.user||'System')+'</td>' +
-      '<td style="padding:10px 16px;font-size:11px;font-family:monospace;color:var(--muted);text-align:right;white-space:nowrap">'+(l.time||'—')+'</td>' +
-    '</tr>';
-  }).join('');
-  el.innerHTML = '<table style="width:100%;border-collapse:collapse">' +
-    '<thead><tr style="border-bottom:2px solid var(--border);background:var(--s2)">' +
-      '<th style="padding:10px 16px;font-size:11px;font-weight:700;color:var(--muted);text-align:left">ACTION</th>' +
-      '<th style="padding:10px 16px;font-size:11px;font-weight:700;color:var(--muted);text-align:left">DETAILS</th>' +
-      '<th style="padding:10px 16px;font-size:11px;font-weight:700;color:var(--muted);text-align:left">ENTITY</th>' +
-      '<th style="padding:10px 16px;font-size:11px;font-weight:700;color:var(--muted);text-align:left">USER</th>' +
-      '<th style="padding:10px 16px;font-size:11px;font-weight:700;color:var(--muted);text-align:right">TIME</th>' +
-    '</tr></thead><tbody>' + rows + '</tbody></table>';
+  if (k !== 'go') return;
+  var why = _askReason('Why are ' + pv.data.count + ' audit entries being archived?', 5); if (!why) return;
+  var r = await apiFetch('/audit-trail/archive', { method: 'POST', body: JSON.stringify({ before: d, reason: why, confirm_count: pv.data.count }) });
+  if (!r.ok) { toast(_acctMsg(r, 'Archive failed'), 'error'); return; }
+  toast('Archived ' + r.data.archived + ' entries', 'success'); renderAudit();
 }
 
 // ── _resolveAgentNames — fix blank agent names by UUID → DB.agents lookup ────────────
@@ -7009,6 +7166,7 @@ function genId(prefix) {
   return prefix + '-' + String((arr ? arr.length : 0) + 1).padStart(3,'0');
 }
 function addAudit(action, entity, detail) {
+  if (_isLiveSession()) return;        // live sessions: the server records every action itself (tamper-evident); this local list is demo-only
   var _auditUser = (window._ramsSessionUser && window._ramsSessionUser.name) ? window._ramsSessionUser.name : 'System';
   DB.auditLog.unshift({ id: `AUD-${String(DB.auditLog.length+1).padStart(3,'0')}`, action, entity, detail, user: _auditUser, time: new Date().toLocaleString('en-PH',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}), type: action.toLowerCase() });
   autosave('auditLog');
@@ -10644,20 +10802,6 @@ function filterExpenses(q) {
 let auditSearchQ = '', auditActionFilter = '';
 function filterAudit(q) { auditSearchQ = q; renderAudit(); }
 function filterAuditAction(a) { auditActionFilter = a; renderAudit(); }
-function renderAudit() {
-  // Render local data immediately via shared DOM updater
-  // Comment kept for clarity: fetchAudit() must NOT call renderAudit()
-  _updateAuditDOM();
-}
-
-function clearAudit() {
-  if (!confirm('Clear all local audit log entries? This cannot be undone.')) return;
-  DB.auditLog = [];
-  autosave('auditLog');
-  renderAudit();
-  toast('Audit log cleared', 'success');
-}
-
 // ════════════════════════════════════════════════════════
 // CHAT
 // ════════════════════════════════════════════════════════
