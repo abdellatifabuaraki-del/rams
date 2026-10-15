@@ -1359,24 +1359,31 @@ button[disabled][data-rbac-locked] {
     ══════════════════════════════════════ -->
     <div class="page content-pad" id="page-jobs">
       <div class="pg-hdr">
-        <div class="pg-hdr-l"><h1>Job Orders</h1><p>Active job postings and deployment requests.</p></div>
+        <div class="pg-hdr-l"><h1>Job Orders</h1><p>Employers, positions and slots — slots fill automatically from the pipeline.</p></div>
         <div class="pg-hdr-r">
-          <button class="btn btn-s btn-sm" onclick="exportData('jobs')">Export CSV</button>
+          <button class="btn btn-s btn-sm" onclick="_joPreview()" title="What visitors of goldenfaith.net see right now">🌐 Website preview</button>
+          <button class="btn btn-s btn-sm" onclick="_joExport()">Export CSV</button>
           <button class="btn btn-p btn-sm" onclick="openAddJob()">+ New Job Order</button>
         </div>
       </div>
+      <div id="job-summary" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px"></div>
       <div class="filter-bar">
         <div class="filter-search">
           <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input type="text" id="job-search" placeholder="Search jobs…" oninput="filterJobs()" aria-label="Search jobs">
+          <input type="text" id="job-search" placeholder="Search employer, position, country or JO-ref…" oninput="clearTimeout(window._joT);window._joT=setTimeout(filterJobs,250)" aria-label="Search job orders">
         </div>
         <select class="filter-select" id="job-status-filter" onchange="filterJobs()" aria-label="Filter by status">
-          <option value="">All Status</option>
           <option value="active">Active (Open + In Progress)</option>
-          <option>Open</option><option>In Progress</option><option>Filled</option><option>Closed</option>
+          <option value="">All orders</option>
+          <option value="Open">Open</option><option value="In Progress">In Progress</option><option value="On Hold">On Hold</option><option value="Filled">Filled</option><option value="Closed">Closed</option>
+          <option value="expiring">Expiring in 7 days</option><option value="unfilled">Has open slots</option><option value="Archived">Archived</option>
         </select>
+        <select class="filter-select" id="job-country-filter" onchange="filterJobs()" aria-label="Filter by country"><option value="">All countries</option></select>
+        <select class="filter-select" id="job-web-filter" onchange="filterJobs()" aria-label="Website"><option value="">Website: any</option><option value="yes">On website now</option><option value="no">Not on website</option></select>
+        <select class="filter-select" id="job-sort" onchange="filterJobs()" aria-label="Sort"><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="deadline">Deadline (soonest)</option><option value="fill">Least filled</option><option value="employer">Employer A–Z</option><option value="country">Country A–Z</option></select>
       </div>
       <div id="job-cards-container" style="display:flex;flex-direction:column;gap:10px"></div>
+      <div id="job-pager" style="display:flex;gap:10px;align-items:center;justify-content:center;margin-top:12px"></div>
     </div>
 
     <!-- ══════════════════════════════════════
@@ -2804,6 +2811,8 @@ button[disabled][data-rbac-locked] {
     <div class="modal-body">
       <input type="hidden" id="j-edit-id" value="">
       <input type="hidden" id="j-edit-dbid" value="">
+      <input type="hidden" id="j-version" value="">
+      <div id="j-errors" style="display:none;margin-bottom:12px;padding:9px 12px;border-radius:8px;background:var(--rbg,#fdecec);color:var(--red);font-size:12.5px;font-weight:600"></div>
 
       <!-- Employer Info -->
       <div style="background:var(--s2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:18px">
@@ -2829,19 +2838,21 @@ button[disabled][data-rbac-locked] {
           </div>
           <div class="form-group">
             <label class="form-label">Application Deadline</label>
-            <input type="date" class="form-input" id="j-deadline">
+            <input type="date" class="form-input" id="j-deadline" title="Past this date the order closes automatically">
           </div>
         </div>
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">Status</label>
-            <select class="form-input" id="j-status">
-              <option value="Open">Open</option>
-              <option value="Filled">Filled</option>
-              <option value="Closed">Closed</option>
+            <select class="form-input" id="j-status" onchange="_joStatusChanged()">
+              <option value="Active">Active — Open / In Progress / Filled follow the applicants</option>
               <option value="On Hold">On Hold</option>
+              <option value="Closed">Closed</option>
             </select>
           </div>
+        </div>
+        <div class="form-row" id="j-reason-row" style="display:none">
+          <div class="form-group"><label class="form-label">Reason <span class="req">*</span></label><input type="text" class="form-input" id="j-reason" maxlength="300" placeholder="Why is this order being closed / put on hold? (recorded in the audit trail)"></div>
         </div>
         <div class="form-row">
           <div class="form-group" style="display:flex;align-items:center;gap:10px;padding-top:6px">
@@ -2869,6 +2880,18 @@ button[disabled][data-rbac-locked] {
       <button class="btn btn-ghost" onclick="closeOverlay('overlay-job')">Cancel</button>
       <button class="btn btn-p" id="j-submit-btn" onclick="saveJob()">Create Job Order</button>
     </div>
+  </div>
+</div>
+
+<!-- Job order detail -->
+<div class="overlay" id="overlay-jodetail" role="dialog" aria-modal="true" aria-label="Job order details">
+  <div class="modal" style="max-width:820px;max-height:90vh;overflow-y:auto">
+    <div class="modal-hdr">
+      <div><h2 id="jd-title"></h2><p id="jd-sub"></p></div>
+      <button class="close-btn" onclick="closeOverlay('overlay-jodetail')" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body" id="jd-body"></div>
+    <div class="modal-foot" style="justify-content:flex-start;flex-wrap:wrap;gap:6px" id="jd-actions"></div>
   </div>
 </div>
 
@@ -3465,12 +3488,15 @@ function mapJob(row) {
     country:        row.destination || row.country || '',
     slots:          parseInt(row.slots) || 0,
     filled:         parseInt(row.filled) || 0,
-    salary:         row.salary || (row.salary_min ? '₱' + Number(row.salary_min).toLocaleString() + '/mo' : ''),
+    salary:         row.salary || (row.salary_min ? Number(row.salary_min).toLocaleString() + '/mo' : ''),
     status:         row.status || 'Open',
     category:       row.category || '',
     deadline:       row.deadline ? row.deadline.slice(0, 10) : '',
     employerFeeUSD: parseFloat(row.employer_fee_usd || row.employerFeeUSD) || 0,
     postToWebsite:  row.post_to_website !== false, // default true — matches DB column default
+    orderId:        row.order_id || '',
+    orderRef:       row.order_ref || '',
+    archived:       !!row.archived_at,
     _dbId:          row.id,
   };
 }
@@ -4121,11 +4147,12 @@ async function fetchApplicants() {
 async function fetchJobs() {
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
   if (!isLive) return;
-  var r = await apiFetch('/jobs?limit=200');
+  var r = await apiFetch('/jobs?limit=2000');
   if (!r.ok) return;
   _markFresh('jobs');
   DB.jobs = r.data.map(mapJob);
   autosave('jobs');
+  _joSidebarFromJobs();
   if (currentPage === 'jobs')       renderJobs();
   if (currentPage === 'dashboard')  renderDashboard();
 }
@@ -4256,7 +4283,7 @@ async function syncAllFromAPI() {
   if (!isLive) return;
   var [apps, jobs, expenses, users, audit, agentsR, efR, alR, commR, crR, olR, compR, ofR] = await Promise.all([
     apiFetch('/applicants?limit=500'),
-    apiFetch('/jobs?limit=200'),
+    apiFetch('/jobs?limit=2000'),
     apiFetch('/expenses?limit=500'),
     apiFetch('/users'),
     apiFetch('/audit?limit=100'),
@@ -4689,7 +4716,7 @@ function startPolling() {
         }
       }
     }).catch(function(){});
-    apiFetch('/jobs?limit=200').then(function(r) {
+    apiFetch('/jobs?limit=2000').then(function(r) {
       if (r && r.ok && Array.isArray(r.data)) {
         DB.jobs = r.data.map(mapJob);
         autosave('jobs');
@@ -5835,17 +5862,14 @@ function navigateFromNotif(id) {
   // ── Job Orders ──────────────────────────────────────────────────────
   } else if (lnk.page === 'jobs' && lnk.id) {
     nav('jobs');
-    setTimeout(function() {
-      var row = document.querySelector('[data-job-id="' + lnk.id + '"]');
-      if (row) { row.scrollIntoView({ behavior: 'smooth', block: 'center' }); row.classList.add('highlight-row'); setTimeout(function(){ row.classList.remove('highlight-row'); }, 2500); }
-    }, DELAY);
+    setTimeout(function() { _joOpen(lnk.id); }, DELAY);
 
   } else if (lnk.page === 'jobs' && lnk.employer) {
     // New job order notification — filter by employer name
     nav('jobs');
     setTimeout(function() {
       var jobFilter = document.getElementById('job-search');
-      if (jobFilter) { jobFilter.value = lnk.employer; jobFilter.dispatchEvent(new Event('input')); }
+      if (jobFilter) { jobFilter.value = lnk.employer; filterJobs(); }
     }, DELAY);
 
   } else if (lnk.page === 'jobs') {
@@ -8420,6 +8444,7 @@ function confirmDelete(type, id) {
   if (type === 'document') { _dcVoid(id); return; }   // documents are voided with a reason, never deleted from here
   if (type === 'applicant') { archiveApplicant(id); return; }   // applicants are archived, never deleted from here
   if (type === 'expense') { voidExpense(id); return; }   // expenses are voided with a reason, never deleted
+  if (type === 'job') { var _cj = (DB.jobs || []).find(function(x) { return x.id === id || x._dbId === id; }); _joAct('delete', _cj && _cj.orderId ? _cj.orderId : id); return; }   // job orders are closed / archived; deleting needs a reason and is refused while records are linked
   let name = '';
   if (type==='applicant') { const a=DB.applicants.find(x=>x.id===id); name=a?a.name:id; }
   if (type==='expense') { const e=DB.expenses.find(x=>x.id===id); name=e?e.desc:id; }
@@ -8589,6 +8614,7 @@ function goFocus(spec) {
     if (e === 'complaint' && typeof openComplaintDrawer === 'function') { nav('complaints'); setTimeout(function() { openComplaintDrawer(ids[0]); }, 250); }
     if (e === 'inquiry' && typeof openInquiry === 'function') { nav('inquiries'); setTimeout(function() { openInquiry(ids[0]); }, 250); }
     if (e === 'document') { nav('documents'); setTimeout(function() { _dcOpenById(ids[0]); }, 250); return; }
+    if (e === 'job') { nav('jobs'); setTimeout(function() { _joOpen(ids[0]); }, 250); return; }
     if (e === 'agent' && typeof viewAgentLedger === 'function') { nav('accounting'); setTimeout(function() { viewAgentLedger(ids[0]); }, 250); return; }
   }
   // filters that are not id lists
@@ -9275,10 +9301,453 @@ function clearDocFile() {
 // ════════════════════════════════════════════════════════
 // JOBS
 // ════════════════════════════════════════════════════════
+// ── Job orders are owned by the server (GET /job-orders, POST /job-orders …). This page only shows and asks. ──
+var _jo = { q: '', status: 'active', country: '', sort: 'newest', website: '', page: 1, limit: 50, data: null, err: '', t: null, open: {}, seq: 0, editing: null };
+var _JO_PILL = { 'Open': ['var(--green)', 'var(--gbg)'], 'In Progress': ['var(--brand)', 'var(--brand-l)'], 'On Hold': ['var(--amber)', 'var(--abg)'], 'Filled': ['var(--purple)', 'var(--s2)'],
+  'Closed': ['var(--muted)', 'var(--s2)'], 'Archived': ['var(--muted)', 'var(--s2)'] };
+function _joPill(s) { var c = _JO_PILL[s] || _JO_PILL.Closed; return '<span style="font-size:11px;font-weight:700;color:' + c[0] + ';background:' + c[1] + ';border:1px solid ' + c[0] + ';border-radius:20px;padding:2px 9px;white-space:nowrap">' + escapeHtml(s) + '</span>'; }
+function _joCanManage() { return typeof hasPermission !== 'function' || hasPermission('Manage Job Orders'); }
+function _joCanDelete() { return typeof hasPermission !== 'function' || hasPermission('Delete Job Orders'); }
+function _joBust() { try { Object.keys(_cache || {}).forEach(function(k) { if (/\/(job-orders|jobs)(\?|\/|$)/.test(k)) delete _cache[k]; }); } catch (e) {} if (typeof _lastFetch !== 'undefined') _lastFetch['jobs'] = 0; }
+async function _joCall(path, method, body) {
+  var opts = { method: method || 'POST' };
+  if (body !== undefined && opts.method !== 'GET') opts.body = JSON.stringify(body || {});
+  var r = await apiFetch(path, opts);
+  _joBust();
+  return r;
+}
+function _joSidebar(n) { var el = document.getElementById('sb-job-count'); if (el && n !== undefined && n !== null) el.textContent = n; }
+function _joSidebarFromJobs() {
+  var s = {}; (DB.jobs || []).forEach(function(j) { if (j.status === 'Open' || j.status === 'In Progress') s[j.orderId || ((j.employer || '') + '||' + (j.country || ''))] = 1; });
+  _joSidebar(Object.keys(s).length);
+}
+function _joSoon() { clearTimeout(_jo.soon); _jo.soon = setTimeout(function() { _joBust(); try { fetchJobs(); } catch (e) {} if (typeof currentPage !== 'undefined' && currentPage === 'jobs') _joLoad(); }, 700); }
+
 function filterJobs() {
-  jobFilter = document.getElementById('job-search').value.toLowerCase();
+  var v = function(id) { var el = document.getElementById(id); return el ? el.value : ''; };
+  _jo.q = v('job-search').trim(); _jo.status = v('job-status-filter'); _jo.country = v('job-country-filter'); _jo.sort = v('job-sort') || 'newest'; _jo.website = v('job-web-filter'); _jo.page = 1;
+  if (_focus && _focus.entity === 'job') focusClear(false);
   renderJobs();
 }
+function _joQuery() {
+  var p = [], add = function(k, v) { if (v !== '' && v !== null && v !== undefined) p.push(k + '=' + encodeURIComponent(v)); };
+  var f = _focusOn('job');
+  add('q', _jo.q);
+  if (f && f.ids.length) add('ids', f.ids.join(',')); else { add('status', _jo.status); add('country', _jo.country); add('website', _jo.website); }
+  add('sort', _jo.sort); add('page', _jo.page); add('limit', _jo.limit);
+  return p.join('&');
+}
+function renderJobs() {
+  var box = document.getElementById('job-cards-container'); if (!box) return;
+  if (!_isLiveSession()) { _jo.data = _joLocal(); _joPaint(); return; }
+  if (_jo.data) _joPaint();
+  else box.innerHTML = '<div class="card" style="padding:36px;text-align:center;color:var(--muted);font-size:13px">Loading job orders…</div>';
+  clearTimeout(_jo.t); _jo.t = setTimeout(_joLoad, 30);
+}
+async function _joLoad() {
+  if (!_isLiveSession()) return;
+  var seq = ++_jo.seq;
+  var r = await apiFetch('/job-orders?' + _joQuery() + '&_=' + Date.now());
+  if (seq !== _jo.seq) return;                       // a newer request is already on its way
+  if (!r.ok) { _jo.err = _acctMsg(r, 'Could not load job orders'); if (!_jo.data) _joPaint(); else toast(_jo.err, 'error'); return; }
+  _jo.err = ''; _jo.data = r.data; _joPaint();
+}
+// demo mode: the same screen from the locally held positions
+function _joLocal() {
+  var term = (_jo.q || '').toLowerCase(), g = {}, order = [];
+  _focusFilter('job', DB.jobs || []).forEach(function(j) {
+    var k = (j.employer || '') + '||' + (j.country || '');
+    if (!g[k]) { g[k] = { order_id: k, order_ref: null, employer: j.employer || '', country: j.country || '', category: j.category || '', deadline: j.deadline || null, days_left: null, status: j.status, positions: [], slots: 0, filled: 0, assigned: 0, post_to_website: j.postToWebsite !== false, version: null, local: true }; order.push(k); }
+    var o = g[k]; o.positions.push({ id: j.id, title: j.title, salary: j.salary, slots: j.slots, filled: j.filled, assigned: 0, open_slots: Math.max(0, j.slots - j.filled), employer_fee_usd: j.employerFeeUSD || 0, status: j.status, applicants_total: 0, fees_total: 0 });
+    o.slots += j.slots; o.filled += j.filled;
+  });
+  var list = order.map(function(k) { var o = g[k]; o.open_slots = Math.max(0, o.slots - o.filled); o.pct = o.slots ? Math.min(100, Math.round(o.filled / o.slots * 100)) : 0; return o; })
+    .filter(function(o) { return !term || (o.employer + ' ' + o.country + ' ' + o.positions.map(function(p) { return p.title; }).join(' ')).toLowerCase().indexOf(term) >= 0; })
+    .filter(function(o) { return !_jo.status || (_jo.status === 'active' ? (o.status === 'Open' || o.status === 'In Progress') : o.status === _jo.status); });
+  return { orders: list, total: list.length, page: 1, limit: 500, counts: { active: list.length }, totals: { slots: 0, filled: 0, open_slots: 0 }, filters: { countries: [], employers: [] } };
+}
+
+function _joDeadline(o) {
+  if (!o.deadline) return '<span style="color:var(--muted)">No deadline</span>';
+  var live = o.status === 'Open' || o.status === 'In Progress';
+  var tag = '';
+  if (live && o.days_left !== null) {
+    if (o.days_left < 0) tag = ' <b style="color:var(--red)">· overdue ' + (-o.days_left) + 'd</b>';
+    else if (o.days_left === 0) tag = ' <b style="color:var(--red)">· today</b>';
+    else if (o.days_left <= 3) tag = ' <b style="color:var(--red)">· ' + o.days_left + 'd left</b>';
+    else if (o.days_left <= 7) tag = ' <b style="color:var(--amber)">· ' + o.days_left + 'd left</b>';
+  }
+  return 'Deadline <span style="font-family:\'IBM Plex Mono\',monospace;font-weight:600;color:var(--text2)">' + escapeHtml(o.deadline) + '</span>' + tag;
+}
+function _joBar(p, w) { var c = p >= 100 ? 'var(--green)' : p >= 60 ? 'var(--brand)' : p >= 30 ? 'var(--amber)' : 'var(--red)'; return '<div style="height:5px;background:var(--border);border-radius:4px;width:' + w + 'px;overflow:hidden"><div style="height:100%;border-radius:4px;background:' + c + ';width:' + Math.min(100, p) + '%"></div></div>'; }
+function _joActions(o, inDetail) {
+  var b = [], manage = _joCanManage() && !o.local, id = escapeHtml(o.order_id);
+  var btn = function(act, label, extra) { return '<button type="button" class="btn btn-s btn-xs" data-jo="' + act + '" data-id="' + id + '"' + (extra || '') + '>' + label + '</button>'; };
+  if (!inDetail) b.push(btn('detail', '🔍 Details'));
+  if (manage && !o.archived) {
+    b.push(btn('edit', '✏ Edit'));
+    if (o.status === 'Closed' || o.status === 'On Hold') b.push(btn('reopen', '↺ Reopen'));
+    else if (o.status !== 'Filled') { b.push(btn('hold', '⏸ Hold')); b.push(btn('close', '✖ Close')); }
+    else b.push(btn('close', '✖ Close'));
+    b.push(btn('web', o.post_to_website ? '🔒 Hide from website' : '🌐 Show on website'));
+    b.push(btn('dup', '⧉ Duplicate'));
+    b.push(btn('archive', '🗄 Archive'));
+  }
+  if (manage && o.archived) b.push(btn('restore', '↺ Restore'));
+  if (_joCanDelete() && !o.local) b.push('<button type="button" class="btn btn-ghost btn-xs" data-jo="delete" data-id="' + id + '" style="color:var(--red)">🗑 Delete…</button>');
+  return b.join(' ');
+}
+function _joCard(o, focusSet) {
+  var open = _jo.open[o.order_id] === true || (focusSet && o.positions.some(function(p) { return focusSet[p.id]; }));
+  var accent = (_JO_PILL[o.status] || _JO_PILL.Closed)[0];
+  var site = o.on_website ? '<span style="font-size:10.5px;font-weight:700;color:var(--brand);background:var(--brand-l);border-radius:20px;padding:3px 9px" title="Visible on goldenfaith.net right now">🌐 On website</span>'
+    : '<span style="font-size:10.5px;font-weight:700;color:var(--muted);background:var(--s2);border:1px solid var(--border);border-radius:20px;padding:3px 9px" title="' + (o.post_to_website ? 'Switched on, but not shown now (closed, filled or past deadline)' : 'Not shown on goldenfaith.net') + '">' + (o.post_to_website ? '⏸ Not showing' : '🔒 Internal only') + '</span>';
+  var rows = o.positions.map(function(p) {
+    var pp = p.slots ? Math.min(100, Math.round((p.filled || 0) / p.slots * 100)) : 0;
+    return '<div data-job-id="' + escapeHtml(p.id) + '" style="display:grid;grid-template-columns:1fr auto;align-items:center;gap:12px;padding:10px 16px 10px 20px;border-top:1px solid var(--border)">' +
+      '<div style="min-width:0"><div style="font-size:13px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(p.title) + '</div>' +
+      '<div style="font-size:11px;color:var(--muted);margin-top:1px">' + (p.assigned ? p.assigned + ' applicant' + (p.assigned === 1 ? '' : 's') + ' in progress' : 'no applicants yet') + (p.employer_fee_usd ? ' · employer fee $' + Number(p.employer_fee_usd).toLocaleString() : '') + '</div></div>' +
+      '<div style="display:flex;align-items:center;gap:18px;flex-shrink:0">' +
+        '<div style="font-size:12px;color:var(--text2);font-family:\'IBM Plex Mono\',monospace;min-width:90px;text-align:right">' + (p.salary ? escapeHtml(p.salary) : '<span style="color:var(--muted)">TBD</span>') + '</div>' +
+        '<div style="text-align:center;min-width:84px"><div style="font-size:12px;font-weight:700;font-family:\'IBM Plex Mono\',monospace;color:var(--text2);margin-bottom:4px">' + (p.filled || 0) + '/' + p.slots + '</div>' + _joBar(pp, 80) + '</div>' +
+        '<div style="min-width:78px;text-align:right">' + _joPill(p.status) + '</div></div></div>';
+  }).join('');
+  return '<div class="card" data-order="' + escapeHtml(o.order_id) + '" style="overflow:hidden;padding:0;border-left:3px solid ' + accent + '">' +
+    '<div data-jo="toggle" data-id="' + escapeHtml(o.order_id) + '" style="display:flex;align-items:center;gap:14px;padding:14px 16px;cursor:pointer;user-select:none;flex-wrap:wrap">' +
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;transition:transform .2s;transform:' + (open ? 'rotate(0deg)' : 'rotate(-90deg)') + '"><polyline points="6 9 12 15 18 9"/></svg>' +
+      '<div style="flex:1;min-width:200px"><div style="font-size:14px;font-weight:800;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(o.employer || 'Unknown employer') + (o.order_ref ? ' <span style="font-size:11px;font-weight:600;color:var(--muted);font-family:\'IBM Plex Mono\',monospace">' + escapeHtml(o.order_ref) + '</span>' : '') + '</div>' +
+        '<div style="font-size:11.5px;color:var(--muted);margin-top:2px">' + escapeHtml(o.country) + (o.category ? ' · ' + escapeHtml(o.category) : '') + ' · ' + _joDeadline(o) + ' · ' + o.positions.length + ' position' + (o.positions.length === 1 ? '' : 's') + '</div>' +
+        (o.closed_reason && (o.status === 'Closed' || o.status === 'Archived') ? '<div style="font-size:11px;color:var(--muted);margin-top:2px">Closed: ' + escapeHtml(o.closed_reason) + '</div>' : '') + '</div>' +
+      '<div style="text-align:right"><div style="font-size:12px;font-weight:700;font-family:\'IBM Plex Mono\',monospace;color:var(--text2);margin-bottom:4px">' + o.filled + '/' + o.slots + ' <span style="font-weight:400;color:var(--muted)">(' + o.pct + '%)</span></div>' + _joBar(o.pct, 120) + '</div>' +
+      _joPill(o.status) + site + '</div>' +
+    '<div style="display:' + (open ? 'block' : 'none') + '">' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;padding:8px 16px;background:var(--s2);border-top:1px solid var(--border)">' + _joActions(o, false) + '</div>' + rows + '</div></div>';
+}
+function _joPaint() {
+  var box = document.getElementById('job-cards-container'); if (!box) return;
+  var d = _jo.data;
+  var sel = function(id, html, val) { var el = document.getElementById(id); if (el) { el.innerHTML = html; el.value = val; } };
+  if (!d) { box.innerHTML = '<div class="card" style="padding:36px;text-align:center"><div style="font-size:14px;font-weight:700;color:var(--red);margin-bottom:6px">Could not load job orders</div><div style="font-size:12.5px;color:var(--muted);margin-bottom:12px">' + escapeHtml(_jo.err || '') + '</div><button class="btn btn-p btn-sm" onclick="_joLoad()">Try again</button></div>'; return; }
+  var c = d.counts || {};
+  _joSidebar(c.active);
+  // filters that depend on the data
+  sel('job-country-filter', '<option value="">All countries</option>' + ((d.filters && d.filters.countries) || []).map(function(x) { return '<option>' + escapeHtml(x) + '</option>'; }).join(''), _jo.country);
+  var chip = function(key, label, n, warn) { return '<button type="button" data-jo="chip" data-id="' + key + '" class="btn btn-xs ' + (_jo.status === key ? 'btn-p' : 'btn-s') + '" style="' + (warn && n ? 'color:var(--red);border-color:var(--red)' : '') + '">' + label + ' <b>' + (n || 0) + '</b></button>'; };
+  var sum = document.getElementById('job-summary');
+  if (sum) {
+    var t = d.totals || {};
+    sum.innerHTML = chip('active', 'Active', c.active) + chip('expiring', 'Expiring ≤ 7d', c.expiring, true) + chip('On Hold', 'On hold', c['On Hold']) + chip('Filled', 'Filled', c.Filled) + chip('Closed', 'Closed', c.Closed) + chip('', 'All', c.all) + chip('Archived', 'Archived', c.Archived) +
+      '<span style="margin-left:auto;font-size:12px;color:var(--muted)">' + (t.open_slots || 0) + ' open slot' + (t.open_slots === 1 ? '' : 's') + ' · ' + (t.filled || 0) + ' of ' + (t.slots || 0) + ' filled</span>';
+  }
+  var orders = d.orders || [];
+  var f = _focusOn('job'), fset = f && f.ids.length ? f.set : null;
+  if (!orders.length) {
+    box.innerHTML = '<div class="card" style="padding:48px 24px;text-align:center"><div style="font-size:36px;margin-bottom:12px">💼</div><div style="font-size:15px;font-weight:700;color:var(--text2);margin-bottom:4px">No job orders found</div>' +
+      '<div style="font-size:13px;color:var(--muted)">' + (_jo.q || _jo.country || _jo.website || _jo.status !== 'active' ? 'Try adjusting your search or filters' : 'Create the first job order with “+ New Job Order”') + '</div></div>';
+  } else box.innerHTML = orders.map(function(o) { return _joCard(o, fset); }).join('');
+  box.onclick = _joClick;
+  var pg = document.getElementById('job-pager');
+  if (pg) {
+    var pages = Math.max(1, Math.ceil((d.total || 0) / (d.limit || 50)));
+    pg.innerHTML = pages > 1 ? '<button class="btn btn-s btn-xs" data-jo="prev"' + (d.page <= 1 ? ' disabled' : '') + '>‹ Prev</button> <span style="font-size:12px;color:var(--muted)">Page ' + d.page + ' of ' + pages + ' · ' + d.total + ' orders</span> <button class="btn btn-s btn-xs" data-jo="next"' + (d.page >= pages ? ' disabled' : '') + '>Next ›</button>' : '';
+    pg.onclick = _joClick;
+  }
+  var s = document.getElementById('job-status-filter'); if (s && s.value !== _jo.status) s.value = _jo.status;
+  _focusBar('job', box, orders.reduce(function(n, o) { return n + o.positions.filter(function(p) { return fset && fset[p.id]; }).length; }, 0));
+  _focusFlash('job');
+}
+function _joClick(e) {
+  var b = e.target.closest('[data-jo]'); if (!b) return;
+  var act = b.getAttribute('data-jo'), id = b.getAttribute('data-id');
+  if (act !== 'toggle') e.stopPropagation();
+  _joAct(act, id);
+}
+function _joFind(id) {
+  var o = null; ((_jo.data && _jo.data.orders) || []).some(function(x) { if (x.order_id === id) { o = x; return true; } return false; });
+  if (!o && _jo.detail && _jo.detail.order_id === id) o = _jo.detail;
+  return o;
+}
+async function _joAct(act, id) {
+  var o = _joFind(id);
+  if (act === 'toggle') { _jo.open[id] = !(_jo.open[id] === true); _joPaint(); return; }
+  if (act === 'chip') { _jo.status = id; _jo.page = 1; if (_focus && _focus.entity === 'job') focusClear(false); renderJobs(); return; }
+  if (act === 'prev') { _jo.page = Math.max(1, _jo.page - 1); renderJobs(); return; }
+  if (act === 'next') { _jo.page++; renderJobs(); return; }
+  if (act === 'detail') { _joOpen(id); return; }
+  if (act === 'edit') { _joEdit(id); return; }
+  if (!_isLiveSession()) { toast('Sign in to the live system to change job orders', 'error'); return; }
+  var name = o ? o.employer + (o.country ? ' (' + o.country + ')' : '') : 'this job order';
+  var r, ver = o ? o.version : null;
+  if (act === 'close' || act === 'hold') {
+    var why = _askReason((act === 'close' ? 'Close ' : 'Put on hold ') + name + '?'); if (!why) return;
+    r = await _joCall('/job-orders/' + encodeURIComponent(id) + '/status', 'POST', { status: act === 'close' ? 'Closed' : 'On Hold', reason: why, expected_version: ver });
+  } else if (act === 'reopen') {
+    r = await _joCall('/job-orders/' + encodeURIComponent(id) + '/status', 'POST', { status: 'Active', expected_version: ver });
+    if (!r.ok && r.data && r.data.error === 'deadline_passed') { toast(_acctMsg(r), 'error'); _joEdit(id); return; }
+  } else if (act === 'web') {
+    r = await _joCall('/job-orders/' + encodeURIComponent(id) + '/website', 'POST', { post_to_website: !(o && o.post_to_website) });
+  } else if (act === 'dup') {
+    r = await _joCall('/job-orders/' + encodeURIComponent(id) + '/duplicate', 'POST', {});
+    if (r.ok) { _jo.open[r.data.order_id] = true; toast('Copy created: ' + (r.data.order_ref || ''), 'success'); await _joAfter(); return; }
+  } else if (act === 'archive') {
+    var why2 = _askReason('Archive ' + name + '? It leaves the list and the website; it can be restored.'); if (!why2) return;
+    r = await _joCall('/job-orders/' + encodeURIComponent(id) + '/archive', 'POST', { reason: why2 });
+  } else if (act === 'restore') {
+    r = await _joCall('/job-orders/' + encodeURIComponent(id) + '/restore', 'POST', {});
+  } else if (act === 'delete') {
+    var why3 = _askReason('PERMANENTLY delete ' + name + '? This cannot be undone. (Archive instead if it has history.)'); if (!why3) return;
+    r = await _joCall('/job-orders/' + encodeURIComponent(id), 'DELETE', { reason: why3 });
+    if (!r.ok && r.data && r.data.error === 'has_records') {
+      var k = await _joChoice('Delete refused', _acctMsg(r), [{ key: 'archive', label: 'Archive instead', primary: true }, { key: 'force', label: 'Force delete (clear links)', danger: true }, { key: 'no', label: 'Cancel' }]);
+      if (k === 'archive') { _joAct('archive', id); return; }
+      if (k !== 'force') return;
+      r = await _joCall('/job-orders/' + encodeURIComponent(id), 'DELETE', { reason: why3, force: true });
+    }
+  } else return;
+  if (!r.ok) {
+    if (r.data && r.data.error === 'conflict') { toast(_acctMsg(r), 'error'); await _joAfter(); return; }
+    toast(_acctMsg(r, 'Could not update the job order'), 'error'); return;
+  }
+  toast(act === 'delete' ? 'Job order deleted' : act === 'close' ? 'Job order closed' : act === 'hold' ? 'Job order put on hold' : act === 'reopen' ? 'Job order reopened' : act === 'web' ? (r.data.post_to_website ? 'Now shown on the website' : 'Hidden from the website') : act === 'archive' ? 'Job order archived' : 'Job order restored', 'success');
+  if (document.getElementById('overlay-jodetail') && document.getElementById('overlay-jodetail').classList.contains('active')) { if (act === 'delete' || act === 'archive') closeOverlay('overlay-jodetail'); else _joOpen(id); }
+  await _joAfter();
+}
+async function _joAfter() { _joBust(); try { await fetchJobs(); } catch (e) {} await _joLoad(); }
+
+// small choice dialog (returns the key of the pressed button)
+function _joChoice(title, message, buttons) {
+  return new Promise(function(resolve) {
+    var wrap = document.createElement('div');
+    wrap.id = 'jo-choice'; wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100000;display:flex;align-items:center;justify-content:center;padding:16px';
+    wrap.innerHTML = '<div class="card" style="max-width:480px;width:100%;padding:20px;background:var(--surface,#fff)"><div style="font-size:15px;font-weight:800;margin-bottom:8px">' + escapeHtml(title) + '</div>' +
+      '<div style="font-size:13px;color:var(--text2);line-height:1.5;margin-bottom:16px;white-space:pre-line">' + escapeHtml(message) + '</div><div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">' +
+      buttons.map(function(b) { return '<button type="button" class="btn ' + (b.primary ? 'btn-p' : 'btn-s') + ' btn-sm" data-k="' + escapeHtml(b.key) + '"' + (b.danger ? ' style="color:var(--red);border-color:var(--red)"' : '') + '>' + escapeHtml(b.label) + '</button>'; }).join('') + '</div></div>';
+    wrap.onclick = function(e) { var b = e.target.closest('[data-k]'); if (!b && e.target !== wrap) return; wrap.remove(); resolve(b ? b.getAttribute('data-k') : 'no'); };
+    document.body.appendChild(wrap);
+  });
+}
+
+// ── detail ────────────────────────────────────────────────────────────
+async function _joOpen(id) {
+  if (!_isLiveSession()) { var lo = _joFind(id); if (lo) { _jo.open[id] = true; _joPaint(); } return; }
+  var r = await apiFetch('/job-orders/' + encodeURIComponent(id) + '?_=' + Date.now());
+  if (!r.ok) { toast(_acctMsg(r, 'Job order not found'), 'error'); return; }
+  var o = r.data; _jo.detail = o;
+  if (typeof currentPage !== 'undefined' && currentPage !== 'jobs') nav('jobs');
+  var set = function(i, h) { var el = document.getElementById(i); if (el) el.innerHTML = h; };
+  set('jd-title', escapeHtml(o.employer) + (o.order_ref ? ' <span style="font-size:12px;font-weight:600;color:var(--muted);font-family:\'IBM Plex Mono\',monospace">' + escapeHtml(o.order_ref) + '</span>' : ''));
+  set('jd-sub', escapeHtml(o.country) + (o.category ? ' · ' + escapeHtml(o.category) : '') + ' · ' + _joDeadline(o) + ' · ' + _joPill(o.status) + (o.on_website ? ' · 🌐 on website' : ''));
+  var tile = function(label, val, warn) { return '<div style="background:var(--s2);border-radius:10px;padding:10px 12px;min-width:92px"><div style="font-size:18px;font-weight:800;color:' + (warn ? 'var(--red)' : 'var(--text)') + '">' + val + '</div><div style="font-size:11px;color:var(--muted)">' + label + '</div></div>'; };
+  var docs = o.documents && o.documents.checked ? o.documents.ready + '/' + o.documents.checked : '—';
+  var fp = o.fees || {};
+  var funnel = Object.keys(o.funnel || {}).filter(function(k) { return o.funnel[k] > 0; }).map(function(k) { return '<span style="font-size:11.5px;background:var(--s2);border-radius:20px;padding:3px 10px;margin:0 6px 6px 0;display:inline-block">' + escapeHtml(k) + ' <b>' + o.funnel[k] + '</b></span>'; }).join('') || '<span style="color:var(--muted);font-size:12.5px">No applicants assigned yet.</span>';
+  var pos = o.positions.map(function(p) { return '<tr><td style="padding:6px 8px;font-weight:600">' + escapeHtml(p.title) + '</td><td style="padding:6px 8px">' + _joPill(p.status) + '</td><td style="padding:6px 8px;text-align:right;font-family:\'IBM Plex Mono\',monospace">' + (p.filled || 0) + '/' + p.slots + '</td><td style="padding:6px 8px;text-align:right">' + p.assigned + '</td><td style="padding:6px 8px;text-align:right">' + (p.employer_fee_usd ? '$' + Number(p.employer_fee_usd).toLocaleString() : '—') + '</td><td style="padding:6px 8px;color:var(--muted)">' + escapeHtml(p.salary || 'TBD') + '</td></tr>'; }).join('');
+  var apps = (o.applicants || []).map(function(a) { return '<div data-jo-app="' + escapeHtml(a.id) + '" style="display:flex;align-items:center;gap:10px;padding:7px 4px;border-top:1px solid var(--border);cursor:pointer"><div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600">' + escapeHtml(a.name) + (a.archived ? ' <span style="color:var(--muted);font-weight:400">(archived)</span>' : '') + '</div><div style="font-size:11px;color:var(--muted)">' + escapeHtml(a.display_id || '') + ' · ' + escapeHtml(a.position || '') + (a.agent ? ' · ' + escapeHtml(a.agent) : '') + '</div></div><span style="font-size:11.5px;background:var(--s2);border-radius:20px;padding:2px 10px">' + escapeHtml(a.status) + '</span></div>'; }).join('') || '<div style="color:var(--muted);font-size:12.5px;padding:6px 0">None</div>';
+  var hist = (o.history || []).map(function(h) { return '<div style="font-size:12px;padding:5px 0;border-top:1px solid var(--border)"><span style="color:var(--muted)">' + escapeHtml(String(h.created_at || '').slice(0, 16).replace('T', ' ')) + '</span> · <b>' + escapeHtml(h.user_name || 'System') + '</b> — ' + escapeHtml(h.detail || h.action) + '</div>'; }).join('') || '<div style="color:var(--muted);font-size:12.5px">No recorded changes yet.</div>';
+  set('jd-body',
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">' + tile('Slots', o.slots) + tile('Placed', o.filled) + tile('Open slots', o.open_slots) + tile('In progress', o.assigned) + tile('Documents ready', docs) +
+      tile('Pending fees', (fp.pending ? fp.pending.n : 0) + (fp.pending && fp.pending.total ? ' · $' + Number(fp.pending.total).toLocaleString() : ''), fp.pending && fp.pending.n > 0) + '</div>' +
+    '<div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.07em;margin-bottom:6px">PIPELINE</div><div style="margin-bottom:12px">' + funnel + '</div>' +
+    '<div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.07em;margin-bottom:6px">POSITIONS</div>' +
+    '<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:14px"><thead><tr style="text-align:left;color:var(--muted);font-size:11px"><th style="padding:4px 8px">Position</th><th style="padding:4px 8px">Status</th><th style="padding:4px 8px;text-align:right">Placed</th><th style="padding:4px 8px;text-align:right">In progress</th><th style="padding:4px 8px;text-align:right">Fee</th><th style="padding:4px 8px">Salary</th></tr></thead><tbody>' + pos + '</tbody></table>' +
+    '<div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.07em;margin-bottom:4px">APPLICANTS (' + (o.applicants || []).length + ')</div><div style="max-height:220px;overflow:auto;margin-bottom:14px">' + apps + '</div>' +
+    '<div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.07em;margin-bottom:4px">HISTORY</div><div style="max-height:200px;overflow:auto">' + hist + '</div>');
+  set('jd-actions', _joActions(o, true));
+  var ov = document.getElementById('overlay-jodetail');
+  ov.onclick = function(e) {
+    var a = e.target.closest('[data-jo-app]'); if (a) { closeOverlay('overlay-jodetail'); _plOpen(a.getAttribute('data-jo-app')); return; }
+    var b = e.target.closest('[data-jo]'); if (b) { var act = b.getAttribute('data-jo'); if (act === 'edit') closeOverlay('overlay-jodetail'); _joAct(act, b.getAttribute('data-id')); return; }
+    closeOverlayIfBg(e, 'overlay-jodetail');
+  };
+  openOverlay('overlay-jodetail');
+}
+async function _joPreview() {
+  if (!_isLiveSession()) { toast('Sign in to preview the website feed', 'error'); return; }
+  var r = await apiFetch('/job-orders/website-preview?_=' + Date.now());
+  if (!r.ok) { toast(_acctMsg(r, 'Could not load the preview'), 'error'); return; }
+  var rows = r.data.jobs.map(function(j) { return '<div style="display:flex;gap:10px;padding:7px 0;border-top:1px solid var(--border);font-size:13px"><div style="flex:1;min-width:0"><b>' + escapeHtml(j.title) + '</b><div style="font-size:11.5px;color:var(--muted)">' + escapeHtml(j.employer || '') + ' · ' + escapeHtml(j.country || '') + (j.deadline ? ' · apply by ' + escapeHtml(j.deadline) : '') + '</div></div><div style="font-size:12px;color:var(--text2)">' + j.open_slots + ' open</div></div>'; }).join('') || '<div style="color:var(--muted);padding:10px 0">Nothing is published right now.</div>';
+  document.getElementById('jd-title').textContent = 'Website preview';
+  document.getElementById('jd-sub').textContent = r.data.count + ' position' + (r.data.count === 1 ? '' : 's') + ' published on goldenfaith.net — exactly what visitors see.';
+  document.getElementById('jd-body').innerHTML = rows;
+  document.getElementById('jd-actions').innerHTML = '';
+  var ov = document.getElementById('overlay-jodetail'); ov.onclick = function(e) { closeOverlayIfBg(e, 'overlay-jodetail'); };
+  openOverlay('overlay-jodetail');
+}
+async function _joExport() {
+  if (!_isLiveSession()) { exportData('jobs'); return; }
+  var f = await _srvFile('/job-orders/export?' + _joQuery().replace(/(^|&)(page|limit)=[^&]*/g, ''));
+  if (!f.ok) { toast(f.message, 'error'); return; }
+  _saveBlob(f.blob, f.filename || 'job-orders.csv'); toast('Exported ' + (f.filename || 'job-orders.csv'), 'success');
+}
+
+// ── editor ────────────────────────────────────────────────────────────
+var _posRowIdx = 0;
+function _renderPositionRow(pos) {
+  _posRowIdx++;
+  var idx = _posRowIdx, used = pos && ((pos.applicants_total || 0) + (pos.fees_total || 0)) > 0;
+  var div = document.createElement('div');
+  div.id = 'pos-row-' + idx;
+  div.style.cssText = 'background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;position:relative';
+  var v = function(x) { return escapeHtml(x === undefined || x === null ? '' : x); };
+  div.innerHTML =
+    '<input type="hidden" class="pos-id" value="' + v(pos && pos.id) + '">' +
+    '<button type="button" ' + (used ? 'disabled title="Has applicants or employer fees — close the order or lower the slots instead of removing it"' : 'title="Remove"') + ' onclick="removePositionRow(' + idx + ')" style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--muted);cursor:' + (used ? 'not-allowed' : 'pointer') + ';font-size:16px;line-height:1;opacity:' + (used ? '.35' : '1') + '">✕</button>' +
+    '<div class="form-row" style="margin-bottom:8px"><div class="form-group"><label class="form-label">Position Title <span class="req">*</span></label><input type="text" class="form-input pos-title" maxlength="180" placeholder="e.g. Domestic Helper" value="' + v(pos && pos.title) + '"></div>' +
+    '<div class="form-group"><label class="form-label">Salary</label><input type="text" class="form-input pos-salary" maxlength="100" placeholder="e.g. SAR 1,800/mo" value="' + v(pos && pos.salary) + '"></div></div>' +
+    '<div class="form-row"><div class="form-group"><label class="form-label">Total Slots <span class="req">*</span></label><input type="number" class="form-input pos-slots" min="' + Math.max(1, (pos && pos.filled) || 1) + '" step="1" placeholder="10" value="' + v(pos ? pos.slots : '') + '"></div>' +
+    '<div class="form-group"><label class="form-label">💵 Employer Fee (USD) <span style="font-size:10px;color:var(--muted);font-weight:400">— per deployed candidate</span></label><input type="number" class="form-input pos-employer-fee" min="0" step="0.01" placeholder="e.g. 500" value="' + v(pos && pos.employer_fee_usd ? pos.employer_fee_usd : '') + '"></div></div>' +
+    (pos && pos.id ? '<div style="font-size:11.5px;color:var(--muted);margin-top:6px">Placed <b>' + (pos.filled || 0) + '</b> (counted automatically from the pipeline) · in progress <b>' + (pos.assigned || 0) + '</b> · status ' + escapeHtml(pos.status || '') + '</div>' : '') +
+    '<div class="pos-err" style="display:none;color:var(--red);font-size:11.5px;margin-top:6px"></div>';
+  return div;
+}
+function addJobPosition(pos) {
+  var list = document.getElementById('j-positions-list'), empty = document.getElementById('j-positions-empty');
+  list.appendChild(_renderPositionRow(pos || null));
+  if (empty) empty.style.display = 'none';
+}
+function removePositionRow(idx) {
+  var row = document.getElementById('pos-row-' + idx); if (row) row.remove();
+  var list = document.getElementById('j-positions-list'), empty = document.getElementById('j-positions-empty');
+  if (empty) empty.style.display = list.children.length === 0 ? 'block' : 'none';
+}
+function _getPositionsFromModal() {
+  var out = [];
+  document.querySelectorAll('#j-positions-list > div[id^="pos-row-"]').forEach(function(row) {
+    var g = function(c) { return (row.querySelector(c) || {}).value || ''; };
+    out.push({ id: g('.pos-id') || null, title: g('.pos-title'), salary: g('.pos-salary'), slots: g('.pos-slots'), employer_fee_usd: g('.pos-employer-fee') });
+  });
+  return out;
+}
+function _toggleJobPostWebsite() {
+  var btn = document.getElementById('j-post-website-toggle'), hid = document.getElementById('j-post-website');
+  var on = hid.value !== 'true'; hid.value = on ? 'true' : 'false';
+  if (btn) { btn.classList.toggle('on', on); btn.setAttribute('aria-pressed', on ? 'true' : 'false'); }
+}
+function _joStatusChanged() {
+  var s = document.getElementById('j-status').value, cur = (_jo.editing && _jo.editing.curManual) || 'Active';
+  var row = document.getElementById('j-reason-row'); if (row) row.style.display = (s !== 'Active' && s !== cur && _jo.editing && _jo.editing.order_id) ? 'block' : 'none';
+}
+function _joClearErrors() {
+  var b = document.getElementById('j-errors'); if (b) { b.style.display = 'none'; b.textContent = ''; }
+  document.querySelectorAll('#overlay-job .field-bad').forEach(function(el) { el.classList.remove('field-bad'); el.style.borderColor = ''; });
+  document.querySelectorAll('#overlay-job .pos-err').forEach(function(el) { el.style.display = 'none'; el.textContent = ''; });
+}
+function _joShowErrors(fields, message) {
+  _joClearErrors();
+  var b = document.getElementById('j-errors'), rows = document.querySelectorAll('#j-positions-list > div[id^="pos-row-"]'), first = null;
+  var bad = function(el) { if (el) { el.classList.add('field-bad'); el.style.borderColor = 'var(--red)'; if (!first) first = el; } };
+  var map = { employer: 'j-employer', country: 'j-country', category: 'j-category', deadline: 'j-deadline', status: 'j-status', reason: 'j-reason' };
+  var msgs = [];
+  Object.keys(fields || {}).forEach(function(k) {
+    var m = /^positions\[(\d+)\]\.(\w+)$/.exec(k);
+    if (m) {
+      var row = rows[parseInt(m[1])]; if (!row) return;
+      var cls = { title: '.pos-title', slots: '.pos-slots', employer_fee_usd: '.pos-employer-fee', salary: '.pos-salary' }[m[2]];
+      bad(cls ? row.querySelector(cls) : row);
+      var pe = row.querySelector('.pos-err'); if (pe) { pe.style.display = 'block'; pe.textContent = (pe.textContent ? pe.textContent + ' · ' : '') + fields[k]; }
+    } else { bad(document.getElementById(map[k] || '')); msgs.push(fields[k]); }
+  });
+  if (b) { b.style.display = 'block'; b.textContent = (message || 'Please fix the highlighted fields') + (msgs.length ? ': ' + msgs.join('; ') : ''); }
+  if (first && first.scrollIntoView) first.scrollIntoView({ block: 'center' });
+}
+function _resetJobModal() {
+  _jo.editing = null;
+  ['j-edit-id', 'j-edit-dbid', 'j-version', 'j-employer', 'j-country', 'j-category', 'j-deadline', 'j-reason'].forEach(function(i) { var el = document.getElementById(i); if (el) el.value = ''; });
+  var st = document.getElementById('j-status'); if (st) st.value = 'Active';
+  var rr = document.getElementById('j-reason-row'); if (rr) rr.style.display = 'none';
+  document.getElementById('j-positions-list').innerHTML = '';
+  document.getElementById('j-positions-empty').style.display = 'block';
+  document.getElementById('j-post-website').value = 'true';
+  var pw = document.getElementById('j-post-website-toggle'); if (pw) { pw.classList.add('on'); pw.setAttribute('aria-pressed', 'true'); }
+  var dl = document.getElementById('j-deadline'); if (dl) dl.min = _ymd(new Date());
+  _posRowIdx = 0; _joClearErrors();
+}
+function openAddJob() {
+  _resetJobModal();
+  document.getElementById('j-modal-title').textContent = 'New Job Order';
+  document.getElementById('j-modal-sub').textContent = 'One employer — multiple positions with individual slots.';
+  document.getElementById('j-submit-btn').textContent = 'Create Job Order';
+  addJobPosition();
+  openOverlay('overlay-job');
+}
+function _joFill(o) {
+  _resetJobModal();
+  var curManual = o.status === 'On Hold' ? 'On Hold' : o.status === 'Closed' ? 'Closed' : 'Active';
+  _jo.editing = { order_id: o.order_id, version: o.version, curManual: curManual };
+  document.getElementById('j-modal-title').textContent = 'Edit Job Order' + (o.order_ref ? ' · ' + o.order_ref : '');
+  document.getElementById('j-modal-sub').textContent = 'Saved together in one step — nothing is half-saved.';
+  document.getElementById('j-submit-btn').textContent = 'Save Changes';
+  document.getElementById('j-edit-id').value = o.order_id; document.getElementById('j-version').value = o.version || '';
+  document.getElementById('j-employer').value = o.employer || ''; document.getElementById('j-country').value = o.country || '';
+  document.getElementById('j-category').value = o.category || ''; document.getElementById('j-deadline').value = o.deadline || '';
+  var dl = document.getElementById('j-deadline'); if (dl) dl.removeAttribute('min');
+  document.getElementById('j-status').value = curManual;
+  var on = o.post_to_website !== false; document.getElementById('j-post-website').value = on ? 'true' : 'false';
+  var pw = document.getElementById('j-post-website-toggle'); if (pw) { pw.classList.toggle('on', on); pw.setAttribute('aria-pressed', on ? 'true' : 'false'); }
+  o.positions.forEach(function(p) { addJobPosition(p); });
+}
+async function _joEdit(id) {
+  if (!_isLiveSession()) { toast('Sign in to the live system to edit job orders', 'error'); return; }
+  var r = await apiFetch('/job-orders/' + encodeURIComponent(id) + '?_=' + Date.now());      // always the latest version
+  if (!r.ok) { toast(_acctMsg(r, 'Job order not found'), 'error'); return; }
+  if (r.data.archived) { toast('This job order is archived — restore it first', 'error'); return; }
+  _joFill(r.data); openOverlay('overlay-job');
+}
+function openEditJob(jobId) {                                   // kept for old links: a position id opens its order
+  var j = (DB.jobs || []).find(function(x) { return x.id === jobId || x._dbId === jobId; });
+  _joEdit(j && j.orderId ? j.orderId : jobId);
+}
+async function saveJob() {
+  if (!hasPermission('Manage Job Orders')) { toast('Your role cannot manage job orders', 'error'); return; }
+  var g = function(i) { var el = document.getElementById(i); return el ? el.value : ''; };
+  var positions = _getPositionsFromModal();
+  var payload = { order_id: g('j-edit-id') || undefined, expected_version: g('j-version') || undefined, employer: g('j-employer').trim(), country: g('j-country').trim(), category: g('j-category'),
+    deadline: g('j-deadline') || null, status: g('j-status') || 'Active', reason: g('j-reason').trim(), post_to_website: g('j-post-website') !== 'false', positions: positions };
+  _joClearErrors();
+  if (!_isLiveSession()) {                                      // demo mode: keep it on this device only
+    if (!payload.employer || !payload.country || !positions.length || positions.some(function(p) { return !p.title.trim(); })) { toast('Employer, country and every position title are required', 'error'); return; }
+    if (payload.order_id) { toast('Editing is available when signed in to the live system', 'error'); return; }
+    positions.forEach(function(p) { DB.jobs.unshift({ id: genId('JOB'), employer: payload.employer, country: payload.country, category: payload.category, deadline: payload.deadline || '', status: payload.status === 'Active' ? 'Open' : payload.status, title: p.title, slots: parseInt(p.slots) || 1, filled: 0, salary: p.salary || 'TBD', employerFeeUSD: parseFloat(p.employer_fee_usd) || 0, postToWebsite: payload.post_to_website }); });
+    autosave('jobs'); closeOverlay('overlay-job'); toast(positions.length + ' position(s) created', 'success'); renderJobs(); return;
+  }
+  var btn = document.getElementById('j-submit-btn'), label = btn.textContent; btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    for (var attempt = 0; attempt < 4; attempt++) {
+      var r = await _joCall('/job-orders', 'POST', payload);
+      if (r.ok) {
+        closeOverlay('overlay-job');
+        var d = r.data;
+        toast(payload.order_id ? (d.unchanged ? 'No changes to save' : 'Job order updated' + (d.fees_updated ? ' · ' + d.fees_updated + ' pending fee(s) updated' : '')) : 'Job order ' + (d.order_ref || '') + ' created with ' + d.positions.length + ' position' + (d.positions.length === 1 ? '' : 's'), 'success');
+        _jo.open[d.order_id] = true; if (!payload.order_id && payload.status !== 'Active') _jo.status = '';
+        await _joAfter(); return;
+      }
+      var e = r.data || {};
+      if (e.error === 'validation') { _joShowErrors(e.fields, e.message); return; }
+      if (e.error === 'reason_required') { var rr = document.getElementById('j-reason-row'); if (rr) rr.style.display = 'block'; _joShowErrors({ reason: 'A reason is required' }, e.message); return; }
+      if (e.error === 'position_in_use') { toast(e.message, 'error'); _joShowErrors({}, e.message); return; }
+      if (e.error === 'conflict') {
+        var k = await _joChoice('Someone else changed this job order', 'It was saved by another person while you were editing. Load their version (your unsaved changes are lost) or keep editing and copy what you need.', [{ key: 'load', label: 'Load latest version', primary: true }, { key: 'keep', label: 'Keep editing' }]);
+        if (k === 'load' && e.current) _joFill(e.current);
+        return;
+      }
+      if (e.error === 'fee_policy_required') {
+        var k2 = await _joChoice('Employer fee changed', e.message + '\n\n' + (e.fee_changes || []).map(function(f) { return '• ' + f.title + ': $' + f.from + ' → $' + f.to + ' (' + f.pending + ' pending)'; }).join('\n'),
+          [{ key: 'update_pending', label: 'Update pending fees too', primary: true }, { key: 'keep', label: 'Keep pending fees as they are' }, { key: 'no', label: 'Cancel' }]);
+        if (k2 === 'update_pending' || k2 === 'keep') { payload.fee_policy = k2; continue; }
+        return;
+      }
+      if (e.error === 'possible_duplicate') {
+        var k3 = await _joChoice('This employer already has a job order', e.message, [{ key: 'open', label: 'Open the existing order', primary: true }, { key: 'create', label: 'Create a separate order' }, { key: 'no', label: 'Cancel' }]);
+        if (k3 === 'open' && e.existing) { closeOverlay('overlay-job'); _joEdit(e.existing.order_id); return; }
+        if (k3 === 'create') { payload.allow_duplicate = true; continue; }
+        return;
+      }
+      toast(_acctMsg(r, 'Could not save the job order'), 'error'); return;
+    }
+  } finally { btn.disabled = false; btn.textContent = label; }
+}
+function backfillJobStatuses() { /* the server keeps Open / In Progress / Filled in step with the applicants */ }
+
 // ── Job fold state — persists which employer groups are collapsed ──────
 if (!window._jobFoldState) window._jobFoldState = {};
 
@@ -9299,449 +9768,6 @@ function toggleJobGroup(key) {
   if (chevron) chevron.style.transform = collapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
 }
 
-function renderJobs() {
-  var _scopedJobs = getScopedJobs();
-  var jobF = (typeof jobFilter !== 'undefined') ? jobFilter : '';
-  var jobs = _scopedJobs.filter(function(j) {
-    if (!jobF) return true;
-    return (j.title||'').toLowerCase().includes(jobF) ||
-           (j.employer||'').toLowerCase().includes(jobF) ||
-           (j.country||'').toLowerCase().includes(jobF);
-  });
-  if (_focusOn('job')) jobs = _focusFilter('job', _scopedJobs);
-  var sfEl = document.getElementById('job-status-filter');
-  var sf = sfEl ? sfEl.value : '';
-  var filtered = !sf ? jobs
-    : sf === 'active' ? jobs.filter(function(j){ return j.status === 'Open' || j.status === 'In Progress'; })
-    : jobs.filter(function(j){ return j.status === sf; });
-
-  var container = document.getElementById('job-cards-container');
-  if (!container) return;
-
-  // Group by employer + country
-  var employerGroups = {};
-  var groupOrder = [];
-  filtered.forEach(function(j) {
-    var key = (j.employer||'Unknown') + '||' + (j.country||'');
-    if (!employerGroups[key]) {
-      employerGroups[key] = { employer: j.employer, country: j.country, deadline: j.deadline, status: j.status, positions: [] };
-      groupOrder.push(key);
-    }
-    employerGroups[key].positions.push(j);
-  });
-
-  if (groupOrder.length === 0) {
-    container.innerHTML = '<div class="card" style="padding:48px 24px;text-align:center">' +
-      '<div style="font-size:36px;margin-bottom:12px">💼</div>' +
-      '<div style="font-size:15px;font-weight:700;color:var(--text2);margin-bottom:4px">No job orders found</div>' +
-      '<div style="font-size:13px;color:var(--muted)">Try adjusting your search or filters</div></div>';
-    (function() {
-        var _grps = new Set(DB.jobs.map(function(j){ return (j.employer||'') + '||' + (j.country||''); }));
-        var el = document.getElementById('sb-job-count');
-        if (el) el.textContent = _grps.size;
-      })();
-    return;
-  }
-
-  // Status color map for the accent strip
-  var statusAccent = { 'Open':'var(--green)', 'In Progress':'var(--brand)', 'Filled':'var(--purple)', 'Closed':'var(--muted)' };
-  // Fill color for progress bar
-  var fillColor = function(pct) {
-    if (pct >= 100) return 'var(--green)';
-    if (pct >= 60)  return 'var(--brand)';
-    if (pct >= 30)  return 'var(--amber)';
-    return 'var(--red)';
-  };
-
-  container.innerHTML = groupOrder.map(function(key) {
-    var grp = employerGroups[key];
-    var totalSlots  = grp.positions.reduce(function(s,p){ return s + (parseInt(p.slots)||0); }, 0);
-    var totalFilled = grp.positions.reduce(function(s,p){ return s + (parseInt(p.filled)||0); }, 0);
-    var pct = totalSlots ? Math.min(100, Math.round(totalFilled / totalSlots * 100)) : 0;
-    var accentColor = statusAccent[grp.status] || 'var(--muted)';
-    var collapsed = window._jobFoldState[key] !== false; // default collapsed — only expand if explicitly set to false
-    var safeKey = key.replace(/'/g, "\\'");
-    var safeId  = _jobKeyId(key);
-    var chevRot = collapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
-    var bodyDisplay = collapsed ? 'none' : 'block';
-    var pColor = fillColor(pct);
-
-    // Position rows
-    var posRows = grp.positions.map(function(j) {
-      var pPct = j.slots ? Math.min(100, Math.round((parseInt(j.filled)||0) / (parseInt(j.slots)||1) * 100)) : 0;
-      var pColor2 = fillColor(pPct);
-      var salary = j.salary && j.salary !== 'TBD' ? j.salary : null;
-      return `<div data-job-id="${j.id}" style="display:grid;grid-template-columns:1fr auto;align-items:center;gap:12px;padding:10px 16px 10px 20px;border-top:1px solid var(--border);transition:background .12s;" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">`+
-        `<div style="display:flex;align-items:center;gap:14px;min-width:0">`+
-          `<div style="width:3px;height:36px;border-radius:3px;background:var(--border2);flex-shrink:0"></div>`+
-          `<div style="min-width:0">`+
-            `<div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${j.title}</div>`+
-            `<div style="font-size:11px;color:var(--muted);font-family:'IBM Plex Mono',monospace;margin-top:1px">${j.id}</div>`+
-          `</div>`+
-        `</div>`+
-        `<div style="display:flex;align-items:center;gap:20px;flex-shrink:0">`+
-          (salary ? `<div style="font-size:12px;font-weight:600;color:var(--text2);font-family:'IBM Plex Mono',monospace">${salary}</div>` : '<div style="font-size:12px;color:var(--muted);font-family:\'IBM Plex Mono\',monospace">TBD</div>')+
-          `<div style="text-align:center;min-width:80px">`+
-            `<div style="font-size:12px;font-weight:700;font-family:'IBM Plex Mono',monospace;color:var(--text2);margin-bottom:4px">${j.filled||0}/${j.slots||0}</div>`+
-            `<div style="height:5px;background:var(--border);border-radius:4px;width:80px;overflow:hidden"><div style="height:100%;border-radius:4px;background:${pColor2};width:${pPct}%;transition:width .4s ease"></div></div>`+
-          `</div>`+
-          `<div style="width:58px;text-align:right">`+
-            `<button class="btn btn-ghost btn-xs" onclick="confirmDelete('job','${j.id}')" style="color:var(--red);opacity:.7" title="Delete position" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity='.7'">✕</button>`+
-          `</div>`+
-        `</div>`+
-      `</div>`;
-    }).join('');
-
-    return `<div class="card" style="overflow:hidden;padding:0;border-left:3px solid ${accentColor}">`+
-      // ── Header (always visible, click to fold) ──
-      `<div onclick="toggleJobGroup('${safeKey}')" style="display:flex;align-items:center;gap:14px;padding:14px 16px;cursor:pointer;user-select:none;transition:background .12s" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">`+
-        // Chevron
-        `<svg id="jg-chev-${safeId}" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;transition:transform .2s;transform:${chevRot}"><polyline points="6 9 12 15 18 9"/></svg>`+
-        // Employer info
-        `<div style="flex:1;min-width:0">`+
-          `<div style="font-size:14px;font-weight:800;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${grp.employer}</div>`+
-          `<div style="display:flex;align-items:center;gap:8px;margin-top:2px">`+
-            `<span style="font-size:11.5px;color:var(--muted)">${grp.country}</span>`+
-            `<span style="color:var(--border2)">·</span>`+
-            `<span style="font-size:11.5px;color:var(--muted)">Deadline: <span style="font-family:'IBM Plex Mono',monospace;font-weight:600;color:var(--text2)">${grp.deadline||'TBD'}</span></span>`+
-            `<span style="color:var(--border2)">·</span>`+
-            `<span style="font-size:11.5px;color:var(--muted)">${grp.positions.length} position${grp.positions.length!==1?'s':''}</span>`+
-          `</div>`+
-        `</div>`+
-        // Progress summary
-        `<div style="display:flex;align-items:center;gap:16px;flex-shrink:0">`+
-          `<div style="text-align:right">`+
-            `<div style="font-size:12px;font-weight:700;font-family:'IBM Plex Mono',monospace;color:var(--text2);margin-bottom:4px">${totalFilled}/${totalSlots} <span style="font-weight:400;color:var(--muted)">(${pct}%)</span></div>`+
-            `<div style="height:6px;background:var(--border);border-radius:4px;width:120px;overflow:hidden"><div style="height:100%;border-radius:4px;background:${pColor};width:${pct}%;transition:width .4s ease"></div></div>`+
-          `</div>`+
-          `${pillHtml(grp.status)}`+
-          (grp.positions[0].postToWebsite === false
-            ? `<span style="font-size:10.5px;font-weight:700;color:var(--muted);background:var(--s2);border:1px solid var(--border);border-radius:20px;padding:3px 9px" title="Not shown on goldenfaith.net">🔒 Internal only</span>`
-            : `<span style="font-size:10.5px;font-weight:700;color:var(--brand);background:var(--brand-l);border-radius:20px;padding:3px 9px" title="Visible on goldenfaith.net when Open/In Progress with open slots">🌐 On website</span>`)+
-          `<div onclick="event.stopPropagation()" style="display:flex;gap:6px">`+
-            `<button class="btn btn-s btn-xs" onclick="openEditJob('${grp.positions[0].id}')" style="color:var(--brand);border-color:var(--brand);font-size:11.5px;gap:4px">✏ Edit</button>`+
-          `</div>`+
-        `</div>`+
-      `</div>`+
-      // ── Collapsible body ──
-      `<div id="jg-body-${safeId}" style="display:${bodyDisplay}">`+
-        // Column header bar
-        `<div style="display:grid;grid-template-columns:1fr auto;gap:12px;padding:7px 16px 7px 20px;background:var(--s2);border-top:1px solid var(--border)">`+
-          `<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)">Position</div>`+
-          `<div style="display:flex;gap:20px;flex-shrink:0">`+
-            `<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);width:auto">Salary</div>`+
-            `<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);min-width:80px;text-align:center">Filled</div>`+
-            `<div style="width:58px"></div>`+
-          `</div>`+
-        `</div>`+
-        posRows+
-      `</div>`+
-    `</div>`;
-  }).join('');
-
-  (function() {
-        var _grps = new Set(DB.jobs.map(function(j){ return (j.employer||'') + '||' + (j.country||''); }));
-        var el = document.getElementById('sb-job-count');
-        if (el) el.textContent = _grps.size;
-      })();
-  _focusBar('job', container, jobs.length); _focusFlash('job');
-}
-// ── Position row counter ─────────────────────────────────────────────
-var _posRowIdx = 0;
-
-function _renderPositionRow(pos) {
-  _posRowIdx++;
-  var idx = _posRowIdx;
-  var div = document.createElement('div');
-  div.id = 'pos-row-' + idx;
-  div.style.cssText = 'background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;position:relative';
-  div.innerHTML = `
-    <input type="hidden" class="pos-id"    value="${pos && pos.id    ? pos.id    : ''}">
-    <input type="hidden" class="pos-db-id" value="${pos && pos._dbId ? pos._dbId : ''}">
-    <button type="button" onclick="removePositionRow(${idx})" style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;line-height:1" title="Remove">✕</button>
-    <div class="form-row" style="margin-bottom:8px">
-      <div class="form-group">
-        <label class="form-label">Position Title <span class="req">*</span></label>
-        <input type="text" class="form-input pos-title" data-row="${idx}" placeholder="e.g. Domestic Helper" value="${pos ? pos.title : ''}">
-      </div>
-      <div class="form-group">
-        <label class="form-label">Salary</label>
-        <input type="text" class="form-input pos-salary" data-row="${idx}" placeholder="e.g. SAR 1,800/mo" value="${pos ? pos.salary||'' : ''}">
-      </div>
-    </div>
-    <div class="form-row">
-      <div class="form-group">
-        <label class="form-label">Total Slots</label>
-        <input type="number" class="form-input pos-slots" data-row="${idx}" placeholder="10" min="1" value="${pos ? pos.slots||1 : ''}">
-      </div>
-      <div class="form-group">
-        <label class="form-label">Filled Slots</label>
-        <input type="number" class="form-input pos-filled" data-row="${idx}" placeholder="0" min="0" value="${pos ? pos.filled||0 : '0'}">
-      </div>
-    </div>
-    <div class="form-row" style="margin-top:8px">
-      <div class="form-group" style="max-width:220px">
-        <label class="form-label" style="display:flex;align-items:center;gap:5px">
-          💵 Employer Fee (USD)
-          <span style="font-size:10px;color:var(--muted);font-weight:400">— charged per deployed candidate</span>
-        </label>
-        <input type="number" class="form-input pos-employer-fee" data-row="${idx}" placeholder="e.g. 500" min="0" step="0.01" value="${pos && pos.employerFeeUSD ? pos.employerFeeUSD : ''}">
-      </div>
-    </div>`;
-  return div;
-}
-
-function _toggleJobPostWebsite() {
-  var btn = document.getElementById('j-post-website-toggle');
-  var hid = document.getElementById('j-post-website');
-  var on  = hid.value !== 'true'; // flip
-  hid.value = on ? 'true' : 'false';
-  if (btn) {
-    btn.classList.toggle('on', on);
-    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-  }
-}
-
-function addJobPosition(pos) {
-  var list  = document.getElementById('j-positions-list');
-  var empty = document.getElementById('j-positions-empty');
-  list.appendChild(_renderPositionRow(pos || null));
-  if (empty) empty.style.display = 'none';
-}
-
-function removePositionRow(idx) {
-  var row = document.getElementById('pos-row-' + idx);
-  if (row) row.remove();
-  var list  = document.getElementById('j-positions-list');
-  var empty = document.getElementById('j-positions-empty');
-  if (empty) empty.style.display = list.children.length === 0 ? 'block' : 'none';
-}
-
-function _getPositionsFromModal() {
-  var rows = document.querySelectorAll('#j-positions-list > div[id^="pos-row-"]');
-  var positions = [];
-  rows.forEach(function(row) {
-    var title  = (row.querySelector('.pos-title')        || {}).value || '';
-    var salary = (row.querySelector('.pos-salary')       || {}).value || '';
-    var slots  = parseInt((row.querySelector('.pos-slots')  || {}).value) || 1;
-    var filled = parseInt((row.querySelector('.pos-filled') || {}).value) || 0;
-    var feeUSD = parseFloat((row.querySelector('.pos-employer-fee') || {}).value) || 0;
-    var posId  = (row.querySelector('.pos-id')    || {}).value || '';
-    var posDbId= (row.querySelector('.pos-db-id') || {}).value || '';
-    if (title.trim()) positions.push({ id: posId, _dbId: posDbId, title: title.trim(), salary, slots, filled, employerFeeUSD: feeUSD });
-  });
-  return positions;
-}
-
-function _resetJobModal() {
-  document.getElementById('j-edit-id').value   = '';
-  document.getElementById('j-edit-dbid').value  = '';
-  document.getElementById('j-employer').value   = '';
-  document.getElementById('j-country').value    = '';
-  document.getElementById('j-category').value   = '';
-  document.getElementById('j-deadline').value   = '';
-  document.getElementById('j-status').value     = 'Open';
-  document.getElementById('j-positions-list').innerHTML = '';
-  document.getElementById('j-positions-empty').style.display = 'block';
-  // Default to "on" — new job orders are public unless explicitly turned off
-  document.getElementById('j-post-website').value = 'true';
-  var _pwBtn = document.getElementById('j-post-website-toggle');
-  if (_pwBtn) { _pwBtn.classList.add('on'); _pwBtn.setAttribute('aria-pressed', 'true'); }
-  _posRowIdx = 0;
-}
-
-function openAddJob() {
-  _resetJobModal();
-  document.getElementById('j-modal-title').textContent  = 'New Job Order';
-  document.getElementById('j-modal-sub').textContent    = 'One employer — multiple positions with individual slots.';
-  document.getElementById('j-submit-btn').textContent   = 'Create Job Order';
-  // Start with one empty position row
-  addJobPosition();
-  openOverlay('overlay-job');
-}
-
-function openEditJob(jobId) {
-  // Find the employer group — all jobs with same employer+country
-  var job = DB.jobs.find(function(j){ return j.id === jobId; });
-  if (!job) return;
-
-  _resetJobModal();
-  document.getElementById('j-modal-title').textContent  = 'Edit Job Order';
-  document.getElementById('j-modal-sub').textContent    = 'Update employer details and positions.';
-  document.getElementById('j-submit-btn').textContent   = 'Save Changes';
-  document.getElementById('j-edit-id').value            = job.id;
-  document.getElementById('j-edit-dbid').value          = job._dbId || job.id;
-  document.getElementById('j-employer').value           = job.employer || '';
-  document.getElementById('j-country').value            = job.country  || '';
-  document.getElementById('j-category').value           = job.category || '';
-  document.getElementById('j-deadline').value           = (job.deadline && job.deadline !== 'TBD') ? job.deadline : '';
-  document.getElementById('j-status').value             = job.status   || 'Open';
-  var _pwOn = job.postToWebsite !== false;
-  document.getElementById('j-post-website').value = _pwOn ? 'true' : 'false';
-  var _pwBtn2 = document.getElementById('j-post-website-toggle');
-  if (_pwBtn2) { _pwBtn2.classList.toggle('on', _pwOn); _pwBtn2.setAttribute('aria-pressed', _pwOn ? 'true' : 'false'); }
-
-  // Load all positions for this employer (same employer + country)
-  var siblings = DB.jobs.filter(function(j){
-    return j.employer === job.employer && j.country === job.country;
-  });
-  siblings.forEach(function(j) {
-    addJobPosition({ id: j.id, _dbId: j._dbId || j.id, title: j.title, salary: j.salary, slots: j.slots, filled: j.filled, employerFeeUSD: j.employerFeeUSD || 0 });
-  });
-  if (siblings.length === 0) addJobPosition();
-
-  openOverlay('overlay-job');
-}
-
-function saveJob() {
-  if (!hasPermission('Manage Job Orders')) { toast('Your role cannot manage job orders','error'); return; }
-  var employer = document.getElementById('j-employer').value.trim();
-  var country  = document.getElementById('j-country').value.trim();
-  var category = (document.getElementById('j-category') || {}).value || '';
-  var deadline = document.getElementById('j-deadline').value || 'TBD';
-  var status   = document.getElementById('j-status').value || 'Open';
-  var postToWebsite = (document.getElementById('j-post-website') || {}).value !== 'false';
-  var editId   = document.getElementById('j-edit-id').value;
-  var editDbId = document.getElementById('j-edit-dbid').value;
-
-  if (!employer) { toast('Employer name is required', 'error'); return; }
-  if (!country)  { toast('Destination country is required', 'error'); return; }
-
-  var positions = _getPositionsFromModal();
-  if (positions.length === 0) { toast('Add at least one position', 'error'); return; }
-
-  // Validate each position
-  for (var p of positions) {
-    if (p.filled > p.slots) {
-      toast('Filled slots cannot exceed total slots for "' + p.title + '"', 'error');
-      return;
-    }
-  }
-
-  if (editId) {
-    // ── EDIT MODE — PATCH existing, create new, delete removed ────────
-    var existingJob = DB.jobs.find(function(j){ return j.id === editId; });
-    if (!existingJob) { toast('Job order not found', 'error'); return; }
-
-    var oldEmployer = existingJob.employer;
-    var oldCountry  = existingJob.country;
-
-    // All current DB positions for this employer group
-    var siblings = DB.jobs.filter(function(j){
-      return j.employer === oldEmployer && j.country === oldCountry;
-    });
-
-    // Build lookup of old positions by every known ID
-    var oldById = {};
-    siblings.forEach(function(j){
-      oldById[j.id] = j;
-      if (j._dbId) oldById[j._dbId] = j;
-    });
-
-    var keptIds = new Set();
-
-    positions.forEach(function(pos) {
-      var existingPos = (pos.id    && oldById[pos.id])    ? oldById[pos.id]
-                      : (pos._dbId && oldById[pos._dbId]) ? oldById[pos._dbId]
-                      : null;
-
-      if (existingPos) {
-        // ── PATCH existing — keep its UUID, no applicant links broken ──
-        keptIds.add(existingPos.id);
-        if (existingPos._dbId) keptIds.add(existingPos._dbId);
-        existingPos.title          = pos.title;
-        existingPos.salary         = pos.salary || existingPos.salary;
-        existingPos.slots          = pos.slots;
-        existingPos.filled         = pos.filled;
-        existingPos.employerFeeUSD = pos.employerFeeUSD || 0;
-        existingPos.employer       = employer;
-        existingPos.country        = country;
-        existingPos.category       = category;
-        existingPos.deadline       = deadline;
-        existingPos.status         = status;
-        existingPos.postToWebsite  = postToWebsite;
-        apiUpdateJob(existingPos).catch(function(e){ console.warn('PATCH job failed', e); });
-
-      } else {
-        // ── CREATE truly new position ───────────────────────────────
-        var newJob = {
-          id: genId('JOB'), employer: employer, country: country, category: category,
-          deadline: deadline, status: status, title: pos.title,
-          slots: pos.slots, filled: pos.filled,
-          salary: pos.salary || 'TBD', employerFeeUSD: pos.employerFeeUSD || 0,
-          postToWebsite: postToWebsite,
-        };
-        DB.jobs.unshift(newJob);
-        apiCreateJob(newJob).then(function(r){
-          if (r.ok) { newJob._dbId = r.data.id; autosave('jobs'); }
-        });
-      }
-    });
-
-    // ── DELETE positions removed from modal ───────────────────────────
-    siblings.forEach(function(oldJob) {
-      if (keptIds.has(oldJob.id) || keptIds.has(oldJob._dbId)) return;
-
-      DB.jobs = DB.jobs.filter(function(j){ return j.id !== oldJob.id; });
-      var delDbId = oldJob._dbId || oldJob.id;
-      if (isUUID(delDbId)) apiDeleteJob(delDbId).catch(function(){});
-
-      // Remap applicants that referenced this deleted position → first surviving position
-      var fallback = DB.jobs.find(function(j){ return j.employer === employer && j.country === country; });
-      DB.applicants.forEach(function(a) {
-        if (a._jobOrderId !== oldJob.id && a._jobOrderId !== oldJob._dbId) return;
-        a._jobOrderId = fallback ? (fallback._dbId || fallback.id) : '';
-        a.job         = fallback ? (fallback.title + ' · ' + fallback.country) : '';
-        if (isUUID(a._dbId)) {
-          apiFetch('/applicants/' + a._dbId, {
-            method: 'PATCH',
-            body: JSON.stringify({ job_order_id: a._jobOrderId || null }),
-          }).catch(function(){});
-        }
-      });
-      autosave('applicants');
-    });
-
-    addAudit('UPDATE', 'Job Order', employer + ' (' + country + ') — ' + positions.length + ' position(s) updated');
-    toast('Job order updated', 'success');
-
-  } else {
-    // ── CREATE MODE — create one DB.jobs entry per position ───────────
-    positions.forEach(function(pos) {
-      var newJob = {
-        id:             genId('JOB'),
-        employer:       employer,
-        country:        country,
-        category:       category,
-        deadline:       deadline,
-        status:         status,
-        title:          pos.title,
-        slots:          pos.slots,
-        filled:         pos.filled,
-        salary:         pos.salary || 'TBD',
-        employerFeeUSD: pos.employerFeeUSD || 0,
-        postToWebsite:  postToWebsite,
-      };
-      DB.jobs.unshift(newJob);
-      apiCreateJob(newJob).then(function(r){
-        if (r.ok) { newJob._dbId = r.data.id; autosave('jobs'); }
-        else toast('💾 Job position saved — server will sync when reconnected','info');
-      });
-    });
-
-    addAudit('CREATE', 'Job Order', employer + ' (' + country + ') — ' + positions.length + ' position(s) created');
-    pushNotif('New Job Order', employer + ' (' + country + ') — ' + positions.length + ' position(s) added', 'job',
-      { page: 'jobs', employer: employer, country: country });
-    toast(positions.length + ' position(s) created for ' + employer, 'success');
-  }
-
-  autosave('jobs');
-  // Invalidate jobs cache so all users see changes on next poll
-  if (typeof _cache !== 'undefined') Object.keys(_cache).forEach(function(k){ if(k.includes('/jobs')) delete _cache[k]; });
-  if (typeof _lastFetch !== 'undefined') _lastFetch['jobs'] = 0;
-  closeOverlay('overlay-job');
-  renderJobs();
-}
 
 // ════════════════════════════════════════════════════════
 // ANALYTICS
@@ -17130,7 +17156,9 @@ function _doStatusChange(applicantId, newStatus, oldStatus) {
   // ── Release slot when status moves back from Deployed ────────────────────────
   // When leaving Deployed → free the slot so a replacement can be placed
   // EXCLUDED: Repatriated (worker completed deployment, slot was legitimately used)
-  if (oldStatus === 'Deployed' && newStatus !== 'Deployed' && newStatus !== 'Repatriated') {
+  if (_isLiveSession() && oldStatus === 'Deployed' && newStatus !== 'Deployed' && newStatus !== 'Repatriated') {
+    _joSoon();       // the server recomputes slots and reopens the position
+  } else if (oldStatus === 'Deployed' && newStatus !== 'Deployed' && newStatus !== 'Repatriated') {
     var _relJob = app._jobOrderId
       ? DB.jobs.find(function(j){ return j.id === app._jobOrderId || j._dbId === app._jobOrderId; })
       : null;
@@ -18437,7 +18465,9 @@ function _doStatusChangeDeployed(applicantId, oldStatus, deployDate) {
     var jt = app.job.split('·')[0].trim().toLowerCase();
     linkedJob = DB.jobs.find(function(j){ return j.title.toLowerCase()===jt && j.status==='Open'; });
   }
-  if (linkedJob) {
+  if (linkedJob && _isLiveSession()) {
+    _joSoon();       // slots are counted by the server from the pipeline
+  } else if (linkedJob) {
     linkedJob.filled = (linkedJob.filled||0)+1;
     if (linkedJob.slots && linkedJob.filled >= linkedJob.slots) {
       linkedJob.status = 'Filled';
@@ -20060,41 +20090,6 @@ function clearCommissionFilters() {
 }
 
 // ── backfillJobStatuses — set In Progress for any job group that has assigned applicants ─
-function backfillJobStatuses() {
-  // Build set of employer names whose positions have at least one applicant assigned
-  var employersWithApplicants = new Set();
-  DB.jobs.forEach(function(job) {
-    var jobId = job._dbId || job.id;
-    var hasApplicant = DB.applicants.some(function(a) {
-      return a._jobOrderId && (a._jobOrderId === jobId || a._jobOrderId === job.id || a._jobOrderId === job._dbId);
-    });
-    if (hasApplicant) employersWithApplicants.add(job.employer);
-  });
-
-  if (!employersWithApplicants.size) return;
-
-  var changed = [];
-  DB.jobs.forEach(function(job) {
-    if (job.status !== 'Open') return;
-    if (employersWithApplicants.has(job.employer)) {
-      job.status = 'In Progress';
-      changed.push(job);
-    }
-  });
-
-  if (!changed.length) return;
-
-  autosave('jobs');
-  if (currentPage === 'jobs') renderJobs();
-
-  changed.forEach(function(job) {
-    apiFetch('/jobs/' + (job._dbId || job.id), {
-      method: 'PATCH',
-      body: JSON.stringify({ status: 'In Progress' }),
-    }).catch(function(){});
-  });
-}
-
 // ── Automatic commission backfill ─────────────────────────────────────
 // Commissions normally fire on a live status change. Anything that bypasses
 // that path — records imported/synced from elsewhere, a status set before an
