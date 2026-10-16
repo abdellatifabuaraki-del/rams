@@ -12,6 +12,10 @@
   } catch(e) {}
 })();
 </script>
+<link rel="preconnect" href="https://rams-backend-production-399f.up.railway.app" crossorigin>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<script>try{fetch("https://rams-backend-production-399f.up.railway.app/health",{cache:"no-store"}).catch(function(){});}catch(e){}</script>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300;12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -4432,24 +4436,17 @@ function _resolveExpenseApplicants() {
 }
 
 // Full sync on login — parallel fetch of all collections
-async function syncAllFromAPI() {
+async function syncAllFromAPI(opts) {
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
   if (!isLive) return;
-  var [apps, jobs, expenses, users, audit, agentsR, efR, alR, commR, crR, olR, compR, ofR] = await Promise.all([
-    apiFetch('/applicants?limit=500'),
-    apiFetch('/jobs?limit=2000'),
-    apiFetch('/expenses?limit=500'),
-    apiFetch('/users'),
-    apiFetch('/audit?limit=100'),
-    apiFetch('/agents'),
-    apiFetch('/employer-fees'),
-    apiFetch('/agent-ledger'),
-    apiFetch('/commissions'),
-    apiFetch('/country-rules'),
-    apiFetch('/office-ledger?limit=5000'),
-    apiFetch('/complaints'),
-    apiFetch('/office-funds'),
+  // All requests start at once (the ones the first screens need are queued first), but the screen does not wait for the heavy lists.
+  var pApps = apiFetch('/applicants?limit=500'), pJobs = apiFetch('/jobs?limit=2000'), pUsers = apiFetch('/users'), pAgents = apiFetch('/agents');
+  var pRest = Promise.all([
+    apiFetch('/expenses?limit=500'), apiFetch('/audit?limit=100'), apiFetch('/employer-fees'), apiFetch('/agent-ledger'), apiFetch('/commissions'),
+    apiFetch('/country-rules'), apiFetch('/office-ledger?limit=5000'), apiFetch('/complaints'), apiFetch('/office-funds'),
   ]);
+  var core = await Promise.all([pApps, pJobs, pUsers, pAgents]);
+  var apps = core[0], jobs = core[1], users = core[2], agentsR = core[3];
   if (apps.ok) {
     var _freshApps = (apps.data.data || apps.data).map(mapApplicant);
     var _deleted = window._deletedApplicantIds || new Set();
@@ -4488,20 +4485,7 @@ async function syncAllFromAPI() {
     _markFresh('applicants');
   }
   if (jobs.ok)     { DB.jobs     = jobs.data.map(mapJob);       _markFresh('jobs');     }
-  if (expenses.ok) {
-    DB.expenses = expenses.data.map(mapExpense);
-    // Server status is authoritative — no local overrides
-    _markFresh('expenses');
-    if (expenses.data.length >= 500) setTimeout(function(){ fetchExpenses(); }, 300);   // more than one page — load the rest
-  }
   if (users.ok)    { DB.users    = users.data.map(mapUser);      _markFresh('users');    }
-  if (audit.ok)    {
-    DB.auditLog = audit.data.map(function(r){ return {
-      id:r.id, action:r.action, entity:r.entity||'', detail:r.detail||'',
-      user:r.user_name||'System', time:new Date(r.created_at).toLocaleString(), type:(r.action||'').toLowerCase()
-    }; });
-    _markFresh('audit');
-  }
   if (agentsR && agentsR.ok && Array.isArray(agentsR.data)) {
     DB.agents = agentsR.data.map(mapAgent);
     if (window._agentBalanceOverrides && Object.keys(window._agentBalanceOverrides).length > 0) {
@@ -4513,6 +4497,21 @@ async function syncAllFromAPI() {
       });
     }
     _markFresh('agents');
+  }
+  var restWork = pRest.then(function(rest) {
+    var expenses = rest[0], audit = rest[1], efR = rest[2], alR = rest[3], commR = rest[4], crR = rest[5], olR = rest[6], compR = rest[7], ofR = rest[8];
+  if (expenses.ok) {
+    DB.expenses = expenses.data.map(mapExpense);
+    // Server status is authoritative — no local overrides
+    _markFresh('expenses');
+    if (expenses.data.length >= 500) setTimeout(function(){ fetchExpenses(); }, 300);   // more than one page — load the rest
+  }
+  if (audit.ok)    {
+    DB.auditLog = audit.data.map(function(r){ return {
+      id:r.id, action:r.action, entity:r.entity||'', detail:r.detail||'',
+      user:r.user_name||'System', time:new Date(r.created_at).toLocaleString(), type:(r.action||'').toLowerCase()
+    }; });
+    _markFresh('audit');
   }
   if (efR && efR.ok && Array.isArray(efR.data)) {
     DB.employerFees = efR.data.map(mapEmployerFee);
@@ -4575,6 +4574,10 @@ async function syncAllFromAPI() {
     autosave('users'), autosave('agents'), autosave('employerFees'), autosave('agentLedger'),
     autosave('commissions'), autosave('countryRules'), autosave('officeLedger'), autosave('complaints'),
   ]).catch(function(){});
+  });
+  // fast: return as soon as applicants / jobs / users / agents are in; the rest fills in behind the scenes
+  if (opts && opts.fast) { restWork.catch(function(e) { console.warn('[sync] background load failed:', e && e.message); }); return; }
+  await restWork;
 }
 
 // ── Sync badge ────────────────────────────────────────────────────────
@@ -4596,8 +4599,8 @@ function _showSyncBadge(msg) {
 var _pollInterval  = null;
 var _pollPaused    = false;
 var _lastActivity  = Date.now();
-var _POLL_ACTIVE   = 8000;   // 8s  when active (fast real-time sync)
-var _POLL_IDLE     = 20000;  // 20s when idle   (>90s no interaction)
+var _POLL_ACTIVE   = 15000;   // 8s  when active (fast real-time sync)
+var _POLL_IDLE     = 45000;  // 20s when idle   (>90s no interaction)
 var _POLL_HIDDEN   = 0;      // paused when tab hidden
 
 function startPolling() {
@@ -12383,30 +12386,33 @@ function _showApp(user) {
   var _startPage = window.__pendingPageRestore || 'dashboard';
   if (typeof nav === 'function') nav(_startPage);
 
-  // Load all data after login
-  setTimeout(async function() {
-    if (typeof loadDB === 'function')               await loadDB();
-    if (typeof loadSettings === 'function')         await loadSettings();
-    if (typeof loadSequences === 'function')        await loadSequences();
-    if (typeof loadDisplayIds === 'function')       await loadDisplayIds();
-    if (typeof loadSharedPermissions === 'function') await loadSharedPermissions();
-    if (typeof applyDisplayIds === 'function')      applyDisplayIds();
-    if (typeof applyRBAC === 'function')            applyRBAC();
-    if (typeof flushAutosave === 'function')  await flushAutosave();
-    await syncAllFromAPI();
-    await fetchAgents();
-    await loadViewerScopes();
-    await loadSharedPermissions().catch(function(){});
-    if (typeof renderNotifications === 'function')  renderNotifications();
-    // Clear the restore flag — we already navigated there in _showApp
-    window.__pendingPageRestore = null;
-    // Only render dashboard if that's the current page
-    if (currentPage === 'dashboard') {
-      if (typeof renderDashboard === 'function') renderDashboard();
-    }
-    if (typeof startPolling === "function") startPolling();
-    if (typeof _startNotifTicker === "function") _startNotifTicker();
-  }, 100);
+  // Load all data after login. Local data paints first; the network is used in parallel and the first screen
+  // appears as soon as applicants / jobs / users / agents are in (ledgers, expenses, audit load behind it).
+  window.__bootDone = new Promise(function(resolve) { setTimeout(async function() {
+    try {
+      if (typeof loadDB === 'function')               await loadDB();
+      await Promise.all([
+        typeof loadSequences === 'function' ? loadSequences() : null,
+        typeof loadDisplayIds === 'function' ? loadDisplayIds() : null,
+        typeof loadSharedPermissions === 'function' ? loadSharedPermissions().catch(function(){}) : null,
+        typeof loadViewerScopes === 'function' ? loadViewerScopes().catch(function(){}) : null,
+      ]);
+      if (typeof loadSettings === 'function')         loadSettings().catch(function(){});   // network; never blocks the screen
+      if (typeof applyDisplayIds === 'function')      applyDisplayIds();
+      if (typeof applyRBAC === 'function')            applyRBAC();
+      // the dashboard fetches its own numbers from the server — let it start now, in parallel with the sync
+      if (currentPage === 'dashboard' && typeof renderDashboard === 'function') renderDashboard();
+      if (typeof flushAutosave === 'function')  await flushAutosave();
+      await syncAllFromAPI({ fast: true });
+      fetchAgents().catch(function(){});
+      if (typeof renderNotifications === 'function')  renderNotifications();
+      window.__pendingPageRestore = null;   // we already navigated there in _showApp
+      if (currentPage === 'dashboard') { if (typeof renderDashboard === 'function') renderDashboard(); }
+      if (typeof startPolling === "function") startPolling();
+      if (typeof _startNotifTicker === "function") _startNotifTicker();
+    } catch (e) { console.warn('[boot]', e && e.message); }
+    resolve();
+  }, 0); });
 }
 async function _doLogin() {
   var email  = (document.getElementById('li-email').value||'').trim();
@@ -21533,36 +21539,15 @@ _showApp = function(user) {
     _showReadOnlyBanner();
     _addRoleSwitcher();
   }, 80);
-  // Sync all data from PostgreSQL after login + flush pending + load local data
+  // the data boot lives in _showApp above; this only adds the background services once it has finished
   setTimeout(async function() {
-    // Load local-only data first (agents, ledger, scopes, settings, sequences)
-    await loadDB();
-    await loadSettings();
-    await loadSequences();
-    await loadDisplayIds();
-    // Apply display IDs to any applicants already in local store
-    applyDisplayIds();
-    // Load shared permissions (may have been updated by admin)
-    await loadSharedPermissions();
-    // Flush any pending server writes from last session
-    await flushAutosave();
-    // Pull fresh data from PostgreSQL (includes agents now)
-    await syncAllFromAPI();
-    await fetchAgents();
-    // Silently fix job statuses — set In Progress for jobs with assigned applicants
+    await window.__bootDone;
     if (typeof backfillJobStatuses === 'function') {
-      setTimeout(function() {
-        try { backfillJobStatuses(); } catch(e) {}
-      }, 1000);
+      setTimeout(function() { try { backfillJobStatuses(); } catch(e) {} }, 1000);
     }
-    if (typeof renderDashboard === 'function') renderDashboard();
-    if (typeof renderNotifications === 'function') renderNotifications();
-    startPolling();
     startChatPoll();
     startWaPoll();
-    _fetchChatDMs().catch(function(){});
     _startInvoiceSync();
-    if (typeof _startNotifTicker === "function") _startNotifTicker();
   }, 200);
 };
 
