@@ -8,12 +8,7 @@
 // Apply theme immediately to prevent flash — before any JS loads
 (function(){
   try {
-    var s = localStorage.getItem('rams:settings:general');
-    if (s) {
-      var fields = JSON.parse(s);
-      var dm = fields.find(function(f){ return f.lbl === 'Dark Mode'; });
-      if (dm && dm.value) document.documentElement.setAttribute('data-theme','dark');
-    }
+    if (localStorage.getItem('rams:pref:dark') === '1') document.documentElement.setAttribute('data-theme','dark');
   } catch(e) {}
 })();
 </script>
@@ -2528,14 +2523,12 @@ button[disabled][data-rbac-locked] {
     <div class="page content-pad" id="page-settings">
       <div class="pg-hdr">
         <div class="pg-hdr-l"><h1>Settings</h1><p>Configure your agency preferences and system options.</p></div>
-        <div class="pg-hdr-r">
-          <button class="btn btn-p btn-sm" onclick="toast('Settings saved successfully','success')">Save Changes</button>
-        </div>
       </div>
       <div class="settings-layout">
         <nav class="settings-nav" aria-label="Settings sections">
           <div class="settings-nav-item active" onclick="switchSettings('general',this)">General</div>
           <div class="settings-nav-item" onclick="switchSettings('agency',this)">Company Profile</div>
+          <div class="settings-nav-item" onclick="switchSettings('prefs',this)">My Preferences</div>
           <div class="settings-nav-item" onclick="switchSettings('notifications',this)">Notifications</div>
           <div class="settings-nav-item" onclick="switchSettings('security',this)">Security</div>
           <div class="settings-nav-item" onclick="switchSettings('users',this)">Team & Users</div>
@@ -3210,6 +3203,8 @@ async function apiFetch(path, opts) {
   var headers = opts._noContentType
     ? { 'Authorization': 'Bearer ' + token }
     : Object.assign({ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, opts.headers || {});
+  // tells the server this request follows real user activity (the server enforces the idle timeout)
+  if (typeof _lastActivity !== 'undefined' && Date.now() - _lastActivity < 60000) headers['X-User-Active'] = '1';
 
   // ── Cache reads for GET ──────────────────────────────────────────────
   if (method === 'GET') {
@@ -3560,6 +3555,8 @@ function mapUser(row) {
     email:  row.email || '',
     status: row.is_active ? 'Active' : 'Inactive',
     last:   row.last_seen ? new Date(row.last_seen).toLocaleDateString() : 'Never',
+    lastSeen: row.last_seen || null,
+    totp:   !!row.totp_enabled,
     _dbId:  row.id,
   };
 }
@@ -5739,35 +5736,7 @@ document.addEventListener('click', e => {
 // ════════════════════════════════════════════════════════
 // THEME
 // ════════════════════════════════════════════════════════
-function toggleTheme() {
-  const html   = document.documentElement;
-  const isDark = html.getAttribute('data-theme') === 'dark';
-  const newTheme = isDark ? 'light' : 'dark';
-  html.setAttribute('data-theme', newTheme);
-  toast(isDark ? '☀️ Light mode enabled' : '🌙 Dark mode enabled', 'info');
-
-  // Persist to settings so it survives refresh
-  var general = SETTINGS_SECTIONS.general && SETTINGS_SECTIONS.general.fields;
-  if (general) {
-    var field = general.find(function(f){ return f.lbl === 'Dark Mode'; });
-    if (field) field.value = !isDark;
-  }
-  // Update the settings toggle button if visible
-  var toggles = document.querySelectorAll('#settings-content .toggle');
-  toggles.forEach(function(btn) {
-    if (btn.getAttribute('data-lbl') === 'Dark Mode') {
-      btn.classList.toggle('on', !isDark);
-    }
-  });
-  // Save to localStorage + Store
-  Store.set('rams:settings:general',
-    JSON.stringify(SETTINGS_SECTIONS.general ? SETTINGS_SECTIONS.general.fields : [])
-  ).catch(function(){});
-  try {
-    localStorage.setItem('rams:settings:general',
-      JSON.stringify(SETTINGS_SECTIONS.general ? SETTINGS_SECTIONS.general.fields : []));
-  } catch(e) {}
-}
+function toggleTheme() { toggleDarkMode(); }
 
 // ════════════════════════════════════════════════════════
 // NOTIFICATIONS
@@ -6529,14 +6498,7 @@ function _esc(str) {
 // ════════════════════════════════════════════════════════
 
 // ── notifEnabled — check if a toggle is on in Settings ─────────────────
-function _notifEnabled(label) {
-  try {
-    var fields = SETTINGS_SECTIONS['notifications'] && SETTINGS_SECTIONS['notifications'].fields;
-    if (!fields) return true;
-    var field = fields.find(function(f){ return f.lbl === label; });
-    return field ? !!field.value : true;
-  } catch(e) { return true; }
-}
+function _notifEnabled(label) { return true; }   // live sessions: the server applies each person's notification preferences
 
 // ── pushNotif — add to DB.notifications, render bell, browser push ──────
 // link format: { page, id } e.g. { page:'applicants', id:'uuid' } or { page:'accounting' }
@@ -11763,171 +11725,361 @@ async function saveWaWebhookConfig() {
 // ════════════════════════════════════════════════════════
 // BILLING
 // ════════════════════════════════════════════════════════
-function switchSettings(section, el) {
+// ════════════════════════════════════════════════════════
+// SETTINGS — company-wide values live on the server; personal preferences are per person
+// ════════════════════════════════════════════════════════
+var _st = { data: null, loading: false, dirty: false, errors: {}, draft: null, saving: false, uq: '', ur: '', twofa: null, usersLoaded: false };
+var _ST_TABS = ['general', 'agency', 'prefs', 'notifications', 'security', 'users', 'data'];
+var _ST_ROLE_LABEL = { super_admin: 'Super Admin', admin: 'Admin', manager: 'Manager', finance: 'Finance', compliance: 'Compliance', agent: 'Recruiter', viewer: 'Viewer' };
+function _stLive() { return typeof _isLiveSession === 'function' && _isLiveSession(); }
+function _stE(s) { return escapeHtml(String(s === undefined || s === null ? '' : s)); }
+function _stCanEdit() { return !!(_st.data && _st.data.can_edit); }
+function _stVal(k, fallback) {
+  if (_st.draft && _st.draft[k] !== undefined) return _st.draft[k];
+  var d = _st.data; if (!d) return fallback;
+  if (d.company && d.company[k] !== undefined) return d.company[k];
+  if (d.security && d.security[k] !== undefined) return d.security[k];
+  return fallback;
+}
+function _stErr(k) { return _st.errors[k] ? '<div class="st-err" style="color:var(--red);font-size:11.5px;margin-top:3px">' + _stE(_st.errors[k]) + '</div>' : ''; }
+function _stMsg(r, fb) { return (r && (r.error || (r.data && (r.data.error || r.data.message)))) || fb || 'Something went wrong'; }
+
+async function _stLoad(force) {
+  if (!_stLive()) return null;
+  if (_st.loading) return _st.data;
+  if (_st.data && !force) return _st.data;
+  _st.loading = true;
+  try {
+    var r = await apiFetch('/settings?_=' + Date.now());
+    if (r && r.ok && r.data && r.data.company) { _st.data = r.data; applySettings(); }
+  } catch (e) { /* keep what we have */ }
+  _st.loading = false;
+  return _st.data;
+}
+async function loadSettings() { if (_stLive()) { await _stLoad(true); _stLanding(); } applySettings(); }
+
+// What the server says becomes what the screen does (time zone, date format, company name, idle timeout, theme).
+function applySettings() {
+  var d = _st.data;
+  if (d) {
+    if (d.company.timezone) window._ramsTimezone = d.company.timezone;
+    if (d.company.date_format) window._ramsDateFormat = d.company.date_format;
+    var name = d.company.name;
+    if (name) {
+      var lt = document.querySelector('.sb-logo-text'); if (lt) lt.textContent = name;
+      var cn = document.querySelector('.sb-co-name'); if (cn) cn.textContent = name;
+      document.title = name + ' — RAMS';
+    }
+    if (d.security && d.security.idle_minutes) { window._ramsSessionTimeoutMs = d.security.idle_minutes * 60000; if (typeof _resetSessionTimer === 'function') _resetSessionTimer(); }
+    if (d.prefs) _stApplyDark(!!d.prefs.dark_mode, true);
+    _stHeartbeat();
+  }
+}
+var _stHb = null;
+// keeps the server's idle clock honest while you are typing or reading without making other requests
+function _stHeartbeat() {
+  if (_stHb || !_stLive()) return;
+  _stHb = setInterval(function() {
+    if (!_stLive() || document.hidden || Date.now() - _lastActivity > 120000) return;
+    apiFetch('/auth/me?_=' + Date.now(), { headers: { 'X-User-Active': '1' } });
+  }, 120000);
+}
+function _stApplyDark(on, quiet) {
+  document.documentElement.setAttribute('data-theme', on ? 'dark' : 'light');
+  try { localStorage.setItem('rams:pref:dark', on ? '1' : '0'); } catch (e) {}
+}
+var _stLandingDone = false;
+function _stLanding() {
+  if (_stLandingDone || !_st.data || !_st.data.prefs) return; _stLandingDone = true;
+  var l = _st.data.prefs.landing;
+  if (l && l !== 'dashboard' && !window.__pendingPageRestore && typeof canAccessPage === 'function' && canAccessPage(l) && typeof nav === 'function') nav(l);
+}
+// top-bar moon/sun button
+function toggleDarkMode() {
+  var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  _stSetPref({ dark_mode: !isDark });
+  toast(isDark ? '☀️ Light mode enabled' : '🌙 Dark mode enabled', 'info');
+}
+async function _stSetPref(p) {
+  if (p.dark_mode !== undefined) _stApplyDark(!!p.dark_mode);
+  if (_st.data && _st.data.prefs) Object.assign(_st.data.prefs, p);
+  if (_stLive()) {
+    var r = await apiFetch('/settings/prefs', { method: 'PUT', body: JSON.stringify(p) });
+    if (!r.ok) toast('Could not save your preference: ' + _stMsg(r), 'error');
+    else { var el = document.getElementById('st-saved'); if (el) { el.style.opacity = '1'; clearTimeout(el._t); el._t = setTimeout(function() { el.style.opacity = '0'; }, 1500); } }
+  }
+  if (currentPage === 'settings' && currentSettingsSection === 'prefs') renderSettings();
+}
+
+// ── navigation ────────────────────────────────────────────────────────
+async function switchSettings(section, el) {
+  if (_st.dirty && section !== currentSettingsSection) {
+    var c = await _joChoice('Unsaved changes', 'You changed settings on this tab and did not save them.', [{ key: 'stay', label: 'Keep editing' }, { key: 'discard', label: 'Discard changes', danger: true }]);
+    if (c !== 'discard') return;
+  }
+  _st.dirty = false; _st.errors = {}; _st.draft = null;
   currentSettingsSection = section;
-  document.querySelectorAll('.settings-nav-item').forEach(i=>i.classList.remove('active'));
+  document.querySelectorAll('.settings-nav-item').forEach(function(i) { i.classList.remove('active'); });
   if (el) el.classList.add('active');
   renderSettings();
 }
-// ════════════════════════════════════════════════════════
-// SETTINGS DATA
-// ════════════════════════════════════════════════════════
-const SETTINGS_SECTIONS = {
-  general: {
-    title: 'General Settings',
-    fields: [
-      { lbl: 'Agency Name',        sub: 'Your company name shown across the system',       type: 'input',  value: 'Recruitment Company' },
-      { lbl: 'System Language',    sub: 'Interface language',                               type: 'select', opts: ['English','Arabic','French'] },
-      { lbl: 'Timezone',           sub: 'Used for timestamps and scheduling',               type: 'select', opts: ['Asia/Manila (UTC+8)','UTC','Asia/Dubai (UTC+4)'] },
-      { lbl: 'Date Format',        sub: 'How dates are displayed across the system',        type: 'select', opts: ['DD/MM/YYYY','MM/DD/YYYY','YYYY-MM-DD'] },
-      { lbl: 'Dark Mode',          sub: 'Toggle dark/light theme',                         type: 'toggle', value: false },
-    ]
-  },
-  agency: {
-    title: 'Agency Profile',
-    fields: [
-      { lbl: 'Agency License No.', sub: 'POEA/government-issued license number',           type: 'input',  value: '' },
-      { lbl: 'Country',            sub: 'Country of operation',                             type: 'input',  value: 'Philippines' },
-      { lbl: 'Address',            sub: 'Physical office address',                          type: 'input',  value: '' },
-      { lbl: 'Contact Email',      sub: 'Primary contact email for the agency',             type: 'input',  value: '' },
-      { lbl: 'Contact Phone',      sub: 'Primary phone number',                             type: 'input',  value: '' },
-    ]
-  },
-  notifications: {
-    title: 'Notifications',
-    fields: [
-      { lbl: 'Email Notifications', sub: 'Send email alerts for important events',         type: 'toggle', value: true },
-      { lbl: 'Applicant Updates',   sub: 'Notify when applicant status changes',           type: 'toggle', value: true },
-      { lbl: 'Document Alerts',     sub: 'Notify when documents need review',              type: 'toggle', value: true },
-      { lbl: 'Job Order Alerts',    sub: 'Notify when job orders are near deadline',       type: 'toggle', value: false },
-      { lbl: 'System Alerts',       sub: 'Critical system and security alerts',            type: 'toggle', value: true },
-    ]
-  },
-  security: {
-    title: 'Security',
-    fields: [
-      { lbl: 'Two-Factor Authentication', sub: 'Protect your account with an authenticator app', type: 'button', lbl2: 'Set Up 2FA', danger: false, action: 'open2FASetup' },
-      { lbl: 'Session Timeout',    sub: 'Auto-logout after inactivity',                   type: 'select', opts: ['30 minutes','1 hour','4 hours','Never'] },
-      { lbl: 'Password Policy',    sub: 'Enforce strong password requirements',            type: 'toggle', value: true },
-      { lbl: 'Login Audit Log',    sub: 'Track all login attempts',                       type: 'toggle', value: true },
-      { lbl: 'Change Password',    sub: 'Update your account password',                   type: 'button', lbl2: 'Change Password', danger: false, action: 'openChangePassword' },
-    ]
-  },
-  users: {
-    title: 'Users & Access',
-    fields: []
-  },
-  data: {
-    title: 'Data Management',
-    fields: [
-      { lbl: 'Export All Data',    sub: 'Download a full CSV export of all records',       type: 'button', lbl2: 'Export Data',    danger: false },
-      { lbl: 'Clear Local Cache',  sub: 'Remove locally cached data and re-sync from server', type: 'button', lbl2: 'Clear Cache', danger: false, action: 'clearLocalCache' },
-      { lbl: 'Clear Audit Log',    sub: 'Permanently delete all audit trail entries',      type: 'button', lbl2: 'Clear Audit Log',danger: true },
-      { lbl: 'Wipe All Data',      sub: 'Clear ALL records from the live database (irreversible)', type: 'button', lbl2: 'Wipe Database', danger: true, action: 'wipeAllServerData' },
-    ]
-  },
-};
-
-function _onSettingToggle(btn) {
-  var label   = btn.getAttribute('data-lbl');
-  var section = btn.getAttribute('data-section');
-
-  btn.classList.toggle('on');
-  var isOn = btn.classList.contains('on');
-  btn.setAttribute('aria-pressed', isOn);
-
-  // Update in-memory value immediately
-  var sec   = SETTINGS_SECTIONS[section];
-  var field = null;
-  if (sec) {
-    field = sec.fields.find(function(f){ return f.lbl === label; });
-    if (field) field.value = isOn;
+function _stMarkDirty() { _st.dirty = true; var b = document.getElementById('st-save'); if (b) b.disabled = false; var n = document.getElementById('st-dirty'); if (n) n.style.display = ''; }
+function _stCollect() {
+  var out = {};
+  Array.prototype.forEach.call(document.querySelectorAll('#settings-content [data-k]'), function(e) {
+    var k = e.getAttribute('data-k');
+    if (e.type === 'checkbox' && e.hasAttribute('data-group')) { out[k] = out[k] || []; if (e.checked) out[k].push(e.value); }
+    else if (e.type === 'checkbox') out[k] = e.checked;
+    else if (e.type === 'number') out[k] = e.value === '' ? '' : Number(e.value);
+    else out[k] = e.value;
+  });
+  return out;
+}
+async function _stSave(kind) {
+  if (_st.saving || !_st.data) return;
+  var body = _stCollect(); body.version = _st.data.version;
+  _st.saving = true; var btn = document.getElementById('st-save'); if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  var r = await apiFetch('/settings/' + kind, { method: 'PUT', body: JSON.stringify(body) });
+  _st.saving = false;
+  if (!r.ok) {
+    var f = r.data && r.data.fields ? r.data.fields : (r.data && r.data.field ? (function(o) { o[r.data.field] = r.error; return o; })({}) : {});
+    _st.errors = f; _st.draft = body;
+    if (r.httpStatus === 409) { toast(_stMsg(r), 'error'); _st.draft = null; _st.errors = {}; _st.dirty = false; await _stLoad(true); }
+    else toast(Object.keys(f).length ? 'Please fix the highlighted fields' : _stMsg(r, 'Could not save'), 'error');
+    renderSettings(); return;
   }
+  _st.data = r.data; _st.dirty = false; _st.errors = {}; _st.draft = null;
+  applySettings(); toast('Settings saved', 'success'); renderSettings();
+}
 
-  // Request browser notification permission when Email Notifications turned on
-  if (label === 'Email Notifications' && isOn) {
-    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
-      Notification.requestPermission().then(function(p) {
-        if (p === 'denied') {
-          toast('⚠️ Browser blocked notifications — allow them in your browser settings', 'error');
-          btn.classList.remove('on');
-          if (field) field.value = false;
-        } else if (p === 'granted') {
-          toast('✅ Browser notifications enabled', 'success');
-        }
-      });
-    } else if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
-      toast('⚠️ Notifications blocked by browser — enable them in browser site settings', 'error');
-      btn.classList.remove('on');
-      if (field) field.value = false;
-      return;
-    }
+// ── small UI helpers ──────────────────────────────────────────────────
+function _stRow(label, sub, control, extra) {
+  return '<div class="settings-field"><div class="settings-field-info"><div class="settings-field-lbl">' + _stE(label) + '</div><div class="settings-field-sub">' + sub + '</div></div><div style="min-width:200px;max-width:320px;flex:0 1 320px">' + control + (extra || '') + '</div></div>';
+}
+function _stInput(k, type, ph, extra) {
+  var dis = _stCanEdit() ? '' : ' disabled';
+  return '<input class="form-input" data-k="' + k + '" type="' + (type || 'text') + '" value="' + _stE(_stVal(k, '')) + '" placeholder="' + _stE(ph || '') + '" oninput="_stMarkDirty()"' + dis + ' ' + (extra || '') + ' style="width:100%;' + (_st.errors[k] ? 'border-color:var(--red)' : '') + '">' + _stErr(k);
+}
+function _stSelect(k, opts, labelFn) {
+  var cur = _stVal(k, ''); var dis = _stCanEdit() ? '' : ' disabled';
+  return '<select class="filter-select" data-k="' + k + '" onchange="_stMarkDirty()"' + dis + ' style="width:100%">' + opts.map(function(o) { return '<option value="' + _stE(o) + '"' + (o === cur ? ' selected' : '') + '>' + _stE(labelFn ? labelFn(o) : o) + '</option>'; }).join('') + '</select>' + _stErr(k);
+}
+function _stHead(title, saveKind) {
+  var live = _stLive();
+  var save = saveKind && live && _stCanEdit() ? '<span id="st-dirty" style="' + (_st.dirty ? '' : 'display:none;') + 'font-size:11px;color:var(--amber);font-weight:700;margin-right:8px">Unsaved changes</span><button id="st-save" class="btn btn-p btn-sm" ' + (_st.dirty ? '' : 'disabled') + ' onclick="_stSave(\'' + saveKind + '\')">Save changes</button>' : '';
+  return '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><div style="font-size:15px;font-weight:800">' + _stE(title) + '</div><div>' + save + '<span id="st-saved" style="font-size:11px;color:var(--green);font-weight:700;opacity:0;transition:opacity .3s;margin-left:8px">✓ Saved</span></div></div>' +
+    (!live ? '<div style="background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--muted);margin:8px 0">Demo mode — company settings are shown for reference and cannot be changed. Sign in to a live account to edit them.</div>' : '') +
+    (live && !_stCanEdit() && saveKind ? '<div style="background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--muted);margin:8px 0">Only an Admin can change these. You can see the current values.</div>' : '');
+}
+function _stNow(tzName) { try { return new Intl.DateTimeFormat('en-GB', { timeZone: tzName, dateStyle: 'medium', timeStyle: 'short' }).format(new Date()); } catch (e) { return ''; } }
+function _stFmtDt(iso) { if (!iso) return 'Never'; try { return new Intl.DateTimeFormat('en-GB', { timeZone: _ramsTz(), dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso)); } catch (e) { return ''; } }
+
+// ── tabs ──────────────────────────────────────────────────────────────
+function _stGeneral() {
+  var d = _st.data, tzs = d ? d.options.timezones : ['Asia/Manila', 'UTC'], fm = d ? d.options.date_formats : ['YYYY-MM-DD', 'DD/MM/YYYY', 'MM/DD/YYYY'];
+  var cur = _stVal('timezone', 'Asia/Manila');
+  return _stHead('General', 'company') +
+    _stRow('Time zone', 'Used by every screen, report and daily check. The server uses the same zone for “today”, deadlines and month-end.', _stSelect('timezone', tzs), '<div style="font-size:11px;color:var(--muted);margin-top:3px">Now: ' + _stE(_stNow(cur)) + '</div>') +
+    _stRow('Date format', 'How dates are displayed across the system', _stSelect('date_format', fm)) +
+    _stRow('Language', 'The interface is available in English only for now.', '<div style="font-size:13px;font-weight:700">English</div>') +
+    (d && d.updated_at ? '<div style="font-size:11px;color:var(--muted);margin-top:10px">Last changed ' + _stE(_stFmtDt(d.updated_at)) + '</div>' : '');
+}
+function _stAgency() {
+  return _stHead('Company profile', 'company') +
+    '<div style="font-size:12px;color:var(--muted);margin:2px 0 6px">This is the same profile printed on invoices. Bank details are edited under Accounting → Invoices.</div>' +
+    _stRow('Company name', 'Shown in the sidebar, on documents and on invoices', _stInput('name', 'text', 'Company name')) +
+    _stRow('License number', 'POEA / government-issued license number', _stInput('license_no', 'text', 'e.g. POEA-123')) +
+    _stRow('Country', 'Country of operation', _stInput('country', 'text', 'Philippines')) +
+    _stRow('Address', 'Physical office address', _stInput('address', 'text', 'Street, city')) +
+    _stRow('Contact email', 'Primary contact email for the company', _stInput('email', 'email', 'info@company.com')) +
+    _stRow('Contact phone', 'Primary phone number', _stInput('phone', 'tel', '+63 2 1234 5678'));
+}
+function _stPrefs() {
+  var p = (_st.data && _st.data.prefs) || { dark_mode: document.documentElement.getAttribute('data-theme') === 'dark', landing: 'dashboard' };
+  var land = ['dashboard', 'applicants', 'pipeline', 'jobs', 'documents', 'chat'];
+  return _stHead('My preferences', null) + '<div style="font-size:12px;color:var(--muted);margin:2px 0 6px">These only affect you and save as soon as you change them.</div>' +
+    _stRow('Dark mode', 'Switch between the light and dark theme', '<button class="toggle ' + (p.dark_mode ? 'on' : '') + '" aria-pressed="' + (p.dark_mode ? 'true' : 'false') + '" aria-label="Dark mode" onclick="_stSetPref({dark_mode:' + (!p.dark_mode) + '})"></button>') +
+    _stRow('Start page', 'The page that opens after you sign in', '<select class="filter-select" style="width:100%" onchange="_stSetPref({landing:this.value})">' + land.map(function(o) { return '<option value="' + o + '"' + (o === p.landing ? ' selected' : '') + '>' + _stE(o.charAt(0).toUpperCase() + o.slice(1)) + '</option>'; }).join('') + '</select>');
+}
+function _stNotifs() {
+  var perm = typeof Notification !== 'undefined' ? Notification.permission : 'unsupported';
+  return _stHead('Notifications', null) +
+    '<div style="font-size:12.5px;color:var(--muted);line-height:1.5;margin:4px 0 10px">What reaches you — in the app, as a browser alert or by email — is set per category in your notification preferences (the same place as the bell menu). Quiet hours and the daily digest are there too.</div>' +
+    _stRow('My notification preferences', 'Choose in-app, push and email per category, quiet hours and digest', '<button class="btn btn-s btn-sm" onclick="openNotifPrefs()">Open preferences</button>') +
+    _stRow('Browser alerts on this device', perm === 'granted' ? 'Allowed — you will see alerts while RAMS is open.' : perm === 'denied' ? 'Blocked in your browser — allow notifications for this site in the browser settings.' : perm === 'unsupported' ? 'This browser does not support alerts.' : 'Not yet allowed on this device.',
+      perm === 'default' ? '<button class="btn btn-s btn-sm" onclick="_stAllowBrowser()">Allow alerts</button>' : '<span style="font-size:12px;font-weight:700">' + _stE(perm === 'granted' ? 'On' : perm === 'denied' ? 'Blocked' : 'Unavailable') + '</span>');
+}
+function _stAllowBrowser() { if (typeof Notification === 'undefined') return; Notification.requestPermission().then(function() { renderSettings(); }); }
+function _stSecurity() {
+  var d = _st.data, s = d ? d.security : { idle_minutes: 60, token_hours: 12, lockout_attempts: 5, lockout_minutes: 15, require_2fa_roles: [] };
+  var roles = d ? d.options.roles_2fa : Object.keys(_ST_ROLE_LABEL), sel = _stVal('require_2fa_roles', s.require_2fa_roles) || [];
+  var envR = d ? d.server.env_2fa_roles : [], dis = _stCanEdit() ? '' : ' disabled';
+  var group = roles.map(function(r) { return '<label style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px;margin:0 12px 6px 0"><input type="checkbox" data-k="require_2fa_roles" data-group="1" value="' + r + '" ' + (sel.indexOf(r) >= 0 || envR.indexOf(r) >= 0 ? 'checked' : '') + (envR.indexOf(r) >= 0 ? ' disabled title="Required by the server environment"' : dis) + ' onchange="_stMarkDirty()"> ' + _stE(_ST_ROLE_LABEL[r] || r) + '</label>'; }).join('');
+  var tf = _st.twofa;
+  return _stHead('Security', 'security') +
+    '<div style="font-size:12px;color:var(--muted);margin:2px 0 6px">Company policy — enforced by the server for every account.</div>' +
+    _stRow('Sign out after inactivity', 'Minutes without any activity before the server ends the session (5–720)', _stInput('idle_minutes', 'number', '', 'min="5" max="720"')) +
+    _stRow('Sign-in lifetime', 'Hours before a sign-in expires even if active (1–24). Applies to new sign-ins.', _stInput('token_hours', 'number', '', 'min="1" max="24"')) +
+    _stRow('Lock after failed sign-ins', 'Failed attempts for one email before it is locked (3–10)', _stInput('lockout_attempts', 'number', '', 'min="3" max="10"')) +
+    _stRow('Lock duration', 'Minutes a locked email must wait (1–240)', _stInput('lockout_minutes', 'number', '', 'min="1" max="240"')) +
+    '<div class="settings-field" style="align-items:flex-start"><div class="settings-field-info"><div class="settings-field-lbl">Two-factor required for</div><div class="settings-field-sub">These roles must set up an authenticator app before they can use the system.' + (envR.length ? ' Roles ticked and greyed are required by the server environment.' : '') + '</div></div><div style="flex:0 1 420px">' + group + _stErr('require_2fa_roles') + '</div></div>' +
+    _stRow('Password rules', 'Applies to every new or changed password', '<div style="font-size:12px;color:var(--muted)">' + _stE(d ? d.server.password_rules : '') + '</div>') +
+    '<div style="font-size:14px;font-weight:800;margin:18px 0 4px">My account</div>' +
+    _stRow('Two-factor authentication', tf === null ? 'Checking…' : (tf ? 'On — you need your authenticator app to sign in.' : 'Off — protect your account with an authenticator app.'),
+      tf === null ? '' : (tf ? '<button class="btn btn-danger btn-sm" onclick="disable2FA()">Disable 2FA</button>' : '<button class="btn btn-s btn-sm" onclick="open2FASetup()">Set up 2FA</button>')) +
+    _stRow('Password', 'Change your own password (signs you out everywhere else)', '<button class="btn btn-s btn-sm" onclick="openChangePassword()">Change password</button>');
+}
+async function _stLoad2fa() {
+  if (!_stLive()) return;
+  var r = await apiFetch('/auth/2fa/status?_=' + Date.now());
+  if (r.ok && r.data) { _st.twofa = !!r.data.enabled; if (currentPage === 'settings' && currentSettingsSection === 'security' && !_st.dirty) renderSettings(); }
+}
+
+// ── users ─────────────────────────────────────────────────────────────
+function _stUsers() {
+  var me = getCurrentUser(), list = (DB.users || []).map(function(u, i) { return { u: u, i: i }; });
+  var q = (_st.uq || '').toLowerCase(), rf = _st.ur;
+  list = list.filter(function(x) { return (!q || (x.u.name + ' ' + x.u.email).toLowerCase().indexOf(q) >= 0) && (!rf || x.u.role === rf); });
+  var roles = ['Super Admin', 'Admin', 'Recruiter', 'Manager', 'Compliance', 'Finance', 'Viewer'];
+  var rows = list.map(function(x) {
+    var u = x.u, i = x.i, self = me && me.email && u.email && me.email.toLowerCase() === u.email.toLowerCase(), live = _stLive();
+    var initials = String(u.name || '?').split(/\s+/).map(function(n) { return n.charAt(0); }).join('').slice(0, 2).toUpperCase();
+    var btn = function(act, label, cls) { return '<button class="btn ' + (cls || 'btn-ghost') + ' btn-xs" onclick="_stUserAct(' + i + ',\'' + act + '\')">' + label + '</button>'; };
+    return '<div class="user-card"><div class="sb-avatar" style="width:34px;height:34px;font-size:12px;flex-shrink:0">' + _stE(initials) + '</div>' +
+      '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700">' + _stE(u.name) + (self ? ' <span style="font-size:10px;color:var(--brand)">(you)</span>' : '') + '</div>' +
+      '<div style="font-size:11.5px;color:var(--muted)">' + _stE(u.email) + ' · Last sign-in: ' + _stE(u.lastSeen ? _stFmtDt(u.lastSeen) : (u.last || 'Never')) + ' · ' + (u.totp ? '🔐 2FA on' : '2FA off') + '</div></div>' +
+      '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end">' + pillHtml(u.role) + pillHtml(u.status) +
+      (u.role === 'Viewer' ? '<button class="btn btn-sm" style="background:var(--brand-l);color:var(--brand);border:1px solid var(--brand);font-size:11px;padding:3px 8px;border-radius:6px" onclick="openViewerScope(' + JSON.stringify(u.email || '').replace(/"/g, '&quot;') + ',' + JSON.stringify(u.name || '').replace(/"/g, '&quot;') + ')">Access scope</button>' : '') +
+      btn('edit', 'Edit') + (live && !self ? btn('password', 'Reset password') + btn('signout', 'Sign out') + (u.totp ? btn('reset2fa', 'Reset 2FA') : '') + btn('active', u.status === 'Active' ? 'Deactivate' : 'Activate') + btn('delete', 'Delete', 'btn-danger') : '') +
+      '</div></div>';
+  }).join('') || '<div style="padding:16px;color:var(--muted);font-size:13px">No users match.</div>';
+  return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap"><div style="font-size:15px;font-weight:800">Users & access <span style="font-size:12px;color:var(--muted);font-weight:500">· ' + (DB.users || []).length + ' member' + ((DB.users || []).length === 1 ? '' : 's') + '</span></div>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap"><input class="form-input" placeholder="Search name or email" value="' + _stE(_st.uq) + '" oninput="_st.uq=this.value;_stUsersRefresh()" style="width:200px"><select class="filter-select" onchange="_st.ur=this.value;_stUsersRefresh()"><option value="">All roles</option>' + roles.map(function(r) { return '<option' + (r === _st.ur ? ' selected' : '') + '>' + r + '</option>'; }).join('') + '</select><button class="btn btn-p btn-sm" onclick="openCreateUser()">+ Create user</button></div></div>' +
+    '<div id="st-users-list">' + rows + '</div>';
+}
+function _stUsersRefresh() { var el = document.getElementById('st-users-list'); if (!el) return; var tmp = document.createElement('div'); tmp.innerHTML = _stUsers(); var n = tmp.querySelector('#st-users-list'); if (n) el.innerHTML = n.innerHTML; }
+async function _stReloadUsers() {
+  if (!_stLive()) return;
+  var r = await apiFetch('/team/users?_=' + Date.now());
+  if (r.ok && Array.isArray(r.data)) { DB.users = r.data.map(mapUser); if (currentPage === 'settings' && currentSettingsSection === 'users') _stUsersRefresh(); }
+}
+function _stUserOf(i) { return (DB.users || [])[i]; }
+async function _stUserAct(i, act) {
+  var u = _stUserOf(i); if (!u) return; var id = u._dbId || u.id;
+  if (act === 'edit') return openEditUser(i);
+  if (!_stLive() || !isUUID(id)) return;
+  var r;
+  if (act === 'password') {
+    var f = await _stForm('Reset password for ' + u.name, [{ k: 'pw', label: 'New password', type: 'password', hint: 'At least 8 characters with upper and lower case letters, a number and a symbol. They are signed out everywhere.' }], 'Reset password');
+    if (!f) return;
+    r = await apiFetch('/auth/users/' + id + '/password', { method: 'PATCH', body: JSON.stringify({ new_password: f.pw }) });
+    return toast(r.ok ? 'Password reset — ' + u.name + ' must sign in again' : _stMsg(r), r.ok ? 'success' : 'error');
   }
-
-  // Auto-save immediately
-  Store.set('rams:settings:' + section,
-    JSON.stringify(SETTINGS_SECTIONS[section] ? SETTINGS_SECTIONS[section].fields : [])
-  ).catch(function(){});
-  try { localStorage.setItem('rams:settings:' + section,
-    JSON.stringify(SETTINGS_SECTIONS[section] ? SETTINGS_SECTIONS[section].fields : []));
-  } catch(e) {}
-
-  // Show subtle feedback
-  var indicator = document.getElementById('settings-save-indicator');
-  if (indicator) {
-    indicator.textContent = '✓ Saved';
-    indicator.style.opacity = '1';
-    clearTimeout(indicator._t);
-    indicator._t = setTimeout(function(){ indicator.style.opacity = '0'; }, 1500);
+  if (act === 'signout') {
+    if (await _joChoice('Sign ' + u.name + ' out?', 'All of their sessions end immediately.', [{ key: 'no', label: 'Cancel' }, { key: 'yes', label: 'Sign out', primary: true }]) !== 'yes') return;
+    r = await apiFetch('/users/' + id + '/sign-out', { method: 'POST', body: '{}' });
+    return toast(r.ok ? 'Signed out everywhere' : _stMsg(r), r.ok ? 'success' : 'error');
   }
+  if (act === 'reset2fa') {
+    if (await _joChoice('Reset two-factor for ' + u.name + '?', 'Their authenticator is removed and they are signed out. They must set it up again.', [{ key: 'no', label: 'Cancel' }, { key: 'yes', label: 'Reset 2FA', primary: true, danger: true }]) !== 'yes') return;
+    r = await apiFetch('/users/' + id + '/reset-2fa', { method: 'POST', body: '{}' });
+    if (r.ok) await _stReloadUsers();
+    return toast(r.ok ? '2FA reset' : _stMsg(r), r.ok ? 'success' : 'error');
+  }
+  if (act === 'active') {
+    var to = u.status !== 'Active';
+    if (!to && await _joChoice('Deactivate ' + u.name + '?', 'They cannot sign in and their sessions end. Their records stay. You can activate them again later.', [{ key: 'no', label: 'Cancel' }, { key: 'yes', label: 'Deactivate', primary: true, danger: true }]) !== 'yes') return;
+    r = await apiFetch('/users/' + id, { method: 'PATCH', body: JSON.stringify({ is_active: to }) });
+    if (r.ok) await _stReloadUsers();
+    return toast(r.ok ? (to ? 'User activated' : 'User deactivated') : _stMsg(r), r.ok ? 'success' : 'error');
+  }
+  if (act === 'delete') {
+    var c = await _joChoice('Delete ' + u.name + ' permanently?', 'This cannot be undone and their name stays only as text in past records. Deactivating is almost always better — it keeps the history linked.', [{ key: 'no', label: 'Cancel' }, { key: 'deact', label: 'Deactivate instead', primary: true }, { key: 'yes', label: 'Delete permanently', danger: true }]);
+    if (c === 'deact') return _stUserAct(i, 'active');
+    if (c !== 'yes') return;
+    r = await apiFetch('/users/' + id, { method: 'DELETE' });
+    if (r.ok) await _stReloadUsers();
+    return toast(r.ok ? 'User deleted' : _stMsg(r), r.ok ? 'success' : 'error');
+  }
+}
+function deleteUser(idx) { return _stUserAct(idx, 'delete'); }
+
+// small modal with inputs → resolves an object, or null when cancelled
+function _stForm(title, fields, ok, danger) {
+  return new Promise(function(resolve) {
+    var w = document.createElement('div'); w.id = 'st-form'; w.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100000;display:flex;align-items:center;justify-content:center;padding:16px';
+    w.innerHTML = '<div class="card" style="max-width:460px;width:100%;padding:20px;background:var(--surface,#fff)"><div style="font-size:15px;font-weight:800;margin-bottom:10px">' + _stE(title) + '</div>' +
+      fields.map(function(f) { return '<div style="margin-bottom:10px">' + (f.type === 'checkbox' ? '<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px"><input type="checkbox" data-f="' + f.k + '"> <span>' + _stE(f.label) + '</span></label>' : '<label style="font-size:12px;font-weight:700;color:var(--muted)">' + _stE(f.label) + '</label><input class="form-input" data-f="' + f.k + '" type="' + (f.type || 'text') + '" autocomplete="off" placeholder="' + _stE(f.placeholder || '') + '" style="width:100%;margin-top:3px">') + (f.hint ? '<div style="font-size:11.5px;color:var(--muted);margin-top:3px">' + _stE(f.hint) + '</div>' : '') + '</div>'; }).join('') +
+      '<div id="st-form-err" style="color:var(--red);font-size:12px;margin-bottom:8px;display:none"></div><div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-s btn-sm" data-x="no">Cancel</button><button class="btn ' + (danger ? 'btn-danger' : 'btn-p') + ' btn-sm" data-x="ok">' + _stE(ok || 'OK') + '</button></div></div>';
+    document.body.appendChild(w);
+    var first = w.querySelector('input'); if (first) first.focus();
+    w.onclick = function(e) {
+      var b = e.target.closest('[data-x]'); if (!b && e.target !== w) return;
+      if (!b || b.getAttribute('data-x') === 'no') { w.remove(); resolve(null); return; }
+      var out = {}; Array.prototype.forEach.call(w.querySelectorAll('[data-f]'), function(i) { out[i.getAttribute('data-f')] = i.type === 'checkbox' ? i.checked : i.value; });
+      w.remove(); resolve(out);
+    };
+  });
+}
+
+// ── data & privacy ────────────────────────────────────────────────────
+function _stData() {
+  var live = _stLive(), admin = live && _stCanEdit(), wipeOn = !_st.data || _st.data.server.wipe_enabled;
+  return '<div style="font-size:15px;font-weight:800;margin-bottom:6px">Data & privacy</div>' +
+    _stRow('Export all data', 'A zip of CSV files: applicants, jobs, documents list, accounting, agents, employers and users (no passwords). Contains personal data — keep it safe. Recorded in the audit trail.', admin ? '<button class="btn btn-s btn-sm" onclick="_stExport()">Download export</button>' : '<span style="font-size:12px;color:var(--muted)">' + (live ? 'Admin only' : 'Live system only') + '</span>') +
+    _stRow('Audit trail', 'The audit trail is permanent and tamper-evident, so it cannot be cleared. Admins can archive entries older than a year from the Audit Trail page.', '<button class="btn btn-s btn-sm" onclick="nav(\'audit\')">Open audit trail</button>') +
+    _stRow('Refresh this device', 'Remove locally cached data on this device and reload everything from the server. Your settings stay on the server.', '<button class="btn btn-s btn-sm" onclick="clearLocalCache()">Refresh data</button>') +
+    '<div style="border:1.5px solid var(--red);border-radius:10px;padding:12px 14px;margin-top:16px"><div style="font-size:13px;font-weight:800;color:var(--red);margin-bottom:4px">Danger zone</div>' +
+    _stRow('Wipe all data', 'Permanently deletes every applicant, job order and expense (and everything attached to them). Needs a fresh backup export, your password' + ' (and 2FA code), and the typed phrase. Recorded as a critical audit entry.', admin && wipeOn ? '<button class="btn btn-danger btn-sm" onclick="wipeAllServerData()">Wipe all data…</button>' : '<span style="font-size:12px;color:var(--muted)">' + (!live ? 'Live system only' : (!admin ? 'Admin only' : 'Disabled on this server')) + '</span>') + '</div>';
+}
+async function _stExport() {
+  toast('Preparing export…', 'info');
+  var res;
+  try { res = await fetch(RAILWAY_URL + '/api/settings/data/export', { method: 'POST', headers: { Authorization: 'Bearer ' + (window._ramsSessionToken || ''), 'Content-Type': 'application/json' }, body: '{}' }); } catch (e) { toast('Could not reach the server', 'error'); return false; }
+  if (!res.ok) { var m = 'Export failed'; try { var j = await res.json(); m = j.error || m; } catch (e) {} toast(m, 'error'); return false; }
+  var cd = res.headers.get('Content-Disposition') || '', mm = /filename="([^"]+)"/.exec(cd);
+  _saveBlob(await res.blob(), mm ? mm[1] : 'rams-export.zip'); toast('Export downloaded', 'success'); return true;
+}
+async function wipeAllServerData() {
+  if (!_stLive() || !_stCanEdit()) { toast('Admin only', 'error'); return; }
+  var step = await _joChoice('Step 1 of 2 — back up first', 'The server will only wipe after you download a full export in the last 30 minutes. Download it now?', [{ key: 'no', label: 'Cancel' }, { key: 'skip', label: 'I already downloaded one' }, { key: 'go', label: 'Download backup', primary: true }]);
+  if (step === 'no') return;
+  if (step === 'go') { var ok = await _stExport(); if (!ok) return; }
+  var tf = _st.twofa; if (tf === null) { try { await _stLoad2fa(); tf = _st.twofa; } catch (e) {} }
+  var fields = [{ k: 'password', label: 'Your password', type: 'password' }];
+  if (tf) fields.push({ k: 'totp_token', label: 'Authenticator code', placeholder: '6 digits' });
+  fields.push({ k: 'confirm', label: 'Type WIPE ALL DATA to confirm', placeholder: 'WIPE ALL DATA' }, { k: 'include_users', label: 'Also delete every user except Admins and me', type: 'checkbox' });
+  var f = await _stForm('Step 2 of 2 — wipe all data', fields, 'Wipe everything', true); if (!f) return;
+  var r = await apiFetch('/settings/data/wipe', { method: 'POST', body: JSON.stringify(f) });
+  if (!r.ok) { toast(_stMsg(r), 'error'); return; }
+  DB.applicants = []; DB.jobs = []; DB.expenses = []; filteredApps = [];
+  try { clearLocalCache(); } catch (e) {}
+  toast('All data wiped', 'success');
+}
+async function clearLocalCache() {
+  DB.applicants = []; DB.jobs = []; DB.expenses = []; DB.users = []; DB.auditLog = [];
+  try { if (typeof _dashReset === 'function') _dashReset(); if (typeof _plReset === 'function') _plReset(); } catch (e) {}
+  filteredApps = [];
+  await Store.clear();
+  try { _chReset(); } catch (e) {}
+  toast('Cache cleared — re-syncing from server…', 'info');
+  await syncAllFromAPI();
+  await _stLoad(true);
+  renderDashboard();
+  toast('Data refreshed from server', 'success');
 }
 
 function renderSettings() {
-  const sec = SETTINGS_SECTIONS[currentSettingsSection];
-  if (!sec) return;
-  let html = `<div class="card cp">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-      <div style="font-size:15px;font-weight:800">${sec.title}</div>
-      ${!['users','data'].includes(currentSettingsSection)?'<button class="btn btn-p btn-sm" onclick="saveSettings()">Save Changes</button><span id="settings-save-indicator" style="font-size:11px;color:var(--green);font-weight:700;margin-left:8px;opacity:0;transition:opacity .3s"></span>':''}
-    </div>`;
-  if (currentSettingsSection === 'users') {
-    html += `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
-        <div style="font-size:13px;color:var(--muted)">${DB.users.length} team member${DB.users.length!==1?'s':''}</div>
-        <button class="btn btn-p btn-sm" onclick="openCreateUser()">+ Create User</button>
-      </div>
-      <div>${DB.users.map((u,i)=>`
-      <div class="user-card">
-        <div class="sb-avatar" style="width:34px;height:34px;font-size:12px;flex-shrink:0">${u.name.split(' ').map(n=>n[0]).join('')}</div>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:13px;font-weight:700">${u.name}</div>
-          <div style="font-size:11.5px;color:var(--muted)">${u.email} · Last: ${u.last}</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          ${pillHtml(u.role)}
-          ${pillHtml(u.status)}
-          ${u.role==='Viewer'?`<button class="btn btn-sm" style="background:var(--brand-l);color:var(--brand);border:1px solid var(--brand);font-size:11px;padding:3px 8px;border-radius:6px" onclick="openViewerScope('${u.email}','${u.name}')">👁 Scope</button>`:''}
-          <button class="btn btn-ghost btn-xs" onclick="openEditUser(${i})">Edit</button>
-          <button class="btn btn-danger btn-xs" onclick="deleteUser(${i})">✕</button>
-        </div>
-      </div>
-    `).join('')}</div>`;
-  } else {
-    html += sec.fields.map(f=>`
-      <div class="settings-field">
-        <div class="settings-field-info">
-          <div class="settings-field-lbl">${f.lbl}</div>
-          <div class="settings-field-sub">${f.sub}</div>
-        </div>
-        ${f.type==='toggle'?`<button class="toggle ${f.value?'on':''}" data-lbl="${f.lbl.replace(/"/g,'&quot;')}" data-section="${currentSettingsSection}" onclick="_onSettingToggle(this)" aria-label="${f.lbl}" aria-pressed="${f.value}"></button>`:''}
-        ${f.type==='select'?`<select class="filter-select" style="min-width:160px"><option>${f.opts.join('</option><option>')}</option></select>`:''}
-        ${f.type==='input'?`<input type="text" class="form-input" value="${f.value}" style="max-width:280px">`:''}
-        ${f.type==='button'?`<button class="btn ${f.danger?'btn-danger':'btn-s'} btn-sm" onclick="${f.action?f.action+'()':"toast('"+(f.lbl2||f.lbl)+" initiated','"+(f.danger?'error':'info')+"')"  }">${f.lbl2||f.lbl}</button>`:''}
-      </div>
-    `).join('');
-  }
-  html += `</div>`;
-  document.getElementById('settings-content').innerHTML = html;
+  var box = document.getElementById('settings-content'); if (!box) return;
+  var tab = currentSettingsSection;
+  if (_ST_TABS.indexOf(tab) < 0) tab = currentSettingsSection = 'general';
+  Array.prototype.forEach.call(document.querySelectorAll('.settings-nav-item'), function(n) { var m = /switchSettings\('(\w+)'/.exec(n.getAttribute('onclick') || ''); if (m) n.classList.toggle('active', m[1] === tab); });
+  if (_stLive() && !_st.data && !_st.loading) _stLoad().then(function() { if (currentPage === 'settings') renderSettings(); });
+  if (tab === 'security' && _stLive() && _st.twofa === null) _stLoad2fa();
+  if (tab === 'users' && _stLive() && !_st.usersLoaded) { _st.usersLoaded = true; _stReloadUsers(); }
+  var body = tab === 'general' ? _stGeneral() : tab === 'agency' ? _stAgency() : tab === 'prefs' ? _stPrefs() : tab === 'notifications' ? _stNotifs() : tab === 'security' ? _stSecurity() : tab === 'users' ? _stUsers() : _stData();
+  if (_stLive() && !_st.data && ['general', 'agency', 'security'].indexOf(tab) >= 0) body = '<div style="padding:20px;color:var(--muted);font-size:13px">Loading settings…</div>';
+  box.innerHTML = '<div class="card cp">' + body + '</div>';
 }
 
 // ════════════════════════════════════════════════════════
@@ -12612,93 +12764,6 @@ document.addEventListener('DOMContentLoaded', function() {
 // USER MANAGEMENT (Admin)
 // ════════════════════════════════════════════════════════
 
-function submitCreateUser() {
-  var name     = document.getElementById('u-name').value.trim();
-  var email    = document.getElementById('u-email').value.trim();
-  var role     = document.getElementById('u-role').value;
-  var status   = document.getElementById('u-status').value;
-  var password = document.getElementById('u-password').value;
-  var errEl    = document.getElementById('u-error');
-  errEl.style.display = 'none';
-
-  if (!name)          { errEl.textContent = 'Full name is required.'; errEl.style.display = 'block'; return; }
-  if (!email || !email.includes('@')) { errEl.textContent = 'Valid email is required.'; errEl.style.display = 'block'; return; }
-  if (!password || password.length < 8) { errEl.textContent = 'Password must be at least 8 characters.'; errEl.style.display = 'block'; return; }
-  if (!/[A-Z]/.test(password)) { errEl.textContent = 'Password must contain at least one uppercase letter.'; errEl.style.display = 'block'; return; }
-  if (!/[!@#$%^&*()_+\-=\[\]{};\':"\\|,.<>\/?]/.test(password)) { errEl.textContent = 'Password must contain at least one special character (!@#$%^&* etc.).'; errEl.style.display = 'block'; return; }
-
-  var apiUrl = RAILWAY_URL;
-  var token  = window._ramsSessionToken || '';
-
-  // Demo mode — add to local DB.users only (no server)
-  if (!token || token === 'demo') {
-    if (DB.users.find(function(u) { return u.email === email; })) {
-      errEl.textContent = 'A user with this email already exists.';
-      errEl.style.display = 'block'; return;
-    }
-    DB.users.push({ name: name, email: email, role: role, status: status, last: 'Just now' });
-    addAudit('CREATE', 'User', 'Created user: ' + name + ' (' + role + ')');
-    pushNotif('New User Added', name + ' (' + role + ') has been added to the system', 'system',
-      { page: 'settings' });
-    closeOverlay('overlay-create-user');
-    renderSettings();
-    toast('User created successfully', 'success');
-    return;
-  }
-
-  // Live mode — call backend register endpoint
-  fetch(apiUrl.replace(/\/+$/, '') + '/api/auth/register', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer ' + token,
-    },
-    body: JSON.stringify({ name: name, email: email, password: password, role: toDbRole(role) }),
-  }).then(function(res) {
-    return res.json().then(function(d) { return { ok: res.ok, data: d }; });
-  }).then(function(r) {
-    if (!r.ok) {
-      var msg = (r.data && r.data.error) ? r.data.error : 'Failed to create user';
-      throw new Error(msg);
-    }
-    DB.users.push({ name: name, email: email, role: role, status: status, last: 'Just now' });
-    addAudit('CREATE', 'User', 'Created user: ' + name + ' (' + role + ')');
-    pushNotif('New User Added', name + ' (' + role + ') has been added to the system', 'system',
-      { page: 'settings' });
-    closeOverlay('overlay-create-user');
-    renderSettings();
-    toast('User ' + name + ' created', 'success');
-  }).catch(function(err) {
-    errEl.textContent = err.message || 'Failed to create user.';
-    errEl.style.display = 'block';
-  });
-}
-
-// ── Patch renderSettings users section to add Create User button ──────────────
-var __baseRenderSettings = renderSettings;
-renderSettings = function() {
-  __baseRenderSettings();
-  if (currentSettingsSection === 'users') {
-    var sc = document.getElementById('settings-content');
-    if (sc && !sc.querySelector('.create-user-btn')) {
-      var btn = document.createElement('button');
-      btn.className = 'btn btn-p btn-sm create-user-btn';
-      btn.style.marginTop = '16px';
-      btn.textContent = '+ Create New User';
-      btn.onclick = openCreateUser;
-      sc.appendChild(btn);
-    }
-  }
-  // Wire Change Password
-  if (currentSettingsSection === 'security') {
-    var btns = document.querySelectorAll('#settings-content button');
-    btns.forEach(function(b) {
-      if (b.textContent.trim() === 'Change Password') b.onclick = openChangePassword;
-    if (b.textContent.trim() === 'Set Up 2FA') b.onclick = open2FASetup;
-    if (b.textContent.trim() === 'Disable 2FA') b.onclick = disable2FA;
-    });
-  }
-};
 
 
 // ════════════════════════════════════════════════════════
@@ -12713,6 +12778,7 @@ function openCreateUser() {
   if (btn) btn.textContent = 'Create User';
   document.getElementById('u-name').value = '';
   document.getElementById('u-email').value = '';
+  document.getElementById('u-email').disabled = false;
   document.getElementById('u-role').value = 'Recruiter';
   document.getElementById('u-status').value = 'Active';
   document.getElementById('u-password').value = '';
@@ -12731,6 +12797,7 @@ function openEditUser(idx) {
   if (btn) btn.textContent = 'Save Changes';
   document.getElementById('u-name').value = u.name;
   document.getElementById('u-email').value = u.email;
+  document.getElementById('u-email').disabled = !(window._ramsSessionToken && window._ramsSessionToken !== 'demo' && isUUID(u._dbId || u.id));
   document.getElementById('u-role').value = u.role;
   document.getElementById('u-status').value = u.status;
   document.getElementById('u-password').value = '';
@@ -12763,28 +12830,33 @@ function submitUser() {
   var token  = window._ramsSessionToken || '';
   var submitBtn = document.getElementById('submit-user-btn');
 
-  // ── EDIT USER ──────────────────────────────────────────────────────────
+  // ── EDIT USER ────────────────────────────────────────────────────────
   if (editingUserIdx >= 0) {
     var u = DB.users[editingUserIdx];
-    u.name   = name;
-    u.email  = email;
-    u.role   = role;
-    u.status = status;
-    autosave('users');
-    addAudit('UPDATE', 'User', 'Updated user: ' + name + ' (role: ' + role + ')');
-
     var uid = u._dbId || u.id;
-    if (uid && isUUID(uid) && token && token !== 'demo') {
-      apiFetch('/users/' + uid, {
-        method: 'PATCH',
-        body: JSON.stringify({ name: name, role: toDbRole(role), is_active: (status === 'Active') })
-      }).then(function(r) {
-        if (r.data) { u._dbId = r.data.id || uid; u.id = u._dbId; autosave('users'); }
-      }).catch(function(){});
+    var live = uid && isUUID(uid) && token && token !== 'demo';
+    if (!live) {   // demo: local only
+      u.name = name; u.email = email; u.role = role; u.status = status;
+      autosave('users'); addAudit('UPDATE', 'User', 'Updated user: ' + name + ' (role: ' + role + ')');
+      closeOverlay('overlay-create-user'); toast('User updated', 'success');
+      if (currentSettingsSection === 'users') renderSettings();
+      return;
     }
-    closeOverlay('overlay-create-user');
-    toast('User updated ✓', 'success');
-    if (currentSettingsSection === 'users') renderSettings();
+    // live: the server decides — nothing changes on screen until it agrees
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Saving…'; }
+    (async function() {
+      var fail = function(m) { errEl.textContent = m; errEl.style.display = 'block'; };
+      try {
+        var r = await apiFetch('/users/' + uid, { method: 'PATCH', body: JSON.stringify({ name: name, role: toDbRole(role), is_active: (status === 'Active') }) });
+        if (!r.ok) { fail(_stMsg(r, 'The server refused this change')); return; }
+        if (email.toLowerCase() !== String(u.email || '').toLowerCase()) {
+          var re = await apiFetch('/users/' + uid + '/email', { method: 'PATCH', body: JSON.stringify({ email: email }) });
+          if (!re.ok) { fail(_stMsg(re, 'Could not change the email') + ' (other changes were saved)'); await _stReloadUsers(); return; }
+        }
+        closeOverlay('overlay-create-user'); toast('User updated', 'success');
+        await _stReloadUsers();
+      } finally { if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Save Changes'; } }
+    })();
     return;
   }
 
@@ -12816,10 +12888,6 @@ function submitUser() {
   }
 
   _doRegister(dbRole).then(function(r) {
-    // Backend may reject 'viewer' role — retry with 'recruiter'
-    if (!r.ok && r.httpStatus === 400 && (dbRole === 'viewer' || dbRole === 'agent')) {
-      return _doRegister('recruiter');
-    }
     // Timeout / cold-start — retry once with a longer wait
     if (!r.ok && r.httpStatus === 0) {
       return new Promise(function(resolve) {
@@ -12858,21 +12926,6 @@ function submitUser() {
   });
 }
 
-function deleteUser(idx) {
-  var u = DB.users[idx];
-  if (!u) return;
-  if (!confirm('Remove user "' + u.name + '"? They will lose system access.')) return;
-  var uid = u._dbId || u.id;
-  DB.users.splice(idx, 1);
-  addAudit('DELETE', 'User', 'Removed user: ' + u.name);
-  // Sync to server
-  if (uid && isUUID(uid) && window._ramsSessionToken !== 'demo') {
-    apiFetch('/users/' + uid, { method: 'DELETE' })
-      .then(function(r){ if (!r.ok) toast('💾 User removed — server will update when reconnected','info'); });
-  }
-  toast('User removed', 'success');
-  if (currentSettingsSection === 'users') renderSettings();
-}
 
 // ════════════════════════════════════════════════════════
 // FIX: accounting page — expenses status is 'Paid'/'Pending'
@@ -21834,55 +21887,6 @@ function saveViewerScope() {
 
 
 // ── Clear local cache + re-sync from PostgreSQL ───────────────────────
-async function clearLocalCache() {
-  DB.applicants = []; DB.jobs = []; DB.expenses = []; DB.users = []; DB.auditLog = []; if (typeof _dashReset === 'function') _dashReset(); if (typeof _plReset === 'function') _plReset(); if (typeof _dc !== 'undefined') { _dc.data = null; _dc.meta = null; _dc.sel = {}; } if (typeof _ap !== 'undefined') { _ap.data = null; _ap.filters = null; _ap.sel = {}; _ap.restored = false; } if (typeof _ov !== 'undefined') { _ov.data = null; _ov.at = 0; }
-  filteredApps = [];
-  await Store.clear();
-  toast('Cache cleared — re-syncing from server…', 'info');
-  await syncAllFromAPI();
-  renderDashboard();
-  toast('Data refreshed from server', 'success');
-}
-
-// ── Wipe all server data (admin only, nuclear option) ─────────────────
-async function wipeAllServerData() {
-  if (getCurrentRole() !== 'Admin') { toast('Admin only', 'error'); return; }
-  var confirmed = prompt('Type DELETE to wipe ALL records (applicants, jobs, expenses, other users) from the server. Your account will be preserved:');
-  if (confirmed !== 'DELETE') { toast('Cancelled', 'info'); return; }
-  // Delete all via API in sequence
-  toast('Wiping server data…', 'info');
-  var allApps  = DB.applicants.slice();
-  var allJobs  = DB.jobs.slice();
-  var allExp   = DB.expenses.slice();
-  var me       = getCurrentUser();
-  var allUsers = DB.users.filter(function(u){ return !me || u.email.toLowerCase() !== me.email.toLowerCase(); });
-
-  toast('Wiping applicants…', 'info');
-  for (var a of allApps) await apiFetch('/applicants/' + (a._dbId||a.id), { method: 'DELETE' });
-
-  toast('Wiping job orders…', 'info');
-  for (var j of allJobs) await apiFetch('/jobs/' + (j._dbId||j.id), { method: 'DELETE' });
-
-  toast('Wiping expenses…', 'info');
-  for (var e of allExp) await apiFetch('/expenses/' + (e._dbId||e.id) + '?reason=Full+data+wipe', { method: 'DELETE' });
-
-  toast('Wiping other users…', 'info');
-  for (var u of allUsers) {
-    var uid = u._dbId || u.id;
-    if (uid) await apiFetch('/users/' + uid, { method: 'DELETE' });
-  }
-
-  DB.applicants=[]; DB.jobs=[]; DB.expenses=[]; DB.auditLog=[];
-  DB.users = me ? [me] : [];
-  filteredApps = [];
-  autosave('applicants'); autosave('jobs'); autosave('expenses');
-  addAudit('DELETE','System','All server data wiped by admin — demo users removed');
-  renderDashboard();
-  if (typeof renderSettings === 'function' && currentSettingsSection === 'users') renderSettings();
-  toast('All data wiped — only your account remains', 'success');
-}
-
-
 // ── Manual sync from header button ───────────────────────────────────
 async function _manualSync() {
   var btn = document.getElementById('sync-btn');
@@ -22056,92 +22060,6 @@ function _onJobOrderSelect() {
 
 
 // ── Save settings to Store ────────────────────────────────────────────
-async function saveSettings() {
-  var sec = SETTINGS_SECTIONS[currentSettingsSection];
-  if (!sec) return;
-  var saved = {};
-  sec.fields.forEach(function(f, i) {
-    var key = currentSettingsSection + '_' + i;
-    if (f.type === 'input') {
-      var inputs = document.querySelectorAll('#settings-content .form-input');
-      var idx = sec.fields.filter(function(x,j){ return j<i && x.type==='input'; }).length;
-      if (inputs[idx]) { f.value = inputs[idx].value; saved[f.lbl] = f.value; }
-    } else if (f.type === 'select') {
-      var selects = document.querySelectorAll('#settings-content select');
-      var idx = sec.fields.filter(function(x,j){ return j<i && x.type==='select'; }).length;
-      if (selects[idx]) { f.value = selects[idx].value; saved[f.lbl] = f.value; }
-    } else if (f.type === 'toggle') {
-      var toggles = document.querySelectorAll('#settings-content .toggle');
-      var idx = sec.fields.filter(function(x,j){ return j<i && x.type==='toggle'; }).length;
-      if (toggles[idx]) { f.value = toggles[idx].classList.contains('on'); saved[f.lbl] = f.value; }
-    }
-  });
-  var fieldsJson = JSON.stringify(SETTINGS_SECTIONS[currentSettingsSection].fields);
-  // Save to window.storage (fast) AND localStorage (persistent across sessions)
-  await Store.set('rams:settings:' + currentSettingsSection, fieldsJson);
-  try { localStorage.setItem('rams:settings:' + currentSettingsSection, fieldsJson); } catch(e) {}
-  addAudit('UPDATE', 'Settings', 'Saved ' + currentSettingsSection + ' settings');
-  toast('Settings saved', 'success');
-  applySettings();
-}
-
-// ── applySettings — read SETTINGS_SECTIONS and apply every setting to the live system ─
-function applySettings() {
-  var general = SETTINGS_SECTIONS.general && SETTINGS_SECTIONS.general.fields || [];
-  var security = SETTINGS_SECTIONS.security && SETTINGS_SECTIONS.security.fields || [];
-  var agency = SETTINGS_SECTIONS.agency && SETTINGS_SECTIONS.agency.fields || [];
-
-  function getSetting(fields, label) {
-    var f = fields.find(function(x){ return x.lbl === label; });
-    return f ? f.value : null;
-  }
-
-  // ── Dark Mode ──────────────────────────────────────────────────────────────
-  var darkMode = getSetting(general, 'Dark Mode');
-  if (darkMode !== null) {
-    document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
-  }
-
-  // ── Agency Name (sidebar + header) ────────────────────────────────────────
-  var agencyName = getSetting(general, 'Agency Name');
-  if (agencyName) {
-    var logoText = document.querySelector('.sb-logo-text');
-    if (logoText) logoText.textContent = agencyName;
-    var companyName = document.querySelector('.sb-co-name');
-    if (companyName) companyName.textContent = agencyName;
-    document.title = agencyName + ' — RAMS';
-  }
-
-  // ── Date Format ────────────────────────────────────────────────────────────
-  var dateFormat = getSetting(general, 'Date Format');
-  if (dateFormat) {
-    window._ramsDateFormat = dateFormat; // 'DD/MM/YYYY' | 'MM/DD/YYYY' | 'YYYY-MM-DD'
-  }
-
-  // ── Timezone ──────────────────────────────────────────────────────────────
-  var timezone = getSetting(general, 'Timezone');
-  if (timezone) {
-    // Extract IANA timezone name from display string e.g. "Asia/Manila (UTC+8)" → "Asia/Manila"
-    var tzMatch = timezone.match(/^([A-Za-z_\/]+)/);
-    window._ramsTimezone = tzMatch ? tzMatch[1] : 'Asia/Manila';
-  }
-
-  // ── Session Timeout ───────────────────────────────────────────────────────
-  var sessionTimeout = getSetting(security, 'Session Timeout');
-  if (sessionTimeout) {
-    var timeoutMap = {
-      '30 minutes': 30 * 60 * 1000,
-      '1 hour':      60 * 60 * 1000,
-      '4 hours':  4 * 60 * 60 * 1000,
-      'Never': null
-    };
-    window._ramsSessionTimeoutMs = timeoutMap[sessionTimeout] !== undefined
-      ? timeoutMap[sessionTimeout]
-      : 60 * 60 * 1000; // default 1 hour
-    _resetSessionTimer();
-  }
-}
-
 // ── Inline notes editing in applicant drawer ──────────────────────────
 var _drawerNotesTimer = null;
 function _drawerNotesChanged() {
@@ -22232,26 +22150,6 @@ function _resetSessionTimer() {
   }, { passive: true });
 });
 
-// Load saved settings on startup
-async function loadSettings() {
-  for (var section of Object.keys(SETTINGS_SECTIONS)) {
-    try {
-      // Try window.storage first, fall back to localStorage
-      var saved = await Store.get('rams:settings:' + section);
-      var raw = saved ? (typeof saved === 'string' ? saved : saved.value || '') : '';
-      if (!raw) {
-        try { raw = localStorage.getItem('rams:settings:' + section) || ''; } catch(e) {}
-      }
-      if (raw) {
-        var fields = JSON.parse(raw);
-        if (Array.isArray(fields) && fields.length) {
-          SETTINGS_SECTIONS[section].fields = fields;
-        }
-      }
-    } catch(e) {}
-  }
-  applySettings();
-}
 
 
 // ════════════════════════════════════════════════════════
