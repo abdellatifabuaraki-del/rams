@@ -3204,7 +3204,7 @@ async function apiFetch(path, opts) {
     ? { 'Authorization': 'Bearer ' + token }
     : Object.assign({ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, opts.headers || {});
   // tells the server this request follows real user activity (the server enforces the idle timeout)
-  if (typeof _lastActivity !== 'undefined' && Date.now() - _lastActivity < 60000) headers['X-User-Active'] = '1';
+  if (window._ramsActivityHeader && typeof _lastActivity !== 'undefined' && Date.now() - _lastActivity < 60000) headers['X-User-Active'] = '1';   // only once the server has said it accepts it (cross-origin preflight)
 
   // ── Cache reads for GET ──────────────────────────────────────────────
   if (method === 'GET') {
@@ -11751,7 +11751,7 @@ async function _stLoad(force) {
   _st.loading = true;
   try {
     var r = await apiFetch('/settings?_=' + Date.now());
-    if (r && r.ok && r.data && r.data.company) { _st.data = r.data; applySettings(); }
+    if (r && r.ok && r.data && r.data.company) { _st.data = r.data; window._ramsActivityHeader = !!(r.data.server && r.data.server.activity_header); applySettings(); }
   } catch (e) { /* keep what we have */ }
   _st.loading = false;
   return _st.data;
