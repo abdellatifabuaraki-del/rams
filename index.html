@@ -1234,7 +1234,7 @@ button[disabled][data-rbac-locked] {
       <div class="filter-bar">
         <div class="filter-search">
           <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input type="text" id="app-search" placeholder="Search name, APP-ID, passport, phone…" oninput="clearTimeout(window._apQT);window._apQT=setTimeout(filterApplicants,300)" aria-label="Search applicants">
+          <input type="text" id="app-search" placeholder="Search name, APP-ID, passport, phone…" oninput="clearTimeout(window._apQT);window._apQT=setTimeout(filterApplicants,200)" aria-label="Search applicants">
         </div>
         <!-- Multi-select status filter. The hidden input holds a comma-separated
              list of selected statuses and keeps the id `app-status-filter`, so
@@ -2299,7 +2299,7 @@ button[disabled][data-rbac-locked] {
       <option value="Medium">Medium</option>
       <option value="Low">Low</option>
     </select>
-    <input class="f-inp" id="comp-search" placeholder="Search applicant, description…" oninput="renderComplaints()" style="flex:1;min-width:180px">
+    <input class="f-inp" id="comp-search" placeholder="Search applicant, description…" oninput="_compSearch()" style="flex:1;min-width:180px">
     <button class="btn btn-s btn-sm" onclick="exportComplaints()">⬇ Export</button>
   </div>
 
@@ -7005,11 +7005,27 @@ const CMD_ACTIONS = [
   { label: 'Export Applicants CSV', icon: '📥', action: () => exportData('applicants'), sub: 'Action' },
 ];
 
+function _cmdServerSearch(q) {
+  clearTimeout(window._cmdQT);
+  if (q.length < 2 || !_isLiveSession()) return;
+  window._cmdQT = setTimeout(async function() {
+    var r = await apiFetch('/applicants?limit=8&q=' + encodeURIComponent(q) + '&_=' + Date.now());
+    var inp = document.getElementById('cmd-input');
+    if (!r.ok || !r.data || !Array.isArray(r.data.data) || !inp || inp.value.toLowerCase().trim() !== q) return;
+    window._cmdSrv = { q: q, rows: r.data.data.map(mapApplicant) };
+    renderCmd();
+  }, 180);
+}
 function renderCmd() {
   const q = document.getElementById('cmd-input').value.toLowerCase().trim();
+  if (!window._cmdSrv || window._cmdSrv.q !== q) _cmdServerSearch(q);
   const list = document.getElementById('cmd-list');
   let items = [];
-  const appItems = DB.applicants.filter(a => !q || a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q))
+  const qw = q.split(/\s+/).filter(Boolean);
+  const _seen = {};
+  const appItems = DB.applicants.filter(a => { const h = ((a.name || '') + ' ' + (a.displayId || '') + ' ' + (a.id || '')).toLowerCase(); return qw.every(w => h.indexOf(w) >= 0); })
+    .concat(window._cmdSrv && window._cmdSrv.q === q ? window._cmdSrv.rows : [])
+    .filter(a => { if (_seen[a.id]) return false; _seen[a.id] = 1; return true; })
     .map(a => ({ label: a.name, icon: '👤', action: () => { closeCmd(); openDrawer(a.id); }, sub: `${a.displayId||a.id} · ${a.status}` }));
   const pageItems = CMD_PAGES.filter(i => !q || i.label.toLowerCase().includes(q));
   const actionItems = CMD_ACTIONS.filter(i => !q || i.label.toLowerCase().includes(q));
@@ -13272,9 +13288,10 @@ function renderAgentGrid(query) {
   var archivedN = all.filter(function(a){ return a.archived; }).length;
   var agents = all.filter(function(a){ return _showArchivedAgents || !a.archived; });
   if (query) {
-    var q = query.toLowerCase();
+    var qw = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
     agents = agents.filter(function(a){
-      return (a.name||'').toLowerCase().includes(q) || (a.country||'').toLowerCase().includes(q) || (a.code||'').toLowerCase().includes(q);
+      var hay = ((a.name||'') + ' ' + (a.country||'') + ' ' + (a.code||'')).toLowerCase();
+      return qw.every(function(w) { return hay.indexOf(w) >= 0; });
     });
   }
   if (_focusOn('agent')) agents = _focusFilter('agent', all);
@@ -18566,14 +18583,16 @@ function _docIcon(name) {
 }
 
 // ── RENDER ────────────────────────────────────────────────────────────
+function _compSearch() { clearTimeout(window._compQT); window._compQT = setTimeout(function() { window._compNoFetch = true; renderComplaints(); }, 150); }
 function renderComplaints() {
   if (!DB.complaints) DB.complaints = [];
-  apiFetchComplaints().catch(function(){});
+  if (!window._compNoFetch) apiFetchComplaints().catch(function(){});
+  window._compNoFetch = false;
 
   var stF  = ((document.getElementById('comp-filter-status')   ||{}).value||'');
   var tyF  = ((document.getElementById('comp-filter-type')     ||{}).value||'');
   var prF  = ((document.getElementById('comp-filter-priority') ||{}).value||'');
-  var srch = ((document.getElementById('comp-search')          ||{}).value||'').toLowerCase();
+  var srch = ((document.getElementById('comp-search')          ||{}).value||'').toLowerCase().trim();
 
   // Viewers only ever see complaints within their assigned job-order scope
   var _visible = getScopedComplaints();
@@ -18582,9 +18601,8 @@ function renderComplaints() {
     if (stF && c.status   !== stF) return false;
     if (tyF && c.type     !== tyF) return false;
     if (prF && c.priority !== prF) return false;
-    if (srch && !(c.applicantName||'').toLowerCase().includes(srch)
-             && !(c.description||'').toLowerCase().includes(srch)
-             && !(c.type||'').toLowerCase().includes(srch)) return false;
+    if (srch) { var _hay = ((c.applicantName||'') + ' ' + (c.description||'') + ' ' + (c.type||'')).toLowerCase();
+      if (!srch.split(/\s+/).every(function(w) { return _hay.indexOf(w) >= 0; })) return false; }
     return true;
   }).sort(function(a,b){ return (b.reportedDate||'').localeCompare(a.reportedDate||''); });
   if (_focusOn('complaint')) list = _focusFilter('complaint', _visible);
@@ -19443,6 +19461,7 @@ function _renderInvoiceSummary() {
   }
   el.innerHTML = html;
 }
+function _invQ(v) { clearTimeout(window._invQT); window._invQT = setTimeout(function() { _invF.q = v; apiFetchInvoices().then(function() { renderInvoices(); var el = document.getElementById('inv-q'); if (el) { el.focus(); try { el.setSelectionRange(el.value.length, el.value.length); } catch (e) {} } }); }, 250); }
 function _invSetFilter(k, v) { _invF[k] = (k === 'overdue') ? !!v : v; apiFetchInvoices().then(function() { renderInvoices(); }); }
 function _invClearFilters() { _invF = { q:'', status:'', pay:'', employer:'', overdue:false, from:'', to:'', limit:100 }; apiFetchInvoices().then(function() { renderInvoices(); }); }
 function _invLoadMore() { apiFetchInvoices({ append:true }); }
@@ -19457,7 +19476,7 @@ function renderInvoices() {
   var header = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div><div style="font-size:15px;font-weight:800">Employer Invoices</div><div style="font-size:12px;color:var(--muted)">' + invs.length + ' shown' + (_invHasMore ? ' (more available)' : '') + '</div></div>' + (canManage ? '<button class="btn btn-p" onclick="openNewInvoice()">+ New Invoice</button>' : '') + '</div>' +
     '<div id="inv-summary"></div>' +
     '<div class="card" style="padding:10px 12px;margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12px">' +
-    '<input class="f-inp" style="width:190px" placeholder="Search no., employer, applicant" value="' + escapeHtml(_invF.q) + '" onchange="_invSetFilter(\'q\',this.value)">' +
+    '<input class="f-inp" style="width:190px" placeholder="Search no., employer, applicant" id="inv-q" value="' + escapeHtml(_invF.q) + '" oninput="_invQ(this.value)">' +
     '<select class="f-inp" style="width:110px" onchange="_invSetFilter(\'status\',this.value)">' + opt('', 'All status', _invF.status) + opt('draft', 'Draft', _invF.status) + opt('issued', 'Issued', _invF.status) + opt('void', 'Void', _invF.status) + '</select>' +
     '<select class="f-inp" style="width:110px" onchange="_invSetFilter(\'pay\',this.value)">' + opt('', 'All payment', _invF.pay) + opt('Unpaid', 'Unpaid', _invF.pay) + opt('Partial', 'Partial', _invF.pay) + opt('Paid', 'Paid', _invF.pay) + '</select>' +
     '<select class="f-inp" style="width:160px" onchange="_invSetFilter(\'employer\',this.value)">' + opt('', 'All employers', _invF.employer) + Object.keys(employers).sort().map(function(n){ return opt(n, n, _invF.employer); }).join('') + '</select>' +
