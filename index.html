@@ -8004,18 +8004,33 @@ function renderApplicants(force) {
 async function _apLoad() {
   if (!_isLiveSession()) return;
   var seq = ++_ap.seq; _ap.loading = true;
+  var qs = _apQS(_apParams({}));
+  // instant paint from a recent identical query, then refresh quietly
+  _ap.qc = _ap.qc || {};
+  var hit = _ap.qc[qs];
+  if (hit && (Date.now() - hit.at) < 60000) {
+    _ap.data = hit.data; _ap.total = hit.total; _ap.masked = hit.masked; _ap.err = null;
+    filteredApps = _ap.data.map(mapApplicant);
+    if (typeof currentPage === 'undefined' || currentPage === 'applicants') _apPaint();
+  } else { var tb = document.getElementById('app-tbody'); if (tb) tb.style.opacity = '.5'; }
+  // filter option lists load alongside the list (never in front of it)
   if (!_ap.filters || (Date.now() - _ap.fAt) > 60000) {
-    var fr = await apiFetch('/applicants/filters?_=' + Date.now());
-    if (fr.ok && fr.data) { _ap.filters = fr.data; _ap.fAt = Date.now(); }
+    _ap.fAt = Date.now();
+    apiFetch('/applicants/filters?_=' + Date.now()).then(function(fr) {
+      if (fr.ok && fr.data) { _ap.filters = fr.data; _ap.fAt = Date.now(); if (typeof currentPage === 'undefined' || currentPage === 'applicants') _apFillFilters(); } else { _ap.fAt = 0; }
+    });
   }
-  var r = await apiFetch('/applicants?' + _apQS(_apParams({ _: Date.now() })));
+  var r = await apiFetch('/applicants?' + qs + '&_=' + Date.now());
   if (seq !== _ap.seq) return;
   _ap.loading = false;
+  var tb2 = document.getElementById('app-tbody'); if (tb2) tb2.style.opacity = '';
   if (!r.ok || !r.data || !Array.isArray(r.data.data)) { _ap.err = _acctMsg(r, 'Could not load applicants'); }
   else {
     _ap.err = null; _ap.data = r.data.data; _ap.total = r.data.total; _ap.masked = !!r.data.pii_masked; _ap.at = Date.now();
     var maxPage = Math.max(1, Math.ceil(_ap.total / APP_PER_PAGE));
     if (_ap.page > maxPage && _ap.total > 0) { _ap.page = maxPage; return _apLoad(); }
+    _ap.qc[qs] = { at: Date.now(), data: _ap.data, total: _ap.total, masked: _ap.masked };
+    var _ks = Object.keys(_ap.qc); if (_ks.length > 30) delete _ap.qc[_ks[0]];
     _ap.data.forEach(function(row) { if (!row.archived_at) _apCache(row); });
     filteredApps = _ap.data.map(mapApplicant);
   }
