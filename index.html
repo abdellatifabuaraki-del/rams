@@ -17370,7 +17370,7 @@ function _collectAgentRateRows() {
     seen[key] = true;
     var entry = { country: country, amount: amount, currency: currency === 'USD' ? 'USD' : 'PHP' };
     var v = function(c){ return (row.querySelector(c)||{}).value; };
-    var rule = _parseCommissionRule({ t1: v('.ag-rate-t1'), t2: v('.ag-rate-t2'), t3: v('.ag-rate-t3'), guaranteeMonths: v('.ag-rate-gm') });
+    var rule = _parseCommissionRule({ t1: v('.ag-rate-t1'), t2: v('.ag-rate-t2'), t3: v('.ag-rate-t3'), guaranteeMonths: v('.ag-rate-gm') }, true);   // typed in the row = explicit, even if it equals 20/20/60
     if (rule) entry.rule = rule;
     out.push(entry);
   });
@@ -17477,6 +17477,7 @@ function _collectAgentWorkerRateRows() {
 
 // ── Commission rule section of the Edit Agent modal ──
 function _setAgentRuleFields(rule) {
+  window._agRuleKeep = !!(rule && rule.t1 != null);
   var d = DEFAULT_COMMISSION_SPLIT;
   var set = function(id, v){ var el = document.getElementById(id); if (el) el.value = v; };
   set('ag-rule-t1', rule && rule.t1 != null ? rule.t1 : d.t1);
@@ -17509,7 +17510,7 @@ function _collectAgentRule() {
   return { rule: _parseCommissionRule({
     t1: v('ag-rule-t1'), t2: v('ag-rule-t2'), t3: v('ag-rule-t3'),
     guaranteeMonths: gRaw === '' || gRaw == null ? null : gRaw,
-  }), error: null };
+  }, !!(window._agRuleKeep)), error: null };   // an explicit 20/20/60 must be kept when it overrides a country rule
 }
 
 function openAddAgent() {
@@ -22278,7 +22279,7 @@ function _parseExtraRates(raw) {
       amount:   parseFloat(r.amount),
       currency: (r.currency === 'USD' ? 'USD' : 'PHP'),
     };
-    var rule = _parseCommissionRule(r.rule);   // optional per-country split / guarantee
+    var rule = _parseCommissionRule(r.rule, true);   // optional per-country split / guarantee
     if (rule) o.rule = rule;
     return o;
   });
@@ -22360,7 +22361,7 @@ var DEFAULT_COMMISSION_SPLIT = { t1: 20, t2: 20, t3: 60 };
 // Returns a clean rule object or null (null = nothing custom, use defaults).
 // A split that doesn't total 100 is discarded rather than trusted, so a bad
 // value can never over- or under-pay commission.
-function _parseCommissionRule(raw) {
+function _parseCommissionRule(raw, keepDefault) {
   var r = raw;
   if (typeof r === 'string') { try { r = JSON.parse(r); } catch(e) { r = null; } }
   if (!r || typeof r !== 'object') return null;
@@ -22368,7 +22369,7 @@ function _parseCommissionRule(raw) {
   var t1 = parseFloat(r.t1), t2 = parseFloat(r.t2), t3 = parseFloat(r.t3);
   var hasSplit = isFinite(t1) && isFinite(t2) && isFinite(t3) && t1 >= 0 && t2 >= 0 && t3 >= 0 &&
                  Math.abs(t1 + t2 + t3 - 100) < 0.001 &&
-                 !(t1 === DEFAULT_COMMISSION_SPLIT.t1 && t2 === DEFAULT_COMMISSION_SPLIT.t2 && t3 === DEFAULT_COMMISSION_SPLIT.t3);
+                 (keepDefault || !(t1 === DEFAULT_COMMISSION_SPLIT.t1 && t2 === DEFAULT_COMMISSION_SPLIT.t2 && t3 === DEFAULT_COMMISSION_SPLIT.t3));
   if (hasSplit) { out.t1 = t1; out.t2 = t2; out.t3 = t3; }
   var gm = parseInt(r.guaranteeMonths);
   if (isFinite(gm) && gm >= 0 && gm <= 60) out.guaranteeMonths = gm;
@@ -22423,7 +22424,7 @@ function mapAgent(row) {
     commissionCurrency: row.commission_currency || 'PHP',
     extraRates:      _parseExtraRates(row.extra_rates),
     workerRates:     _parseWorkerRates(row.worker_rates),
-    commissionRule:  _parseCommissionRule(row.commission_rule),
+    commissionRule:  _parseCommissionRule(row.commission_rule, true),
     address:         row.address || '',
     notes:           row.notes || '',
     status:          row.status || 'Active',
@@ -22961,15 +22962,15 @@ async function loadSharedPermissions() {
         <div style="display:grid;grid-template-columns:repeat(3,1fr) 1.2fr;gap:8px;align-items:end">
           <div>
             <div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">T1 · Medical Passed (%)</div>
-            <input class="f-inp" id="ag-rule-t1" type="number" min="0" max="100" step="1" value="20" oninput="_syncAgentRuleSum()">
+            <input class="f-inp" id="ag-rule-t1" type="number" min="0" max="100" step="1" data-k="1" value="20" oninput="window._agRuleKeep=true;_syncAgentRuleSum()">
           </div>
           <div>
             <div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">T2 · OWWA/Processing (%)</div>
-            <input class="f-inp" id="ag-rule-t2" type="number" min="0" max="100" step="1" value="20" oninput="_syncAgentRuleSum()">
+            <input class="f-inp" id="ag-rule-t2" type="number" min="0" max="100" step="1" data-k="1" value="20" oninput="window._agRuleKeep=true;_syncAgentRuleSum()">
           </div>
           <div>
             <div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">T3 · Deployment (%)</div>
-            <input class="f-inp" id="ag-rule-t3" type="number" min="0" max="100" step="1" value="60" oninput="_syncAgentRuleSum()">
+            <input class="f-inp" id="ag-rule-t3" type="number" min="0" max="100" step="1" data-k="1" value="60" oninput="window._agRuleKeep=true;_syncAgentRuleSum()">
           </div>
           <div>
             <div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">Guarantee (months)</div>
