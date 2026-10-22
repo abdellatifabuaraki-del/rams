@@ -7931,6 +7931,19 @@ function _apRow(id) { return ((_ap.data || []).find(function(r) { return r.id ==
 function _apName(r) { return (r && (r.full_name || [r.first_name, r.middle_name, r.last_name].filter(Boolean).join(' '))) || 'Applicant'; }
 
 // keep the shared applicant cache (used by the drawer, pipeline, accounting) in step with the server
+// Merge a page of results into the in-memory list in ONE pass (was: a full scan + a whole-database save per row)
+function _apMerge(mapped, rows) {
+  var idx = {}; DB.applicants.forEach(function(a, i) { idx[a.id] = i; if (a._dbId) idx[a._dbId] = i; });
+  var add = [];
+  rows.forEach(function(row, k) {
+    if (row.archived_at) return;
+    var m = mapped[k], i = idx[row.id];
+    if (i !== undefined) DB.applicants[i] = Object.assign({}, DB.applicants[i], m); else add.push(m);
+  });
+  if (add.length) Array.prototype.unshift.apply(DB.applicants, add);
+  clearTimeout(window._apSaveT);
+  window._apSaveT = setTimeout(function() { try { autosave('applicants'); } catch (e) {} }, 8000);   // saved quietly later, never right after a click
+}
 function _apCache(row) {
   if (!row || !row.id) return null;
   var m = mapApplicant(row);
@@ -8031,14 +8044,17 @@ async function _apLoad() {
     if (_ap.page > maxPage && _ap.total > 0) { _ap.page = maxPage; return _apLoad(); }
     _ap.qc[qs] = { at: Date.now(), data: _ap.data, total: _ap.total, masked: _ap.masked };
     var _ks = Object.keys(_ap.qc); if (_ks.length > 30) delete _ap.qc[_ks[0]];
-    _ap.data.forEach(function(row) { if (!row.archived_at) _apCache(row); });
     filteredApps = _ap.data.map(mapApplicant);
+    _apMerge(filteredApps, _ap.data);
   }
   if (typeof currentPage === 'undefined' || currentPage === 'applicants') _apPaint();
 }
 
 function _apFillFilters() {
   var F = _ap.filters; if (!F) return;
+  var _ag = document.getElementById('app-agent-filter');
+  if (_ap._filled === F && _ag && _ag.options.length > 1) return;   // option lists unchanged: leave the dropdowns alone
+  _ap._filled = F;
   var fill = function(id, label, items, cur) {
     var el = document.getElementById(id); if (!el) return;
     el.innerHTML = '<option value="">' + escapeHtml(label) + '</option>' + items.map(function(x) {
