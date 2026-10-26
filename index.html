@@ -1225,6 +1225,7 @@ button[disabled][data-rbac-locked] {
             CSV Export
           </button>
           <button id="app-import-btn" class="btn btn-s btn-sm" onclick="_apOpenImport()">⬆ Import CSV</button>
+          <button id="app-bio-import-btn" class="btn btn-s btn-sm" onclick="importBiodataPick()" title="Create an applicant from a bio-data file (PDF information sheet / card, or the Word application form)">📥 Import bio-data</button>
           <button id="app-new-btn" class="btn btn-p btn-sm" onclick="openAddApplicant()">
             <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             New Applicant
@@ -8127,7 +8128,7 @@ function _apPaint() {
   var P = _apPerms();
   _apFillFilters();
   var show = function(id, on) { var el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
-  show('app-csv-btn', P.export); show('app-new-btn', P.create); show('app-import-btn', P.create);
+  show('app-csv-btn', P.export); show('app-new-btn', P.create); show('app-import-btn', P.create); show('app-bio-import-btn', P.create);
   var lbl = document.getElementById('applicant-count-label');
   if (!_ap.data) {
     tbody.innerHTML = _ap.err ? '<tr><td colspan="10"><div class="empty-state" style="color:var(--red)">' + escapeHtml(_ap.err) + '</div></td></tr>'
@@ -8480,6 +8481,225 @@ function _bioHtml(C) {
       (C.passport ? '<img src="' + e(C.passport) + '" style="max-width:100%;max-height:250mm" alt="">' : '<div class="photo" style="height:120mm">Passport copy — upload it in the Documents tab (type Passport, image) to show it here</div>') + '</div>';
   }
   return '<!doctype html><html><head><meta charset="utf-8"><title>Bio-data ' + e(name) + '</title><style>' + css + '</style></head><body>' + html + '</body></html>';
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// BIO-DATA IMPORT — read a bio-data file (PDF information sheet / Golden Faith card, or the Word application form),
+// fill the New Applicant form with what it finds, and let the person check it before saving. Nothing is saved automatically,
+// and the file never leaves the browser (only the PDF / Word reader libraries are downloaded).
+// ══════════════════════════════════════════════════════════════════════
+var _BIO_MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+function _bioParseDate(s) {
+  s = String(s || '').toUpperCase().replace(/\s+/g, ' ').trim(); var m;
+  if ((m = /(\d{4})-(\d{2})-(\d{2})/.exec(s))) return m[1] + '-' + m[2] + '-' + m[3];
+  if ((m = /([A-Z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})/.exec(s)) && _BIO_MONTHS.indexOf(m[1].slice(0, 3)) >= 0) return m[3] + '-' + ('0' + (_BIO_MONTHS.indexOf(m[1].slice(0, 3)) + 1)).slice(-2) + '-' + ('0' + m[2]).slice(-2);
+  if ((m = /(\d{1,2})\s+([A-Z]{3,9})\.?,?\s+(\d{4})/.exec(s)) && _BIO_MONTHS.indexOf(m[2].slice(0, 3)) >= 0) return m[3] + '-' + ('0' + (_BIO_MONTHS.indexOf(m[2].slice(0, 3)) + 1)).slice(-2) + '-' + ('0' + m[1]).slice(-2);
+  if ((m = /(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})/.exec(s))) {
+    var a = parseInt(m[1], 10), b = parseInt(m[2], 10), mo = a, d = b;          // month first (as on the agency's cards: 02/19/2026) unless it cannot be a month
+    if (a > 12 && b <= 12) { d = a; mo = b; }
+    if (mo < 1 || mo > 12 || d < 1 || d > 31) return '';
+    return m[3] + '-' + ('0' + mo).slice(-2) + '-' + ('0' + d).slice(-2);
+  }
+  return '';
+}
+function _bioSplitName(full) {
+  var t = String(full || '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  if (!t.length) return { first: '', middle: '', last: '' };
+  if (t.length === 1) return { first: t[0], middle: '', last: '' };
+  var PART = ['DE', 'DELA', 'DEL', 'DELOS', 'LOS', 'LA', 'LAS', 'SAN', 'SANTA', 'STA.', 'STO.', 'VAN', 'VON', 'DA', 'DI', 'BIN', 'BINTI', 'AL', 'EL'];
+  var mi = -1; for (var i = 1; i < t.length - 1; i++) if (/^[A-Za-z]\.?$/.test(t[i])) { mi = i; break; }
+  if (mi > 0) return { first: t.slice(0, mi).join(' '), middle: t[mi], last: t.slice(mi + 1).join(' ') };
+  var li = t.length - 1; while (li > 1 && PART.indexOf(t[li - 1].toUpperCase()) >= 0) li--;
+  if (t.length === 2) return { first: t[0], middle: '', last: t[1] };
+  return { first: t.slice(0, li).join(' '), middle: '', last: t.slice(li).join(' ') };
+}
+function _bioLevel(s) { var u = String(s || '').toUpperCase().trim(); var L = ['None', 'Poor', 'Fair', 'Good', 'Very good', 'Fluent']; if (/^(NO|NONE|NIL)\b/.test(u)) return 'None'; if (/VERY\s*GOOD/.test(u)) return 'Very good'; for (var i = 0; i < L.length; i++) if (u.indexOf(L[i].toUpperCase()) === 0) return L[i]; if (/EXCELLENT/.test(u)) return 'Fluent'; return ''; }
+function _bioYN(s) { var u = String(s || '').toUpperCase().trim(); if (!u) return ''; if (/WILLING/.test(u)) return 'willing'; if (/^(YES|Y)\b/.test(u)) return 'yes'; if (/^(NO|N)\b/.test(u)) return 'no'; return ''; }
+// one value → the applicant field(s) it belongs to
+function _bioSet(F, key, val) {
+  val = String(val == null ? '' : val).replace(/[ \t]+/g, ' ').trim(); if (!val) return;
+  var m, CH = { housekeeping: 1, cleaning: 1, washing: 1, ironing: 1, caregiver: 1, care_elderly: 1, babysitting: 1, tutoring: 1, cooking_filipino: 1, cooking_arabic: 1, decorating: 1, sewing: 1 };
+  if (CH[key]) { var y = _bioYN(val); if (y) { F.chores = F.chores || {}; F.chores[key] = y; } return; }
+  switch (key) {
+    case 'name': { var n = _bioSplitName(val); F.first_name = n.first; F.middle_name = n.middle; F.last_name = n.last; break; }
+    case 'date_of_birth': case 'passport_issue_date': case 'passport_expiry_date': { var d = _bioParseDate(val); if (d) F[key] = d; break; }
+    case 'phone': case 'next_of_kin_phone': { var ph = val.replace(/[^\d+]/g, ''); if (ph.replace(/\D/g, '').length >= 7) F[key] = ph; break; }
+    case 'passport_number': { var pn = val.toUpperCase().replace(/[^A-Z0-9]/g, ''); if (/^[A-Z0-9]{6,12}$/.test(pn)) F[key] = pn; break; }
+    case 'marital': { var mm = /(SINGLE|MARRIED|WIDOW\w*|SEPARATED|DIVORCED|ANNULLED)/i.exec(val); if (mm) { var w = mm[1].toLowerCase(); F.marital_status = /^widow/.test(w) ? 'Widowed' : w.charAt(0).toUpperCase() + w.slice(1); }
+      if ((m = /(\d+)\s*(KIDS?|CHILD\w*)/i.exec(val))) F.children_count = parseInt(m[1], 10); break; }
+    case 'children': { if ((m = /^\s*(\d+)/.exec(val))) F.children_count = parseInt(m[1], 10); else if (/^(NONE|NO|NIL|0)/i.test(val)) F.children_count = 0; var ag = val.replace(/^\s*\d+\s*(KIDS?|CHILDREN)?/i, '').replace(/^[\s:()\-–,]+|[\s)]+$/g, ''); if (ag) F.children_ages = ag.slice(0, 80); break; }
+    case 'height': { var h = val.replace(/[’‘`´]/g, "'").replace(/[”“]/g, '"').replace(/\s+/g, ''); if (/^\d/.test(h)) F.height = h; break; }
+    case 'weight': { if ((m = /(\d{2,3}(?:\.\d)?)/.exec(val))) F.weight_kg = m[1]; break; }
+    case 'salary': { if ((m = /(\d[\d,]*(?:\.\d+)?)/.exec(val))) { F.salary = m[1].replace(/,/g, ''); var c = /\b([A-Z]{3})\b/.exec(val.toUpperCase().replace(/\d/g, ' ')); if (c) F.salary_currency = c[1]; else if (/\$/.test(val)) F.salary_currency = 'USD'; } break; }
+    case 'contract': { if ((m = /(\d+)/.exec(val))) F.contract_years = parseInt(m[1], 10); break; }
+    case 'english': { var l1 = _bioLevel(val); if (l1) F.english_level = l1; break; }
+    case 'arabic': { var l2 = _bioLevel(val); if (l2) F.arabic_level = l2; break; }
+    case 'kin_name': { var km = /^(?:NEXT OF[: ]*)?(.*?)\s*(?:\(([^)]*)\))?\s*$/i.exec(val); if (km && km[1]) { F.next_of_kin_name = km[1].replace(/^NEXT OF\s*:?\s*/i, '').trim(); if (km[2]) F.next_of_kin_relation = km[2].trim(); } break; }
+    case 'kin_phone': _bioSet(F, 'next_of_kin_phone', val); break;
+    case 'kin_address': F.next_of_kin_address = val; break;
+    case 'ref_no': { var r = val.toUpperCase().replace(/\s+/g, ''); if (/^[A-Z]{1,6}-?\d{1,6}$/.test(r)) F.ref_no = r.replace(/^([A-Z]+)(\d)/, '$1-$2'); break; }
+    case 'position': F.position = val; break;
+    case 'destination': F.destination = val; break;
+    case 'nationality': F.nationality = val; break;
+    default: F[key] = val;
+  }
+}
+// ── label / value sheets (Word application form, PDF "information sheet") ─────────────────────────
+var _BIO_LABELS = {
+  POSITIONPREFERRED: 'position', POSITIONAPPLIED: 'position', DESTINATION: 'destination', FULLNAME: 'name', NAME: 'name', RELIGION: 'religion', ADDRESS: 'address',
+  DATEOFBIRTH: 'date_of_birth', BIRTHDATE: 'date_of_birth', PLACEOFBIRTH: 'place_of_birth', MARITALSTATUS: 'marital', STATUS: 'marital', NOOFCHILDRENANDAGES: 'children', NUMBEROFCHILDREN: 'children', NOOFCHILDREN: 'children',
+  HEIGHTFEET: 'height', HEIGHT: 'height', WEIGHTKILOGRAMS: 'weight', WEIGHT: 'weight', WEIGHTKG: 'weight', EDUCATIONALATTAINMENT: 'education', EDUCATION: 'education', WORKEXPERIENCE: 'work_experience',
+  EXPERIENCEABROAD: 'experience_abroad', LANGUAGEENGLISH: 'english', LANGUAGEARABIC: 'arabic', ENGLISHSPEAKING: 'english', CONTACTNUMBER: 'phone', MOBILENUMBER: 'phone', NATIONALITY: 'nationality',
+  PASSPORTNUMBER: 'passport_number', PASSPORTNO: 'passport_number', DATEOFISSUE: 'passport_issue_date', DATEOFEXPIRY: 'passport_expiry_date', PLACEOFISSUE: 'passport_place_of_issue',
+  NEXTOFKIN: 'kin_name', REMARKS: 'remarks', SPECIALSKILLS: 'special_skills', HOUSEKEEPING: 'housekeeping', CLEANING: 'cleaning', WASHING: 'washing', IRONING: 'ironing', CAREGIVER: 'caregiver',
+  CAREFORELDERLY: 'care_elderly', BABYSITTING: 'babysitting', TUTORING: 'tutoring', FILIPINOCOOKING: 'cooking_filipino', ARABICCOOKING: 'cooking_arabic', DECORATING: 'decorating', SEWING: 'sewing',
+  CONTRACT: 'contract', SALARY: 'salary'
+};
+function _bioNormLabel(s) { return String(s || '').toUpperCase().replace(/[^A-Z]/g, ''); }
+// rows: [{ label, value }] in reading order
+function _bioParseRows(rows, F) {
+  var inKin = false, last = null, pending = '', MULTI = { remarks: 1, special_skills: 1, work_experience: 1, address: 1 };
+  rows.forEach(function(r, i) {
+    var k = _BIO_LABELS[_bioNormLabel(r.label)];
+    if (!r.label && r.value) {
+      if (last) { F[last] = (F[last] ? F[last] + '\n' : '') + r.value; return; }                // continuation line of a long value
+      var nx = rows[i + 1], nk = nx && _BIO_LABELS[_bioNormLabel(nx.label)];
+      if (nk && MULTI[nk]) { pending = r.value; return; }                                       // first line of a long value sits slightly above its label
+      return;
+    }
+    if (!k) { last = null; return; }
+    if (k === 'kin_name') inKin = true;
+    if (inKin && k === 'address') k = 'kin_address'; else if (inKin && k === 'phone') k = 'kin_phone';
+    last = (k === 'remarks' || k === 'special_skills' || k === 'work_experience' || k === 'address') ? k : null;
+    if (last) { F[k] = (pending ? pending + '\n' : '') + r.value; pending = ''; } else _bioSet(F, k, r.value);
+  });
+}
+// ── PDF: text items with positions ────────────────────────────────────────────────────────────────
+async function _bioPdfPages(pdf) {
+  var pages = [];
+  for (var p = 1; p <= pdf.numPages; p++) {
+    var pg = await pdf.getPage(p), vp = pg.getViewport({ scale: 1 }), tc = await pg.getTextContent();
+    pages.push({ w: vp.width, h: vp.height, items: tc.items.filter(function(i) { return String(i.str).trim(); }).map(function(i) { return { x: i.transform[4], y: i.transform[5], w: i.width || 0, s: i.str }; }) });
+  }
+  return pages;
+}
+function _bioLines(items) {   // items → lines (top to bottom), each line's text joined left to right
+  var rows = []; items.slice().sort(function(a, b) { return b.y - a.y || a.x - b.x; }).forEach(function(it) {
+    var row = rows.find(function(r) { return Math.abs(r.y - it.y) <= 3.5; }); if (!row) { row = { y: it.y, items: [] }; rows.push(row); } row.items.push(it); });
+  rows.sort(function(a, b) { return b.y - a.y; });
+  rows.forEach(function(r) { r.items.sort(function(a, b) { return a.x - b.x; }); });
+  return rows;
+}
+function _bioJoin(items) { var t = '', prev = null; items.forEach(function(i) { if (prev && i.x - (prev.x + prev.w) > 1.5) t += ' '; t += i.s; prev = i; }); return t.replace(/\s+/g, ' ').trim(); }
+function _bioSheetRows(page) {   // "NAME   GRACE ANN B. TOREJANO" pages: label column on the left, values to the right
+  var lines = _bioLines(page.items), split = page.w * 0.25, out = [];
+  lines.forEach(function(r) { var l = r.items.filter(function(i) { return i.x < split; }), v = r.items.filter(function(i) { return i.x >= split; }); out.push({ label: _bioJoin(l), value: _bioJoin(v) }); });
+  return out;
+}
+// the Golden Faith card: the labels are part of the background picture, only the typed values are text — read them by position
+var _BIO_CARD = [   // [key, x0, x1, y0, y1] on a 595.56 × 842.04 page (y counted from the bottom)
+  ['ref_no', 90, 240, 678, 697], ['religion', 200, 380, 638, 656], ['position', 150, 380, 586, 602], ['phone', 150, 380, 564, 582], ['name', 70, 380, 522, 538], ['date_of_birth', 100, 380, 476, 492], ['place_of_birth', 100, 380, 432, 448],
+  ['passport_number', 40, 185, 358, 372], ['passport_issue_date', 185, 320, 358, 372], ['passport_expiry_date', 320, 470, 358, 372], ['passport_place_of_issue', 470, 600, 364, 380],
+  ['nationality', 40, 190, 298, 316], ['marital', 190, 330, 298, 316], ['children', 330, 445, 298, 316], ['education', 445, 600, 284, 316],
+  ['experience_abroad', 30, 150, 212, 230], ['english', 190, 300, 242, 258], ['decorating', 160, 225, 178, 194], ['sewing', 225, 300, 178, 194],
+  ['washing', 30, 100, 118, 134], ['cleaning', 100, 170, 118, 134], ['babysitting', 170, 245, 118, 134], ['cooking_filipino', 245, 300, 118, 134],
+  ['height', 30, 95, 68, 84], ['weight', 95, 165, 68, 84], ['contract', 165, 235, 68, 84], ['salary', 235, 300, 68, 84]];
+function _bioCardParse(page, F) {
+  var sx = page.w / 595.56, sy = page.h / 842.04, G = {};
+  _BIO_CARD.forEach(function(z) {
+    var its = page.items.filter(function(i) { return i.x >= z[1] * sx && i.x < z[2] * sx && i.y >= z[3] * sy && i.y <= z[4] * sy; });
+    if (its.length) _bioSet(G, z[0], _bioLines(its).map(function(r) { return _bioJoin(r.items); }).join(' '));
+  });
+  if (!G.first_name || !(G.passport_number || G.date_of_birth)) return false;        // not this card layout
+  // remarks area (right of the skills) and next of kin lines below it
+  var rem = page.items.filter(function(i) { return i.x >= 300 * sx && i.y > 183 * sy && i.y < 290 * sy; });
+  var skills = _bioLines(rem).map(function(r) { return _bioJoin(r.items); }).join('\n');
+  var kin = _bioLines(page.items.filter(function(i) { return i.x >= 300 * sx && i.y <= 183 * sy && i.y > 140 * sy; })).map(function(r) { return _bioJoin(r.items); });
+  if (skills) G.special_skills = skills;
+  kin.forEach(function(l) { var m;
+    if ((m = /^NEXT OF KIN CONTACT NUMBER\s*:?\s*(.*)$/i.exec(l))) _bioSet(G, 'kin_phone', m[1]);
+    else if ((m = /^NEXT OF KIN COMPLETE ADDRESS\s*:?\s*(.*)$/i.exec(l))) _bioSet(G, 'kin_address', m[1]);
+    else if ((m = /^NEXT OF\s*:?\s*(.*)$/i.exec(l))) _bioSet(G, 'kin_name', m[1]); });
+  Object.keys(G).forEach(function(k) { if (F[k] === undefined || F[k] === '' || (k === 'chores')) { if (k === 'chores') F.chores = Object.assign({}, G.chores, F.chores); else F[k] = G[k]; } });
+  return true;
+}
+function _bioParsePdf(pages) {
+  var F = {}, card = false;
+  // information sheet first (labels + values: the most dependable), then the card for everything the sheet does not carry
+  pages.forEach(function(pg) { if (/INFORMATION\s*SHEET/i.test(pg.items.map(function(i) { return i.s; }).join(' ').replace(/\s+/g, ' '))) _bioParseRows(_bioSheetRows(pg), F); });
+  pages.forEach(function(pg) { if (!card && pg.items.length > 12) card = _bioCardParse(pg, F) || card; });
+  return F;
+}
+// ── Word form: tables of  label | value | Arabic label ────────────────────────────────────────────
+function _bioParseDocxRows(rows) {   // rows: array of arrays of cell texts
+  var F = {}, flat = [], ref = '';
+  rows.forEach(function(c) { c = c.map(function(x) { return String(x || '').replace(/\s+/g, ' ').trim(); });
+    c.forEach(function(x) { if (!ref && /^(?:[A-Z]{1,6})\s*-?\s*\d{1,6}$/.test(x.toUpperCase()) && !/^\d+$/.test(x)) ref = x; });
+    if (c[0]) flat.push({ label: c[0], value: c[1] || '' }); else if (c.some(Boolean)) flat.push({ label: '', value: c.filter(Boolean)[0] }); });   // a free-text box (special skills) sits in the row below its title
+  // the form has no "next of kin" or second "address": map straight, but ignore the agency's own "Contact No." cell
+  flat = flat.filter(function(r) { return !/^CONTACTNO/.test(_bioNormLabel(r.label)); });
+  _bioParseRows(flat, F);
+  if (ref) _bioSet(F, 'ref_no', ref);
+  return F;
+}
+// finishing touches shared by both readers: category + gender hints, and the form field names
+var _BIO_POSITIONS = ['Domestic Helper', 'Household Service Worker', 'Housemaid', 'Housekeeper', 'Nanny', 'Caregiver', 'Cook', 'Driver', 'Cleaner', 'Babysitter', 'Waitress', 'Nurse', 'Laundry', 'Gardener'];
+function _bioFixWords(F) {   // Word files often come out with the spaces squeezed together ("DOMESTICHELPER", "KINGDOMOFSAUDIARABIA")
+  var sq = function(x) { return String(x || '').toUpperCase().replace(/[^A-Z]/g, ''); };
+  if (F.position && F.position.indexOf(' ') < 0) { var pk = sq(F.position), hit = _BIO_POSITIONS.filter(function(p) { return sq(p) === pk; })[0]; if (hit) F.position = hit; }
+  if (F.destination && typeof COUNTRY_LIST !== 'undefined') {
+    var dk = sq(F.destination), best = null;
+    COUNTRY_LIST.forEach(function(c) { [c.name].concat(c.aliases).forEach(function(a) { var ak = sq(a); if (ak.length >= 3 && (dk === ak || dk.indexOf(ak) >= 0) && (!best || ak.length > best.len)) best = { name: c.name, len: ak.length }; }); });
+    if (best) F.destination = best.name;
+  }
+}
+function _bioFinish(F) {
+  Object.keys(F).forEach(function(k) { if (F[k] === '' || F[k] == null || (k === 'chores' && !Object.keys(F.chores).length)) delete F[k]; });
+  _bioFixWords(F);
+  var pos = String(F.position || '') + ' ' + String(F.special_skills || '') + ' ' + String(F.remarks || '');
+  if (/HELPER|MAID|HOUSEHOLD|HOUSEKEEP|NANNY|CAREGIVER|DOMESTIC/i.test(pos) || (F.chores && (F.chores.housekeeping || F.chores.cooking_filipino || F.chores.babysitting))) F.category = 'Household';
+  var txt = String(F.remarks || '') + ' ' + String(F.special_skills || '');
+  if (/\b(SHE|HER)\b/i.test(txt)) F.gender = 'Female'; else if (/\b(HE|HIS)\b/i.test(txt)) F.gender = 'Male';
+  if (F.children_count == null && F.marital_status && F.marital_status !== 'Married') delete F.children_count;
+  return F;
+}
+function _bioLoadScript(url) { return new Promise(function(res, rej) { var s = document.createElement('script'); s.src = url; s.onload = res; s.onerror = function() { rej(new Error('Could not load the file reader (check the internet connection)')); }; document.head.appendChild(s); }); }
+async function _bioReadFile(file) {
+  var name = String(file.name || '').toLowerCase(), buf = await file.arrayBuffer();
+  if (/\.pdf$/.test(name)) {
+    if (!window.pdfjsLib) await _bioLoadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    var pdf = await window.pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+    return _bioFinish(_bioParsePdf(await _bioPdfPages(pdf)));
+  }
+  if (/\.docx$/.test(name)) {
+    if (!window.mammoth) await _bioLoadScript('https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js');
+    var html = (await window.mammoth.convertToHtml({ arrayBuffer: buf })).value;
+    var doc = new DOMParser().parseFromString(html, 'text/html'), rows = [];
+    doc.querySelectorAll('tr').forEach(function(tr) { rows.push(Array.prototype.map.call(tr.querySelectorAll('td,th'), function(td) { return td.textContent; })); });
+    return _bioFinish(_bioParseDocxRows(rows));
+  }
+  throw new Error('Choose a PDF or a Word (.docx) bio-data file');
+}
+function importBiodataPick() {
+  if (!hasPermission('Create Applicants')) { toast('Your role cannot create applicants', 'error'); return; }
+  var inp = document.getElementById('bio-import-file');
+  if (!inp) { inp = document.createElement('input'); inp.type = 'file'; inp.id = 'bio-import-file'; inp.accept = '.pdf,.docx'; inp.style.display = 'none'; inp.onchange = function() { var f = inp.files && inp.files[0]; inp.value = ''; if (f) importBiodata(f); }; document.body.appendChild(inp); }
+  inp.click();
+}
+async function importBiodata(file) {
+  toast('Reading ' + file.name + '…', 'info');
+  var F;
+  try { F = await _bioReadFile(file); } catch (e) { toast('⛔ ' + (e && e.message ? e.message : 'Could not read the file'), 'error'); return; }
+  var n = Object.keys(F).filter(function(k) { return k !== 'chores' ? F[k] !== '' : Object.keys(F.chores || {}).length; }).length;
+  if (n < 3 || (!F.first_name && !F.passport_number)) { toast('⛔ No applicant name or passport was found in ' + file.name + ' — it may be a blank form or a scanned picture (no text). Fill the form by hand instead.', 'error'); return; }
+  openAddApplicant();
+  _apFillForm(Object.assign({ status: 'Applied', medical_status: 'Pending' }, F));
+  var er = document.getElementById('a-error');
+  var missing = ['first_name', 'date_of_birth', 'gender', 'category'].filter(function(k) { return !F[k]; });
+  if (er) { er.style.cssText = 'display:block;margin-bottom:10px;padding:10px 12px;background:var(--abg);border:1px solid var(--amber);border-radius:8px;font-size:12.5px;color:var(--text)';
+    er.innerHTML = '📥 Filled from <b>' + escapeHtml(file.name) + '</b> (' + n + ' fields). Please check every value before saving.' + (missing.length ? ' Still to fill in: <b>' + missing.map(function(k) { return k.replace('_', ' '); }).join(', ') + '</b>.' : ''); }
+  var wrap = document.getElementById('a-bio-wrap'); if (wrap) wrap.open = true;
 }
 var _AP_FIELD_INPUT = { first_name: 'a-first', middle_name: 'a-middle', last_name: 'a-last', email: 'a-email', phone: 'a-contact', passport_number: 'a-passport', date_of_birth: 'a-dob',
   gender: 'a-gender', nationality: 'a-nationality', category: 'a-category', job_order_id: 'a-job-order', agent_id: 'a-agent', status: 'a-status', medical_status: 'a-medical',
