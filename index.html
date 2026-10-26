@@ -221,6 +221,7 @@ tbody tr:hover td{background:var(--s2);}
 .drawer-sub{font-size:12px;color:var(--muted);font-family:'IBM Plex Mono',monospace;}
 .drawer-close{margin-left:auto;width:30px;height:30px;border-radius:7px;border:1px solid var(--border);background:var(--surface);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;color:var(--muted);}
 .drawer-
+.ap-sec{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:12px;background:var(--surface)}.ap-sec>h3{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0 0 10px;font-weight:800}.ap-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}.ap-grid .form-group{margin:0}.ap-grid .form-group[style*=span]{grid-column:span 2}
 .drawer-tabs{display:flex;gap:1px;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:3px;margin-bottom:18px;}
 .drawer-tab{flex:1;text-align:center;padding:6px 10px;border-radius:6px;font-size:12.5px;font-weight:600;cursor:pointer;color:var(--muted);transition:all .13s;}
 .drawer-tab.active{background:var(--surface);color:var(--text);box-shadow:var(--xs);}
@@ -2575,7 +2576,7 @@ button[disabled][data-rbac-locked] {
 
 <!-- Add/Edit Applicant -->
 <div class="overlay" id="overlay-applicant" onclick="closeOverlayIfBg(event,'overlay-applicant')" role="dialog" aria-modal="true" aria-label="Applicant form">
-  <div class="modal modal-lg">
+  <div class="modal modal-lg" style="max-width:1000px;width:96vw">
     <div class="modal-hdr">
       <div>
         <h2 id="applicant-modal-title">New Applicant</h2>
@@ -2587,93 +2588,137 @@ button[disabled][data-rbac-locked] {
       <div id="a-error" style="display:none;margin-bottom:10px;padding:10px 12px;background:var(--rbg);border:1px solid #fca5a5;border-radius:8px;font-size:12.5px;color:var(--red)"></div>
       <div id="a-dup" style="display:none;margin-bottom:10px;padding:10px 12px;background:var(--abg);border:1px solid var(--amber);border-radius:8px;font-size:12.5px"></div>
       <div id="a-masked-note" style="display:none;margin-bottom:10px;font-size:12px;color:var(--muted)">🔒 Personal data (phone, email, passport, date of birth) is hidden for your role and cannot be changed here.</div>
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">First Name <span class="req">*</span></label><input type="text" class="form-input" id="a-first" maxlength="80" placeholder="Juan" aria-required="true" autocomplete="off"></div>
-        <div class="form-group"><label class="form-label">Middle Name</label><input type="text" class="form-input" id="a-middle" maxlength="80" placeholder="Santos" autocomplete="off"></div>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">Last Name</label><input type="text" class="form-input" id="a-last" maxlength="80" placeholder="dela Cruz" autocomplete="off"></div>
-        <div class="form-group"><label class="form-label">Applicant ID</label><input type="text" class="form-input" id="a-id" readonly style="background:var(--s2);color:var(--muted)"></div>
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Status</label>
-          <select class="form-input" id="a-status">
-            <option>For Selection</option><option>Applied</option><option>Screening</option>
-            <option>Interview</option><option>Selected</option><option>Medical</option>
-            <option>OWWA</option><option>Processing</option><option>Visa</option><option>For Booking</option>
-            <option>Deployed</option><option>With Complaint</option><option>Backout</option><option>Repatriated</option><option>Rejected</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Assigned Agent</label>
-          <select class="form-input" id="a-agent" onchange="_onAgentSelectChange()"><option value="">-- Select Agent --</option></select>
-          <input type="hidden" id="a-agent-uuid" value="">
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">Contact Number</label><input type="tel" class="form-input" id="a-contact" maxlength="25" placeholder="+63 9XX XXX XXXX"></div>
-        <div class="form-group"><label class="form-label">Email</label><input type="email" class="form-input" id="a-email" maxlength="255" placeholder="juan@email.com"></div>
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Gender <span class="req">*</span></label>
-          <select class="form-input" id="a-gender"><option value="">— Select —</option><option>Male</option><option>Female</option></select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Category <span class="req">*</span></label>
-          <select class="form-input" id="a-category" onchange="_populateJobOrderSelect(document.getElementById('a-job-order-id').value)">
-            <option value="">— Select —</option><option value="Skilled">Skilled</option><option value="Household">Household</option>
-          </select>
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">Passport Number</label><input type="text" class="form-input" id="a-passport" maxlength="20" placeholder="e.g. P1234567A" style="font-family:'IBM Plex Mono',monospace;letter-spacing:.05em;text-transform:uppercase"></div>
-        <div class="form-group"><label class="form-label">Date of Birth <span class="req">*</span></label><input type="date" class="form-input" id="a-dob" max=""></div>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">Nationality</label><input type="text" class="form-input" id="a-nationality" maxlength="80" placeholder="Filipino"></div>
-        <div class="form-group">
-          <label class="form-label">Destination Country</label>
-          <select class="form-input" id="a-destination" onchange="_onDestinationChange()">
-            <option value="">— Select Country —</option>
-            <option>Saudi Arabia</option><option>UAE</option><option>Qatar</option>
-            <option>Kuwait</option><option>Bahrain</option><option>Oman</option>
-            <option>Hong Kong</option><option>Singapore</option><option>Japan</option>
-            <option>South Korea</option><option>Germany</option><option>Canada</option>
-            <option>United Kingdom</option><option>Australia</option><option>Italy</option>
-            <option>Slovenia</option>
-            <option>Other</option>
-          </select>
+      <div class="ap-sec">
+        <h3>1 · Application</h3>
+        <div class="ap-grid">
+          <div class="form-group"><label class="form-label">Applicant ID</label><input type="text" class="form-input" id="a-id" readonly style="background:var(--s2);color:var(--muted)"></div>
+          <div class="form-group"><label class="form-label">Date applied</label><input type="text" class="form-input" id="a-applied" readonly style="background:var(--s2);color:var(--muted)"></div>
+          <div class="form-group"><label class="form-label">Bio-data ref. no.</label><div id="ab-slot-ref"></div></div>
+          <div class="form-group">
+            <label class="form-label">Status</label>
+            <select class="form-input" id="a-status">
+              <option>For Selection</option><option>Applied</option><option>Screening</option>
+              <option>Interview</option><option>Selected</option><option>Medical</option>
+              <option>OWWA</option><option>Processing</option><option>Visa</option><option>For Booking</option>
+              <option>Deployed</option><option>With Complaint</option><option>Backout</option><option>Repatriated</option><option>Rejected</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Category <span class="req">*</span></label>
+            <select class="form-input" id="a-category" onchange="_populateJobOrderSelect(document.getElementById('a-job-order-id').value)">
+              <option value="">— Select —</option><option value="Skilled">Skilled</option><option value="Household">Household</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Destination country</label>
+            <select class="form-input" id="a-destination" onchange="_onDestinationChange()">
+              <option value="">— Select Country —</option>
+              <option>Saudi Arabia</option><option>UAE</option><option>Qatar</option>
+              <option>Kuwait</option><option>Bahrain</option><option>Oman</option>
+              <option>Hong Kong</option><option>Singapore</option><option>Japan</option>
+              <option>South Korea</option><option>Germany</option><option>Canada</option>
+              <option>United Kingdom</option><option>Australia</option><option>Italy</option>
+              <option>Slovenia</option>
+              <option>Other</option>
+            </select>
+          </div>
+          <div class="form-group" style="grid-column:span 2">
+            <label class="form-label">Job order / position preferred</label>
+            <select class="form-input" id="a-job-order" onchange="_onJobOrderSelect(); document.getElementById('a-job-order-id').value=this.value;"><option value="">— Select Job Order —</option></select>
+            <input type="hidden" id="a-job-order-id" value="">
+            <input type="text" class="form-input" id="a-job" maxlength="120" placeholder="Position preferred (or type manually…)" style="margin-top:6px;font-size:12px">
+            <div id="a-job-info" style="display:none;margin-top:6px;padding:8px 10px;background:var(--brand-l);border:1px solid var(--brand);border-radius:7px;font-size:12px;color:var(--brand)"></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Assigned agent</label>
+            <select class="form-input" id="a-agent" onchange="_onAgentSelectChange()"><option value="">-- Select Agent --</option></select>
+            <input type="hidden" id="a-agent-uuid" value="">
+          </div>
         </div>
       </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Job Order</label>
-          <select class="form-input" id="a-job-order" onchange="_onJobOrderSelect(); document.getElementById('a-job-order-id').value=this.value;"><option value="">— Select Job Order —</option></select>
-          <input type="hidden" id="a-job-order-id" value="">
-          <input type="text" class="form-input" id="a-job" maxlength="120" placeholder="Position (or type manually…)" style="margin-top:6px;font-size:12px">
-          <div id="a-job-info" style="display:none;margin-top:6px;padding:8px 10px;background:var(--brand-l);border:1px solid var(--brand);border-radius:7px;font-size:12px;color:var(--brand)"></div>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Medical Status</label>
-          <select class="form-input" id="a-medical"><option>Pending</option><option>Passed</option><option>Failed</option><option>Exempted</option></select>
+
+      <div class="ap-sec">
+        <h3>2 · Personal details</h3>
+        <div class="ap-grid">
+          <div class="form-group"><label class="form-label">First name <span class="req">*</span></label><input type="text" class="form-input" id="a-first" maxlength="80" placeholder="Juan" aria-required="true" autocomplete="off"></div>
+          <div class="form-group"><label class="form-label">Middle name</label><input type="text" class="form-input" id="a-middle" maxlength="80" placeholder="Santos" autocomplete="off"></div>
+          <div class="form-group"><label class="form-label">Last name</label><input type="text" class="form-input" id="a-last" maxlength="80" placeholder="dela Cruz" autocomplete="off"></div>
+          <div class="form-group">
+            <label class="form-label">Gender <span class="req">*</span></label>
+            <select class="form-input" id="a-gender"><option value="">— Select —</option><option>Male</option><option>Female</option></select>
+          </div>
+          <div class="form-group"><label class="form-label">Date of birth <span class="req">*</span> <span id="a-age" style="font-weight:400;color:var(--muted)"></span></label><input type="date" class="form-input" id="a-dob" max="" oninput="_apShowAge()"></div>
+          <div class="form-group"><label class="form-label">Nationality</label><input type="text" class="form-input" id="a-nationality" maxlength="80" placeholder="Filipino"></div>
+          <div id="ab-slot-personal" style="display:contents"></div>
         </div>
       </div>
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">Consent date <span style="font-weight:400;color:var(--muted)">(data-privacy consent signed)</span></label><input type="date" class="form-input" id="a-consent"></div>
-        <div class="form-group"><label class="form-label">Keep personal data until</label><input type="date" class="form-input" id="a-retention"></div>
+
+      <div class="ap-sec">
+        <h3>3 · Contact</h3>
+        <div class="ap-grid">
+          <div class="form-group"><label class="form-label">Contact number</label><input type="tel" class="form-input" id="a-contact" maxlength="25" placeholder="+63 9XX XXX XXXX"></div>
+          <div class="form-group"><label class="form-label">Email</label><input type="email" class="form-input" id="a-email" maxlength="255" placeholder="juan@email.com"></div>
+        </div>
       </div>
-      <div class="form-row">
-        <div class="form-group" style="grid-column:1/-1">
+
+      <div class="ap-sec">
+        <h3>4 · Passport</h3>
+        <div class="ap-grid">
+          <div class="form-group"><label class="form-label">Passport number</label><input type="text" class="form-input" id="a-passport" maxlength="20" placeholder="e.g. P1234567A" style="font-family:'IBM Plex Mono',monospace;letter-spacing:.05em;text-transform:uppercase"></div>
+          <div id="ab-slot-passport" style="display:contents"></div>
+        </div>
+      </div>
+
+      <div class="ap-sec">
+        <h3>5 · Experience &amp; languages</h3>
+        <div class="ap-grid" id="ab-slot-exp"></div>
+      </div>
+
+      <div class="ap-sec">
+        <h3>6 · Skills &amp; household chores</h3>
+        <div class="ap-grid" id="ab-slot-skills"></div>
+      </div>
+
+      <div class="ap-sec">
+        <h3>7 · Job terms</h3>
+        <div class="ap-grid" id="ab-slot-terms"></div>
+      </div>
+
+      <div class="ap-sec">
+        <h3>8 · Next of kin</h3>
+        <div class="ap-grid" id="ab-slot-kin"></div>
+      </div>
+
+      <div class="ap-sec">
+        <h3>9 · Medical &amp; data-privacy</h3>
+        <div class="ap-grid">
+          <div class="form-group">
+            <label class="form-label">Medical status</label>
+            <select class="form-input" id="a-medical"><option>Pending</option><option>Passed</option><option>Failed</option><option>Exempted</option></select>
+          </div>
+          <div class="form-group"><label class="form-label">Consent date <span style="font-weight:400;color:var(--muted)">(data-privacy consent signed)</span></label><input type="date" class="form-input" id="a-consent"></div>
+          <div class="form-group"><label class="form-label">Keep personal data until</label><input type="date" class="form-input" id="a-retention"></div>
+        </div>
+      </div>
+
+      <div class="ap-sec">
+        <h3>10 · Remarks &amp; notes</h3>
+        <div class="ap-grid" id="ab-slot-other"></div>
+        <div class="form-group" style="margin-top:10px">
           <label class="form-label">Summary note</label>
           <textarea class="form-input" id="a-notes" rows="2" maxlength="4000" placeholder="Short summary — dated notes go in the Timeline tab" style="resize:vertical"></textarea>
         </div>
       </div>
-      <details id="a-bio-wrap" style="margin-top:6px;border:1px solid var(--border);border-radius:10px;padding:8px 12px;background:var(--s2)">
-        <summary style="cursor:pointer;font-weight:800;font-size:13px">📋 Bio-data / CV details <span style="font-weight:400;color:var(--muted)">(religion, passport, skills, next of kin…)</span></summary>
-        <div id="a-bio" style="margin-top:10px"></div>
-      </details>
+
+      <div class="ap-sec">
+        <h3>11 · Photos &amp; passport copy <span style="font-weight:400;text-transform:none;letter-spacing:0">(saved to the applicant's Documents when you press Save)</span></h3>
+        <div class="ap-grid">
+          <div class="form-group"><label class="form-label">Photo — face</label><input type="file" class="form-input" id="ab-file-photo1" accept="image/jpeg,image/png"></div>
+          <div class="form-group"><label class="form-label">Photo — full body</label><input type="file" class="form-input" id="ab-file-photo2" accept="image/jpeg,image/png"></div>
+          <div class="form-group"><label class="form-label">Passport copy (bio page)</label><input type="file" class="form-input" id="ab-file-passport" accept="image/jpeg,image/png,application/pdf"></div>
+        </div>
+        <div style="font-size:11.5px;color:var(--muted);margin-top:6px">Photos and the passport image appear on the printed bio-data. Other documents (medical, visa, contract…) are added in the Documents tab.</div>
+      </div>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="closeOverlay('overlay-applicant')">Cancel</button>
@@ -8310,28 +8355,29 @@ var _BIO_GROUPS = [
   ['Job terms', [['salary', 'Salary', 'n'], ['salary_currency', 'Currency', 't', 'USD'], ['contract_years', 'Contract (years)', 'n']]],
   ['Next of kin', [['next_of_kin_name', 'Name', 't'], ['next_of_kin_relation', 'Relation', 't', 'Mother'], ['next_of_kin_phone', 'Contact number', 't'], ['next_of_kin_address', 'Address', 'a']]],
   ['Skills', 'chores'],
-  ['Other', [['special_skills', 'Special skills', 'a'], ['remarks', 'Remarks', 'a']]]
+  ['Other', [['special_skills', 'Special skills', 'a'], ['remarks', 'Remarks', 'a'], ['interviewed_by', 'Interviewed by', 't']]]
 ];
 var _BIO_PI = ['address', 'place_of_birth', 'passport_issue_date', 'passport_expiry_date', 'passport_place_of_issue', 'next_of_kin_name', 'next_of_kin_relation', 'next_of_kin_phone', 'next_of_kin_address'];
 var _BIO_KEYS = []; _BIO_GROUPS.forEach(function(g) { if (g[1] !== 'chores') g[1].forEach(function(f) { _BIO_KEYS.push(f[0]); }); });
 var _BIO_NUM = ['children_count', 'weight_kg', 'salary', 'contract_years'];
+var _BIO_SLOT = { 'Reference': 'ab-slot-ref', 'Personal': 'ab-slot-personal', 'Passport': 'ab-slot-passport', 'Experience & language': 'ab-slot-exp', 'Job terms': 'ab-slot-terms', 'Next of kin': 'ab-slot-kin', 'Skills': 'ab-slot-skills', 'Other': 'ab-slot-other' };
 function _apBioRender() {
-  var host = document.getElementById('a-bio'); if (!host || host.getAttribute('data-ready')) return;
-  var h = '';
+  if (window._apBioReady && document.getElementById('ab-religion')) return;
   _BIO_GROUPS.forEach(function(g) {
-    h += '<div style="font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:12px 0 6px">' + g[0] + '</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px">';
+    var slot = document.getElementById(_BIO_SLOT[g[0]]); if (!slot) return;
+    var h = '';
     if (g[1] === 'chores') {
-      _BIO_CHORES.forEach(function(c) { h += '<div class="form-group" style="margin:0"><label class="form-label">' + c[1] + '</label><select class="form-input" id="ab-chore-' + c[0] + '"><option value="">—</option><option value="yes">Yes</option><option value="no">No</option><option value="willing">Willing to learn</option></select></div>'; });
+      _BIO_CHORES.forEach(function(c) { h += '<div class="form-group"><label class="form-label">' + c[1] + '</label><select class="form-input" id="ab-chore-' + c[0] + '"><option value="">—</option><option value="yes">Yes</option><option value="no">No</option><option value="willing">Willing to learn</option></select></div>'; });
     } else g[1].forEach(function(f) {
       var id = 'ab-' + f[0], inp;
       if (f[2] === 's') inp = '<select class="form-input" id="' + id + '"><option value="">—</option>' + f[3].map(function(o) { return '<option>' + o + '</option>'; }).join('') + '</select>';
       else if (f[2] === 'a') inp = '<textarea class="form-input" id="' + id + '" rows="2" style="resize:vertical"></textarea>';
       else inp = '<input class="form-input" id="' + id + '" type="' + (f[2] === 'd' ? 'date' : f[2] === 'n' ? 'number' : 'text') + '"' + (f[2] === 'n' ? ' step="any" min="0"' : '') + (f[3] && f[2] === 't' ? ' placeholder="' + f[3] + '"' : '') + ' maxlength="200">';
-      h += '<div class="form-group" style="margin:0' + (f[2] === 'a' ? ';grid-column:1/-1' : '') + '"><label class="form-label">' + f[1] + '</label>' + inp + '</div>';
+      h += '<div class="form-group"' + (f[2] === 'a' ? ' style="grid-column:1/-1"' : '') + '><label class="form-label">' + f[1] + '</label>' + inp + '</div>';
     });
-    h += '</div>';
+    slot.innerHTML = h;
   });
-  host.innerHTML = h; host.setAttribute('data-ready', '1');
+  window._apBioReady = true;
 }
 function _apBioFill(r) {
   _apBioRender();
@@ -8340,7 +8386,6 @@ function _apBioFill(r) {
   _BIO_CHORES.forEach(function(c) { _apSetVal('ab-chore-' + c[0], ch[c[0]] || ''); });
   var masked = !!r.pii_masked;
   _BIO_PI.forEach(function(k) { var el = document.getElementById('ab-' + k); if (el) { el.readOnly = masked; el.disabled = masked && el.tagName === 'SELECT'; el.style.background = masked ? 'var(--s2)' : ''; } });
-  var wrap = document.getElementById('a-bio-wrap'); if (wrap) wrap.open = _BIO_KEYS.some(function(k) { return r[k] != null && r[k] !== ''; });
 }
 function _apBioCollect() {
   var o = {};
@@ -8394,7 +8439,10 @@ async function openBiodata(id, layout) {
   var dr = await apiFetch('/documents?applicant_id=' + uuid + '&limit=100&status=&_=' + Date.now());
   var docs = dr.ok && dr.data && Array.isArray(dr.data.data) ? dr.data.data : [];
   var usable = function(d) { return d.has_file && d.preview === 'image' && !d.voided && ['Rejected', 'Superseded'].indexOf(d.status) === -1; };
-  var photos = docs.filter(function(d) { return d.type === 'Photo' && usable(d); }).slice(0, 2);
+  var pl = docs.filter(function(d) { return d.type === 'Photo' && usable(d); });
+  var faceD = pl.filter(function(d) { return /face|head/i.test(d.name || ''); })[0] || pl[0];
+  var bodyD = pl.filter(function(d) { return d !== faceD && /full|body/i.test(d.name || ''); })[0] || pl.filter(function(d) { return d !== faceD; })[0];
+  var photos = [faceD, bodyD].filter(Boolean);
   var passport = docs.filter(function(d) { return d.type === 'Passport' && usable(d); })[0];
   var urls = await Promise.all(photos.concat(passport ? [passport] : []).map(function(d) { return _dcGetLink(d.id, true); }));
   var ph = urls.slice(0, photos.length).map(function(l) { return l && l.url ? l.url : ''; });
@@ -8459,7 +8507,7 @@ function _bioHtml(C) {
       '<tr>' + cell('Washing', 'الغسيل', cv('washing')) + cell('Cleaning', 'التنظيف', cv('cleaning')) + '</tr>' +
       '<tr>' + cell('Babysitting', 'رعاية الأطفال', cv('babysitting')) + cell('Cooking', 'الطبخ', cook) + cell('Height', 'الطول', r.height || '') + cell('Weight', 'الوزن', r.weight_kg ? Number(r.weight_kg) + 'KG' : '') + '</tr>' +
       '<tr>' + cell('Contract', 'مدة العقد', r.contract_years ? r.contract_years + (r.contract_years === 1 ? ' Year' : ' Years') : '') + cell('Salary', 'الراتب', r.salary ? Number(r.salary) + ' ' + (r.salary_currency || '') : '') +
-      '<td class="cell" style="height:48px"><div class="ar">توقيع مقدم الطلب</div><div class="lbl">Signature of Applicant</div></td><td class="cell"><div class="ar">مقابلة بواسطة</div><div class="lbl">Interviewed by</div></td></tr></table>' +
+      '<td class="cell" style="height:48px"><div class="ar">توقيع مقدم الطلب</div><div class="lbl">Signature of Applicant</div></td><td class="cell"><div class="ar">مقابلة بواسطة</div><div class="lbl">Interviewed by</div><div class="v">' + e(r.interviewed_by || '') + '</div></td></tr></table>' +
       '<div class="ft">' + foot.map(e).join('<br>') + '</div></div>';
   } else {
     var T = function(en, ar, val) { return '<tr><td style="width:36%"><b>' + en + '</b></td><td style="width:34%;font-weight:700;white-space:pre-wrap">' + e(val == null ? '' : val) + '</td><td class="ar" style="width:30%;text-align:right">' + ar + '</td></tr>'; };
@@ -8719,6 +8767,7 @@ function _apShowError(msg, fields) {
   if (er) { er.innerHTML = '⛔ ' + escapeHtml(msg) + (list && Object.keys(fields).length > 1 ? '<ul style="margin:6px 0 0 18px">' + list + '</ul>' : ''); er.style.display = 'block'; }
   else toast('⛔ ' + msg, 'error');
 }
+function _apShowAge() { var el = document.getElementById('a-age'), d = _apVal('a-dob'); if (!el) return; var a = d ? _bioAge(d) : ''; el.textContent = a !== '' && isFinite(a) ? '· ' + a + ' yrs' : ''; }
 function _apFillForm(r) {
   r = r || {};
   _apClearErrors();
@@ -8740,6 +8789,9 @@ function _apFillForm(r) {
   ['a-contact', 'a-email', 'a-passport', 'a-dob'].forEach(function(id) { var el = document.getElementById(id); if (el) { el.readOnly = masked; el.style.background = masked ? 'var(--s2)' : ''; } });
   var mn = document.getElementById('a-masked-note'); if (mn) mn.style.display = masked ? 'block' : 'none';
   _apBioFill(r);
+  _apSetVal('a-applied', r.created_at ? String(r.created_at).slice(0, 10) : _ymd(new Date()));
+  ['ab-file-photo1', 'ab-file-photo2', 'ab-file-passport'].forEach(function(id) { var f = document.getElementById(id); if (f) f.value = ''; });
+  _apShowAge();
 }
 function openAddApplicant() {
   if (!hasPermission('Create Applicants')) { toast('Your role cannot create applicants', 'error'); return; }
@@ -8793,6 +8845,22 @@ function _apDiff(p, row) {
   });
   return out;
 }
+// photos / passport copy chosen in the form → the applicant's Documents (same server checks as any upload)
+async function _apUploadAttachments(applicantId) {
+  var jobs = [['ab-file-photo1', 'Photo', 'Photo — face'], ['ab-file-photo2', 'Photo', 'Photo — full body'], ['ab-file-passport', 'Passport', 'Passport copy']], ok = 0, bad = [];
+  for (var i = 0; i < jobs.length; i++) {
+    var inp = document.getElementById(jobs[i][0]), f = inp && inp.files && inp.files[0]; if (!f) continue;
+    try {
+      var file = await _dcShrinkImage(f), form = new FormData();
+      form.append('applicant_id', applicantId); form.append('type', jobs[i][1]); form.append('name', jobs[i][2]); form.append('file', file, file.name);
+      var r = await fetch(RAILWAY_URL + '/api/documents/upload', { method: 'POST', headers: { Authorization: 'Bearer ' + (window._ramsSessionToken || '') }, body: form });
+      if (r.ok) ok++; else { var j = {}; try { j = await r.json(); } catch (e) {} bad.push(jobs[i][2] + ': ' + (j.message || j.error || 'HTTP ' + r.status)); }
+    } catch (e) { bad.push(jobs[i][2] + ': network error'); }
+  }
+  if (ok) { _dcLinks = {}; try { Object.keys(_cache).forEach(function(k) { if (k.indexOf('/documents') !== -1) delete _cache[k]; }); } catch (e) {} }
+  if (bad.length) toast('⚠️ Applicant saved, but not uploaded — ' + bad.join('; ') + '. Add them in the Documents tab.', 'error');
+  else if (ok) toast('📎 ' + ok + ' file' + (ok > 1 ? 's' : '') + ' added to Documents', 'success');
+}
 async function saveApplicant(dupReason) {
   var btn = document.getElementById('a-save-btn');
   var p = _apCollect();
@@ -8826,6 +8894,7 @@ async function saveApplicant(dupReason) {
   }
   var saved = d && d.id ? d : (_apForm.row || {});
   _apCache(saved);
+  if (hasPermission('Upload Documents') && saved.id && ['ab-file-photo1', 'ab-file-photo2', 'ab-file-passport'].some(function(id) { var f = document.getElementById(id); return f && f.files && f.files.length; })) await _apUploadAttachments(saved.id);
   closeOverlay('overlay-applicant');
   toast(_apForm.mode === 'create' ? '✅ ' + _apName(saved) + ' registered' + (saved.display_id ? ' as ' + saved.display_id : '') : '✅ ' + _apName(saved) + ' updated', 'success');
   if (d && d.agent_transfer && typeof _applyAgentTransfer === 'function') { try { _applyAgentTransfer(d.agent_transfer, mapApplicant(saved)); } catch (e) {} }
