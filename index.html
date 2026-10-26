@@ -9043,7 +9043,13 @@ async function _apTimeline(app, panel) {
     var rr = await apiFetch('/applicants/' + encodeURIComponent(uuid) + '/notes', { method: 'POST', body: JSON.stringify({ body: t }) });
     add.disabled = false;
     if (!rr.ok) { toast(_acctMsg(rr, 'Note not saved'), 'error'); return; }
-    toast('Note added', 'success'); _apTimeline(app, panel);
+    toast('Note added', 'success');
+    // the overview Notes box always shows the latest update
+    var _nt = String(t).trim();
+    [app, currentDrawerApplicant].forEach(function(x) { if (x && (x._dbId === app._dbId || x.id === app.id)) x.notes = _nt; });
+    var _dbA = (DB.applicants || []).find(function(x) { return x._dbId === app._dbId || x.id === app.id; }); if (_dbA) _dbA.notes = _nt;
+    var _ov = document.getElementById('drawer-notes-input'); if (_ov) _ov.value = _nt;
+    _apTimeline(app, panel);
   };
 }
 
