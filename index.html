@@ -2600,7 +2600,7 @@ button[disabled][data-rbac-locked] {
           <select class="form-input" id="a-status">
             <option>For Selection</option><option>Applied</option><option>Screening</option>
             <option>Interview</option><option>Selected</option><option>Medical</option>
-            <option>Processing</option><option>Visa</option><option>OWWA</option>
+            <option>OWWA</option><option>Processing</option><option>Visa</option><option>For Booking</option>
             <option>Deployed</option><option>With Complaint</option><option>Backout</option><option>Repatriated</option><option>Rejected</option>
           </select>
         </div>
@@ -3482,7 +3482,7 @@ function mapApplicant(row) {
       var s = row.status || 'Applied';
       // Build a minimal history based on the current status position in the pipeline
       var order = ['For Selection','Applied','Screening','Interview','Selected',
-                   'Medical','Processing','OWWA','Visa','Deployed'];
+                   'Medical','OWWA','Processing','Visa','For Booking','Deployed'];
       var idx = order.indexOf(s);
       // Include all stages up to and including current stage
       return idx >= 0 ? order.slice(0, idx + 1) : [s];
@@ -3574,7 +3574,7 @@ function isUUID(str) {
 function toServerStatus(status) {
   var valid = [
     'Applied','Screening','Interview','Offered','Deployed','Rejected',
-    'For Selection','Medical','Processing','Visa','OWWA','Repatriated',
+    'For Selection','Medical','OWWA','Processing','Visa','For Booking','Repatriated',
     'Backout','Selected','Filled'
   ];
   return valid.includes(status) ? status : 'Applied';
@@ -6842,7 +6842,7 @@ function switchDrawerTab(tab, btn) {
   }
   if (tab === 'overview') {
     var _isViewer = (typeof getCurrentRole === 'function') && getCurrentRole() === 'Viewer';
-    const stages = ['For Selection','Applied','Screening','Interview','Medical','Processing','Visa','OWWA','Deployed'];
+    const stages = ['For Selection','Applied','Screening','Interview','Medical','OWWA','Processing','Visa','For Booking','Deployed'];
     // With Complaint doesn't fit in the linear pipeline — show it as a special state
     const ci = app.status === 'With Complaint' ? -2 : stages.indexOf(app.status);
     // Viewers only see status, medical, position and pipeline — no agent/contact/email
@@ -7078,7 +7078,7 @@ function pillHtml(status, variant) {
     'Deployed':'pill-green','Repatriated':'pill-red','Backout':'pill-amber',
     'Applied':'pill-blue','Screening':'pill-purple',
     'Interview':'pill-amber','Medical':'pill-teal','Rejected':'pill-red',
-    'Processing':'pill-blue','Visa':'pill-purple','OWWA':'pill-teal','For Selection':'pill-amber',
+    'Processing':'pill-blue','Visa':'pill-purple','OWWA':'pill-teal','For Booking':'pill-amber','For Selection':'pill-amber',
     'With Complaint':'pill-red',
     'Passed':'pill-green','Pending':'pill-amber','Failed':'pill-red',
     'Open':'pill-green','In Progress':'pill-blue','Filled':'pill-purple','Closed':'pill-gray',
@@ -7261,7 +7261,7 @@ function _dashPaint() {
 
   // pipeline by stage (all stages, adds up to the total) + activity
   var maxC = Math.max.apply(null, d.stages.map(function(s) { return s.count; }).concat([1]));
-  var stageCol = { 'For Selection': '#94a3b8', Applied: 'var(--brand)', Screening: 'var(--purple)', Interview: 'var(--amber)', Selected: 'var(--green)', Medical: 'var(--teal)', Processing: '#0891B2', Visa: 'var(--purple)', OWWA: 'var(--teal)', 'With Complaint': 'var(--red)', Deployed: 'var(--green)', Backout: 'var(--amber)', Repatriated: 'var(--red)', Rejected: '#94a3b8' };
+  var stageCol = { 'For Selection': '#94a3b8', Applied: 'var(--brand)', Screening: 'var(--purple)', Interview: 'var(--amber)', Selected: 'var(--green)', Medical: 'var(--teal)', Processing: '#0891B2', Visa: 'var(--purple)', OWWA: 'var(--teal)', 'For Booking': 'var(--amber)', 'With Complaint': 'var(--red)', Deployed: 'var(--green)', Backout: 'var(--amber)', Repatriated: 'var(--red)', Rejected: '#94a3b8' };
   var bars = d.stages.length ? d.stages.map(function(s) {
     var pct = Math.max(Math.round(s.count / maxC * 100), 3), c = stageCol[s.stage] || 'var(--brand)';
     return '<div style="flex:1;min-width:34px;max-width:70px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:170px" onclick="_dashGo(\'stage\',\'' + escapeHtml(s.stage) + '\')" title="' + escapeHtml(s.stage) + ': ' + s.count + '">' +
@@ -7330,7 +7330,7 @@ function _dashPaint() {
 // ── Pipeline stages — order is admin-configurable and persisted ────────
 var _DEFAULT_STAGE_ORDER = [
   'For Selection','Applied','Screening','Interview','Selected',
-  'Processing','Visa','OWWA','Deployed',
+  'OWWA','Processing','Visa','For Booking','Deployed',
 ];
 var _STAGE_META = {
   'For Selection': {color:'var(--muted)', bg:'var(--s2)',      cnt:'pill-gray'},
@@ -7341,6 +7341,7 @@ var _STAGE_META = {
   'Processing':    {color:'#0891B2',      bg:'#E0F2FE',         cnt:'pill-teal'},
   'Visa':          {color:'var(--purple)',bg:'var(--pbg)',      cnt:'pill-purple'},
   'OWWA':          {color:'#0891B2',      bg:'#E0F2FE',         cnt:'pill-teal'},
+  'For Booking':   {color:'var(--amber)', bg:'var(--abg)',      cnt:'pill-amber'},
   'Deployed':      {color:'var(--green)', bg:'var(--gbg)',      cnt:'pill-green'},
   'Repatriated':   {color:'var(--red)',   bg:'var(--rbg)',      cnt:'pill-red'},
   'Backout':       {color:'var(--amber)', bg:'var(--abg)',      cnt:'pill-amber'},
@@ -7781,7 +7782,7 @@ function clearFilters() {
 
 // ── INLINE STATUS / MEDICAL EDIT ─────────────────────────────────────
 var _ALL_APP_STATUSES = ['For Selection','Applied','Screening','Interview','Selected',
-  'Processing','Visa','OWWA','Deployed','Repatriated','Backout','Rejected','With Complaint'];
+  'OWWA','Processing','Visa','For Booking','Deployed','Repatriated','Backout','Rejected','With Complaint'];
 var _ALL_MEDICAL = ['Pending','Passed','Failed','Exempted'];
 
 // ════════════════════════════════════════════════════════
@@ -7791,7 +7792,7 @@ var _ALL_MEDICAL = ['Pending','Passed','Failed','Exempted'];
 // like the old single-select, so saved filters from before still load fine.
 // ════════════════════════════════════════════════════════
 var _STATUS_FILTER_OPTS = ['For Selection','Applied','Screening','Interview','Selected',
-  'Medical','Processing','Visa','OWWA','Deployed','Repatriated','Backout','Rejected','With Complaint'];
+  'Medical','OWWA','Processing','Visa','For Booking','Deployed','Repatriated','Backout','Rejected','With Complaint'];
 
 function getStatusFilterValues() {
   var el = document.getElementById('app-status-filter');
@@ -7910,7 +7911,7 @@ function _inlineSaveStatus(appId, newStatus) {
 // or removed from the list until the server confirms it. Field errors, duplicates and edit conflicts come
 // back from the server and are shown in the form.
 // ════════════════════════════════════════════════════════
-var _AP_STATUSES = ['For Selection', 'Applied', 'Screening', 'Interview', 'Selected', 'Medical', 'Processing', 'Visa', 'OWWA', 'Deployed', 'With Complaint', 'Backout', 'Repatriated', 'Rejected'];
+var _AP_STATUSES = ['For Selection', 'Applied', 'Screening', 'Interview', 'Selected', 'Medical', 'OWWA', 'Processing', 'Visa', 'For Booking', 'Deployed', 'With Complaint', 'Backout', 'Repatriated', 'Rejected'];
 var _AP_MEDICAL = ['Pending', 'Passed', 'Failed', 'Exempted'];
 var _ap = { q: '', status: '', agent: '', medical: '', employer: '', country: '', category: '', archived: '0', sort: 'created_at', order: 'desc', page: 1,
   data: null, total: 0, masked: false, filters: null, fAt: 0, sel: {}, loading: false, seq: 0, at: 0, err: null, bound: false, restored: false };
@@ -9965,7 +9966,7 @@ function renderAnalyticsLegacy() {
   var total     = apps.length;
   var deployed  = apps.filter(function(a){ return a.status === 'Deployed'; }).length;
   var pipeline  = apps.filter(function(a){
-    return ['For Selection','Applied','Screening','Interview','Medical','Processing','Visa','OWWA'].indexOf(a.status) !== -1;
+    return ['For Selection','Applied','Screening','Interview','Medical','OWWA','Processing','Visa','For Booking'].indexOf(a.status) !== -1;
   }).length;
   var backouts    = apps.filter(function(a){ return a.status === 'Backout'; }).length;
   var repatriated = apps.filter(function(a){ return a.status === 'Repatriated'; }).length;
@@ -10047,7 +10048,7 @@ function renderAnalyticsLegacy() {
     'Deployed':'var(--green)', 'Applied':'var(--brand)', 'Screening':'var(--purple)',
     'Interview':'var(--amber)', 'Medical':'var(--teal)', 'Rejected':'var(--red)',
     'Backout':'var(--amber)', 'Repatriated':'var(--red)', 'OWWA':'var(--green)',
-    'Visa':'var(--teal)', 'Processing':'var(--brand)', 'For Selection':'var(--muted)',
+    'Visa':'var(--teal)', 'Processing':'var(--brand)', 'For Booking':'var(--amber)', 'For Selection':'var(--muted)',
   };
   var breakdownEl = document.getElementById('analytics-breakdown');
   if (breakdownEl) {
@@ -10247,7 +10248,7 @@ function renderAnalyticsLegacy() {
   // ── Pipeline Funnel, Dwell Time & Drop-off Origin ────────────────────
   var funnelEl = document.getElementById('analytics-funnel');
   if (funnelEl) {
-    var STAGES = ['For Selection','Applied','Screening','Interview','Medical','Processing','Visa','OWWA','Deployed'];
+    var STAGES = ['For Selection','Applied','Screening','Interview','Medical','OWWA','Processing','Visa','For Booking','Deployed'];
     var stageIndex = {}; STAGES.forEach(function(s,i){ stageIndex[s] = i; });
 
     var placed = 0, unplaced = 0;
@@ -10671,7 +10672,7 @@ var _AN_DQ_PREDICATES = {
   no_destination:      { server: { country: 'none' }, label: 'No destination country',           fn: function(x) { return !(x.destination || (x.job && x.job.indexOf('·') !== -1)); } },
   no_category:         { server: { category: 'none' }, label: 'No category',                      fn: function(x) { return !x.category; } },
   no_job_order:        { server: { job_order_id: 'none' }, label: 'Not linked to a job order',        fn: function(x) { return !x._jobOrderId; } },
-  advanced_no_medical: { server: { dq: 'advanced_no_medical' }, label: 'Past Medical with medical Pending', fn: function(x) { return ['Processing','Visa','OWWA','Deployed'].indexOf(x.status) !== -1 && (!x.medical || x.medical === 'Pending'); } },
+  advanced_no_medical: { server: { dq: 'advanced_no_medical' }, label: 'Past Medical with medical Pending', fn: function(x) { return ['OWWA','Processing','Visa','For Booking','Deployed'].indexOf(x.status) !== -1 && (!x.medical || x.medical === 'Pending'); } },
 };
 function analyticsDrill(f) {
   f = f || {};
@@ -13970,7 +13971,7 @@ function resetCommissions() {
   // T2 (OWWA/Processing 20%): applicant.status in OWWA/Processing/Visa/Deployed/Repatriated
   // T3 (Deployment 60%):     applicant.status === 'Deployed' OR 'Repatriated'
   var TERMINAL_BAD = new Set(['Backout','Rejected']);
-  var T2_VALID = new Set(['Processing','Visa','OWWA','Deployed','Repatriated','With Complaint']);
+  var T2_VALID = new Set(['OWWA','Processing','Visa','For Booking','Deployed','Repatriated','With Complaint']);
   var T3_VALID = new Set(['Deployed','Repatriated']);
 
   var mismatches = [];
@@ -16208,8 +16209,9 @@ function openOfficeTransfer() {
   _toolsOverlay('Transfer / convert',
     '<div class="f-row"><div class="f-grp"><label class="f-lbl">From</label><select class="f-inp" id="ot-from" onchange="_syncTransferFields()">' + opts + '</select></div>' +
     '<div class="f-grp"><label class="f-lbl">To</label><select class="f-inp" id="ot-to" onchange="_syncTransferFields()">' + opts + '</select></div></div>' +
-    '<div class="f-row"><div class="f-grp"><label class="f-lbl">Amount leaving</label><input class="f-inp" id="ot-amount" type="number" min="0.01" step="0.01"></div>' +
-    '<div class="f-grp" id="ot-toamt-grp" style="display:none"><label class="f-lbl">Amount received</label><input class="f-inp" id="ot-toamt" type="number" min="0.01" step="0.01"></div></div>' +
+    '<div class="f-row"><div class="f-grp"><label class="f-lbl">Amount leaving</label><input class="f-inp" id="ot-amount" type="number" min="0.01" step="0.01" oninput="_syncTransferFields()"></div>' +
+    '<div class="f-grp" id="ot-toamt-grp" style="display:none"><label class="f-lbl">Amount received (at the system rate)</label><input class="f-inp" id="ot-toamt" type="number" min="0.01" step="0.01" readonly style="background:var(--s2)">' +
+    '<label style="display:flex;gap:6px;align-items:center;font-size:11.5px;margin-top:4px;color:var(--muted)"><input type="checkbox" id="ot-manual" onchange="_syncTransferFields()"> The bank paid a different amount (enter it)</label></div></div>' +
     '<div id="ot-hint" style="font-size:11.5px;color:var(--muted);margin-bottom:8px"></div>' +
     '<div class="f-row"><div class="f-grp"><label class="f-lbl">Date</label><input class="f-inp" id="ot-date" type="date" value="' + _ymd(new Date()) + '"></div>' +
     '<div class="f-grp"><label class="f-lbl">Note</label><input class="f-inp" id="ot-note" type="text" maxlength="200"></div></div>',
@@ -16223,7 +16225,12 @@ function _syncTransferFields() {
   var grp = document.getElementById('ot-toamt-grp'), hint = document.getElementById('ot-hint');
   grp.style.display = fc !== tc ? '' : 'none';
   var fx = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5;
-  hint.textContent = fc !== tc ? ('Conversion: enter what actually arrived. Office rate is $1 = ₱' + fx + '; any difference is recorded as an FX gain or loss.') : 'Moves money between two accounts of the same currency.';
+  if (fc !== tc) {
+    var amt = parseFloat((document.getElementById('ot-amount') || {}).value), man = (document.getElementById('ot-manual') || {}).checked, ta = document.getElementById('ot-toamt');
+    ta.readOnly = !man; ta.style.background = man ? '' : 'var(--s2)';
+    if (!man) ta.value = isFinite(amt) && amt > 0 ? (Math.round((fc === 'USD' ? amt * fx : amt / fx) * 100) / 100).toFixed(2) : '';
+  }
+  hint.textContent = fc !== tc ? ('Converted at the system rate: $1 = ₱' + fx + (fc === 'USD' ? ' (USD × rate)' : ' (PHP ÷ rate)') + '. Tick the box only if the bank paid a different amount; the difference is then recorded as an FX gain or loss.') : 'Moves money between two accounts of the same currency.';
 }
 async function submitOfficeTransfer() {
   var f = document.getElementById('ot-from'), t = document.getElementById('ot-to');
@@ -16232,9 +16239,12 @@ async function submitOfficeTransfer() {
   var body = { from_account_id: f.value, to_account_id: t.value, amount: amount, date: document.getElementById('ot-date').value, note: document.getElementById('ot-note').value || undefined };
   var fc = f.options[f.selectedIndex].getAttribute('data-cur'), tc = t.options[t.selectedIndex].getAttribute('data-cur');
   if (fc !== tc) {
-    var ta = parseFloat(document.getElementById('ot-toamt').value);
-    if (!isFinite(ta) || ta <= 0) { toast('Enter the amount received', 'error'); return; }
-    body.to_amount = ta;
+    // normally nothing is sent: the server converts at the system rate. Only an amount typed by hand is sent.
+    if ((document.getElementById('ot-manual') || {}).checked) {
+      var ta = parseFloat(document.getElementById('ot-toamt').value);
+      if (!isFinite(ta) || ta <= 0) { toast('Enter the amount received', 'error'); return; }
+      body.to_amount = ta;
+    }
   }
   body.idempotency_key = _offKeyFor({ type: 'transfer', currency: fc, amount: amount, date: body.date, desc: f.value + '>' + t.value, accountId: f.value });
   if (!_acctLock('xfer')) return;
@@ -16249,7 +16259,7 @@ async function submitOfficeTransfer() {
     await apiFetchOfficeLedger();
     closeOverlay('overlay-office-tools');
     var gl = r.data && r.data.fx_gain_loss;
-    addAudit('CREATE', 'Office Funds', 'Transfer ' + amount + ' ' + fc + (fc !== tc ? ' → ' + body.to_amount + ' ' + tc : ''));
+    addAudit('CREATE', 'Office Funds', 'Transfer ' + amount + ' ' + fc + (fc !== tc ? ' → ' + tc + ' at the system rate' : ''));
     toast('Transfer posted' + (gl ? ' · FX ' + (gl > 0 ? 'gain' : 'loss') + ' ₱' + Math.abs(gl).toLocaleString() : ''), 'success');
     renderOffice();
   } finally { _acctUnlock('xfer'); }
@@ -17865,7 +17875,7 @@ function renderEmployerFees() {
       _efKpi('⏳', 'Pending',     pendingCt + ' · $' + pendingUSD.toLocaleString() + ' USD', 'var(--amber)') +
       _efKpi('✅', 'Settled',     settledCt + ' · $' + settledUSD.toLocaleString() + ' USD', 'var(--green)') +
       _efKpi('🚀', 'Deployment Ready', getScopedApplicants().filter(function(a){
-        if (a.status !== 'OWWA' && a.status !== 'Visa') return false;
+        if (a.status !== 'OWWA' && a.status !== 'Visa' && a.status !== 'For Booking') return false;
         var pf = _feePool.find(function(f){ return f.applicantId===a.id && f.status==='Pending'; });
         return !pf;
       }).length + ' applicants', 'var(--teal)');
@@ -17947,7 +17957,7 @@ function _efKpi(icon, label, val, color) {
 function openManualFee(applicantId) {
   if (isViewerRole()) { toast('Your role has read-only access to Employers','error'); return; }
   var app = applicantId ? DB.applicants.find(function(a){ return a.id === applicantId; }) : null;
-  var FEE_STATUSES = ['Visa','OWWA','Deployed'];
+  var FEE_STATUSES = ['Visa','OWWA','For Booking','Deployed'];
   var eligible = DB.applicants.filter(function(a){ return FEE_STATUSES.indexOf(a.status) !== -1; });
 
   var appOptions = eligible.map(function(a){
