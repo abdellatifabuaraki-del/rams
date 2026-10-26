@@ -7175,7 +7175,7 @@ function _dashDemo(root) {
 }
 
 // ── click-through to the list behind a number ─────────────────────────
-var _DASH_END = ['Deployed', 'Repatriated', 'Rejected', 'Backout'];
+var _DASH_END = ['Deployed', 'Cancelled', 'Rejected', 'Blacklisted', 'Backout', 'Repatriated'];
 function _dashGo(key, arg) {
   if (key === 'stage') { analyticsDrill({ status: arg }); return; }
   if (key === 'stuck') {
@@ -8802,7 +8802,7 @@ function _focusBar(entity, anchor, shown) {
   bar.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px;padding:8px 12px;border-radius:10px;background:var(--abg);border:1px solid var(--amber);font-size:12.5px';
   var missing = f.ids.length && shown < f.ids.length ? ' <span style="color:var(--muted)">(' + (f.ids.length - shown) + ' no longer match — already handled or not loaded)</span>' : '';
   bar.innerHTML = '🔎 <b>Showing ' + shown + (f.ids.length ? ' of ' + f.ids.length : '') + '</b> ' + escapeHtml(f.label ? '— ' + f.label : 'highlighted record(s)') + missing +
-    '<button type="button" class="btn btn-s btn-xs" style="margin-left:auto">Show all</button>';
+    '<button type="button" class="btn btn-s btn-xs" style="margin-left:auto" title="Remove this filter and list every record">Clear filter</button>';
   bar.querySelector('button').onclick = function() { focusClear(true); };
   var target = anchor.closest('table') || anchor;
   if (!old) target.parentNode.insertBefore(bar, target);
