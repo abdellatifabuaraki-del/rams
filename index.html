@@ -7752,23 +7752,14 @@ var _activeFilters = { q:'', s:'', a:'', m:'', jo:'', c:'' };
 
 
 function _restoreApplicantFilters() {
+  // One restore path (_apRestoreControls) fills the boxes AND the values the list is loaded with.
+  // The old version typed into drop-downs that had no options yet, then re-read them as blank and overwrote the saved filters.
   try {
-    var saved = localStorage.getItem('rams:filters:applicants');
-    if (!saved) return false;
-    var f = JSON.parse(saved);
-    var el;
-    el = document.getElementById('app-search');        if (el && f.q)  el.value = f.q;
-    el = document.getElementById('app-status-filter'); if (el && f.s) { el.value = f.s; syncStatusFilterUI(); }
-    el = document.getElementById('app-agent-filter');  if (el && f.a)  el.value = f.a;
-    el = document.getElementById('app-medical-filter');if (el && f.m)  el.value = f.m;
-    el = document.getElementById('app-joborder-filter');if(el && f.jo) el.value = f.jo;
-    el = document.getElementById('app-country-filter'); if (el && f.c)  el.value = f.c;
-    el = document.getElementById('app-category-filter');if (el && f.cat) el.value = f.cat;
-    var hasFilter = !!(f.q || f.s || f.a || f.m || f.jo || f.c || f.cat);
-    // Re-apply the filter so the list updates — not just the dropdowns
-    if (hasFilter) filterApplicants();
-    return hasFilter;
-  } catch(e){ return false; }
+    if (!localStorage.getItem('rams:filters:applicants')) return false;
+    _apRestoreControls();
+    var hasFilter = !!(_ap.q || _ap.status || _ap.agent || _ap.medical || _ap.employer || _ap.country || _ap.category || (_ap.archived && _ap.archived !== '0'));
+    return hasFilter;   // the caller renders next, with these values
+  } catch (e) { return false; }
 }
 function clearFilters() {
   document.getElementById('app-search').value = '';
@@ -7963,16 +7954,20 @@ function _apRestoreControls() {
     var set = function(id, v) { var el = document.getElementById(id); if (el && v) el.value = v; };
     set('app-search', f.q); set('app-status-filter', f.s); set('app-medical-filter', f.m);
     if (typeof syncStatusFilterUI === 'function') syncStatusFilterUI();
+    // the list is loaded from these values, so they must be restored too (before, only the boxes were refilled and the list came back unfiltered)
+    _ap.q = (f.q || '').trim(); _ap.status = f.s || ''; _ap.medical = f.m || '';
+    if (f.so) _ap.sort = f.so; if (f.or === 'asc' || f.or === 'desc') _ap.order = f.or;
     _ap.agent = f.a || ''; _ap.employer = (f.jo && !_apIsUUID(f.jo)) ? f.jo : ''; _ap.country = f.c || ''; _ap.category = f.cat || ''; _ap.archived = f.arch || '0';
     var sv = parseInt(localStorage.getItem('rams:perPage')); if (sv) APP_PER_PAGE = sv;
   } catch (e) {}
 }
 function _apReadControls() {
-  var v = function(id) { var el = document.getElementById(id); return el ? el.value : ''; };
-  _ap.q = v('app-search').trim(); _ap.status = v('app-status-filter'); _ap.agent = v('app-agent-filter'); _ap.medical = v('app-medical-filter');
-  _ap.employer = v('app-joborder-filter'); _ap.country = v('app-country-filter'); _ap.category = v('app-category-filter');
-  _ap.archived = v('app-archived-filter') || '0';
-  try { localStorage.setItem('rams:filters:applicants', JSON.stringify({ q: _ap.q, s: _ap.status, a: _ap.agent, m: _ap.medical, jo: _ap.employer, c: _ap.country, cat: _ap.category, arch: _ap.archived })); } catch (e) {}
+  // a drop-down whose options have not loaded yet cannot tell us its value: keep what we already have instead of blanking it
+  var v = function(id, key) { var el = document.getElementById(id); if (!el) return _ap[key] || ''; if (el.tagName === 'SELECT' && el.options.length < 2 && _ap[key]) return _ap[key]; return el.value; };
+  _ap.q = v('app-search', 'q').trim(); _ap.status = v('app-status-filter', 'status'); _ap.agent = v('app-agent-filter', 'agent'); _ap.medical = v('app-medical-filter', 'medical');
+  _ap.employer = v('app-joborder-filter', 'employer'); _ap.country = v('app-country-filter', 'country'); _ap.category = v('app-category-filter', 'category');
+  _ap.archived = v('app-archived-filter', 'archived') || '0';
+  try { localStorage.setItem('rams:filters:applicants', JSON.stringify({ q: _ap.q, s: _ap.status, a: _ap.agent, m: _ap.medical, jo: _ap.employer, c: _ap.country, cat: _ap.category, arch: _ap.archived, so: _ap.sort, or: _ap.order })); } catch (e) {}
 }
 function _apParams(extra) {
   var fa = typeof _focusOn === 'function' ? _focusOn('applicant') : null;
@@ -8001,7 +7996,7 @@ function sortTable(col) {
   if (_ap.sort === key) _ap.order = _ap.order === 'asc' ? 'desc' : 'asc'; else { _ap.sort = key; _ap.order = (key === 'name' || key === 'display_id' || key === 'agent') ? 'asc' : 'desc'; }
   document.querySelectorAll('th[data-col]').forEach(function(t) { t.classList.remove('sorted'); var si = t.querySelector('.sort-icon'); if (si) si.textContent = '↕'; });
   var th = document.querySelector('th[data-col="' + col + '"]'); if (th) { th.classList.add('sorted'); var si2 = th.querySelector('.sort-icon'); if (si2) si2.textContent = _ap.order === 'asc' ? '↑' : '↓'; }
-  _ap.page = 1; renderApplicants(true);
+  _ap.page = 1; try { _apReadControls(); } catch (e) {} renderApplicants(true);
 }
 function changePage(p) { _ap.page = Math.max(1, p); renderApplicants(true); var mc = document.getElementById('main-content'); if (mc && mc.scrollTo) mc.scrollTo(0, 0); }
 function setPerPage(val) { APP_PER_PAGE = parseInt(val) || 25; _ap.page = 1; try { localStorage.setItem('rams:perPage', String(APP_PER_PAGE)); } catch (e) {} renderApplicants(true); }
@@ -8017,6 +8012,12 @@ function renderApplicants(force) {
 async function _apLoad() {
   if (!_isLiveSession()) return;
   var seq = ++_ap.seq; _ap.loading = true;
+  // a saved agent filter is stored by name; the agent's id comes with the filter lists, so wait for them (only in that case)
+  if (_ap.agent && !_ap.filters && !_apIsUUID(_ap.agent)) {
+    var _fr0 = await apiFetch('/applicants/filters?_=' + Date.now());
+    if (_fr0.ok && _fr0.data) { _ap.filters = _fr0.data; _ap.fAt = Date.now(); }
+    if (seq !== _ap.seq) return;
+  }
   var qs = _apQS(_apParams({}));
   // instant paint from a recent identical query, then refresh quietly
   _ap.qc = _ap.qc || {};
