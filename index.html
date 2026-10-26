@@ -2669,6 +2669,10 @@ button[disabled][data-rbac-locked] {
           <textarea class="form-input" id="a-notes" rows="2" maxlength="4000" placeholder="Short summary — dated notes go in the Timeline tab" style="resize:vertical"></textarea>
         </div>
       </div>
+      <details id="a-bio-wrap" style="margin-top:6px;border:1px solid var(--border);border-radius:10px;padding:8px 12px;background:var(--s2)">
+        <summary style="cursor:pointer;font-weight:800;font-size:13px">📋 Bio-data / CV details <span style="font-weight:400;color:var(--muted)">(religion, passport, skills, next of kin…)</span></summary>
+        <div id="a-bio" style="margin-top:10px"></div>
+      </details>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="closeOverlay('overlay-applicant')">Cancel</button>
@@ -3058,6 +3062,7 @@ button[disabled][data-rbac-locked] {
       <button class="dtab" onclick="switchDrawerTab('docs',this)" role="tab" aria-selected="false">Documents</button>
       <button class="dtab" onclick="switchDrawerTab('expenses',this)" role="tab" aria-selected="false">Expenses</button>
       <button class="dtab" onclick="switchDrawerTab('agent',this)" role="tab" aria-selected="false">Agent Account</button>
+      <button class="dtab" onclick="switchDrawerTab('bio',this)" role="tab" aria-selected="false">Bio-data</button>
       <button class="dtab" onclick="switchDrawerTab('history',this)" role="tab" aria-selected="false">Timeline</button>
       <button class="dtab" onclick="switchDrawerTab('complaints',this)" role="tab" aria-selected="false" id="dtab-complaints-btn">⚠️ Complaints</button>
     </div>
@@ -3065,6 +3070,7 @@ button[disabled][data-rbac-locked] {
     <div class="dtab-panel" id="dtab-docs"></div>
     <div class="dtab-panel" id="dtab-expenses"></div>
     <div class="dtab-panel" id="dtab-agent"></div>
+    <div class="dtab-panel" id="dtab-bio"></div>
     <div class="dtab-panel" id="dtab-history"></div>
     <div class="dtab-panel" id="dtab-complaints"></div>
   </div>
@@ -3453,7 +3459,7 @@ function mapApplicant(row) {
     displayId:   row.display_id || '',
     name:        row.full_name || [row.first_name, row.middle_name, (row.last_name === '.' ? '' : row.last_name)].filter(Boolean).join(' '),
     firstName:   row.first_name || '', middleName: row.middle_name || '', lastName: row.last_name === '.' ? '' : (row.last_name || ''),
-    nationality: row.nationality || '', archived: !!row.archived_at, piiMasked: !!row.pii_masked, age: row.age === undefined ? null : row.age,
+    nationality: row.nationality || '', bio: _bioPick(row), archived: !!row.archived_at, piiMasked: !!row.pii_masked, age: row.age === undefined ? null : row.age,
     consentDate: row.consent_date ? String(row.consent_date).slice(0, 10) : '', retentionUntil: row.retention_until ? String(row.retention_until).slice(0, 10) : '',
     status:      row.status || 'Applied',
     agent:       _agentName,
@@ -6803,7 +6809,7 @@ function openDrawer(appId, initialTab) {
 
   // Hide restricted tabs from Viewers
   var isViewer = (typeof getCurrentRole === 'function') && getCurrentRole() === 'Viewer';
-  var restrictedTabs = ['expenses','agent','history'];
+  var restrictedTabs = ['expenses','agent','history','bio'];
   document.querySelectorAll('.dtab').forEach(function(btn) {
     var tabName = (btn.getAttribute('onclick') || '').match(/switchDrawerTab\('([^']+)'/);
     if (tabName && restrictedTabs.indexOf(tabName[1]) !== -1) {
@@ -6981,6 +6987,7 @@ function switchDrawerTab(tab, btn) {
     panel.innerHTML = renderAgentSummaryInDrawer(app);
   }
   if (tab === 'history') { _apTimeline(app, panel); }
+  if (tab === 'bio') { _bioDrawerTab(app, panel); }
 }
 
 // ════════════════════════════════════════════════════════
@@ -8286,9 +8293,198 @@ async function deleteApplicantForever(id) {
 function deleteApplicant(appId) { return archiveApplicant(appId); }
 
 // ── the form ──────────────────────────────────────────────────────────────
+// ── bio-data (fields from the agency's CV / information sheets) ─────────────────────────────
+var _BIO_LEVELS = ['None', 'Poor', 'Fair', 'Good', 'Very good', 'Fluent'];
+var _BIO_CHORES = [['housekeeping', 'Housekeeping'], ['cleaning', 'Cleaning'], ['washing', 'Washing'], ['ironing', 'Ironing'], ['caregiver', 'Caregiver'], ['care_elderly', 'Care for elderly'],
+  ['babysitting', 'Babysitting'], ['tutoring', 'Tutoring'], ['cooking_filipino', 'Filipino cooking'], ['cooking_arabic', 'Arabic cooking'], ['decorating', 'Decorating'], ['sewing', 'Sewing']];
+// [key, label, type, extra]  type: t text, d date, n number, s select, a textarea
+var _BIO_GROUPS = [
+  ['Reference', [['ref_no', 'Bio-data ref. no.', 't', 'NGF-160 / GD-004']]],
+  ['Personal', [['religion', 'Religion', 't'], ['place_of_birth', 'Place of birth', 't'], ['marital_status', 'Marital status', 's', ['Single', 'Married', 'Widowed', 'Separated', 'Divorced', 'Annulled']],
+    ['children_count', 'No. of children', 'n'], ['children_ages', 'Children’s ages', 't', 'e.g. 8, 5, 2'], ['height', 'Height (feet)', 't', '5\'2"'], ['weight_kg', 'Weight (kg)', 'n'],
+    ['education', 'Educational attainment', 't'], ['address', 'Address', 'a']]],
+  ['Passport', [['passport_issue_date', 'Date of issue', 'd'], ['passport_expiry_date', 'Date of expiry', 'd'], ['passport_place_of_issue', 'Place of issue', 't']]],
+  ['Experience & language', [['experience_abroad', 'Experience abroad', 't', 'First timer / 2 years Saudi'], ['english_level', 'English speaking', 's', _BIO_LEVELS], ['arabic_level', 'Arabic', 's', _BIO_LEVELS],
+    ['work_experience', 'Work experience', 'a']]],
+  ['Job terms', [['salary', 'Salary', 'n'], ['salary_currency', 'Currency', 't', 'USD'], ['contract_years', 'Contract (years)', 'n']]],
+  ['Next of kin', [['next_of_kin_name', 'Name', 't'], ['next_of_kin_relation', 'Relation', 't', 'Mother'], ['next_of_kin_phone', 'Contact number', 't'], ['next_of_kin_address', 'Address', 'a']]],
+  ['Skills', 'chores'],
+  ['Other', [['special_skills', 'Special skills', 'a'], ['remarks', 'Remarks', 'a']]]
+];
+var _BIO_PI = ['address', 'place_of_birth', 'passport_issue_date', 'passport_expiry_date', 'passport_place_of_issue', 'next_of_kin_name', 'next_of_kin_relation', 'next_of_kin_phone', 'next_of_kin_address'];
+var _BIO_KEYS = []; _BIO_GROUPS.forEach(function(g) { if (g[1] !== 'chores') g[1].forEach(function(f) { _BIO_KEYS.push(f[0]); }); });
+var _BIO_NUM = ['children_count', 'weight_kg', 'salary', 'contract_years'];
+function _apBioRender() {
+  var host = document.getElementById('a-bio'); if (!host || host.getAttribute('data-ready')) return;
+  var h = '';
+  _BIO_GROUPS.forEach(function(g) {
+    h += '<div style="font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:12px 0 6px">' + g[0] + '</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px">';
+    if (g[1] === 'chores') {
+      _BIO_CHORES.forEach(function(c) { h += '<div class="form-group" style="margin:0"><label class="form-label">' + c[1] + '</label><select class="form-input" id="ab-chore-' + c[0] + '"><option value="">—</option><option value="yes">Yes</option><option value="no">No</option><option value="willing">Willing to learn</option></select></div>'; });
+    } else g[1].forEach(function(f) {
+      var id = 'ab-' + f[0], inp;
+      if (f[2] === 's') inp = '<select class="form-input" id="' + id + '"><option value="">—</option>' + f[3].map(function(o) { return '<option>' + o + '</option>'; }).join('') + '</select>';
+      else if (f[2] === 'a') inp = '<textarea class="form-input" id="' + id + '" rows="2" style="resize:vertical"></textarea>';
+      else inp = '<input class="form-input" id="' + id + '" type="' + (f[2] === 'd' ? 'date' : f[2] === 'n' ? 'number' : 'text') + '"' + (f[2] === 'n' ? ' step="any" min="0"' : '') + (f[3] && f[2] === 't' ? ' placeholder="' + f[3] + '"' : '') + ' maxlength="200">';
+      h += '<div class="form-group" style="margin:0' + (f[2] === 'a' ? ';grid-column:1/-1' : '') + '"><label class="form-label">' + f[1] + '</label>' + inp + '</div>';
+    });
+    h += '</div>';
+  });
+  host.innerHTML = h; host.setAttribute('data-ready', '1');
+}
+function _apBioFill(r) {
+  _apBioRender();
+  _BIO_KEYS.forEach(function(k) { var v = r[k]; if (k === 'passport_issue_date' || k === 'passport_expiry_date') v = v ? String(v).slice(0, 10) : ''; _apSetVal('ab-' + k, v); });
+  var ch = r.chores && typeof r.chores === 'object' ? r.chores : {};
+  _BIO_CHORES.forEach(function(c) { _apSetVal('ab-chore-' + c[0], ch[c[0]] || ''); });
+  var masked = !!r.pii_masked;
+  _BIO_PI.forEach(function(k) { var el = document.getElementById('ab-' + k); if (el) { el.readOnly = masked; el.disabled = masked && el.tagName === 'SELECT'; el.style.background = masked ? 'var(--s2)' : ''; } });
+  var wrap = document.getElementById('a-bio-wrap'); if (wrap) wrap.open = _BIO_KEYS.some(function(k) { return r[k] != null && r[k] !== ''; });
+}
+function _apBioCollect() {
+  var o = {};
+  _BIO_KEYS.forEach(function(k) { var el = document.getElementById('ab-' + k); if (el) o[k] = String(el.value || '').trim(); });
+  var ch = {}; _BIO_CHORES.forEach(function(c) { var el = document.getElementById('ab-chore-' + c[0]); if (el && el.value) ch[c[0]] = el.value; });
+  o.chores = ch;
+  return o;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// BIO-DATA — drawer tab + printable bio-data in two layouts (Golden Faith card / application form)
+// ══════════════════════════════════════════════════════════════════════
+var _BIO_CH_LABEL = { yes: 'YES', no: 'NO', willing: 'WILLING TO LEARN' };
+function _bioPick(row) { var o = {}; _BIO_KEYS.concat(['chores', 'salary', 'salary_currency']).forEach(function(k) { if (row[k] !== undefined) o[k] = row[k]; }); return o; }
+function _bioAge(dob) { if (!dob) return ''; var b = new Date(String(dob).slice(0, 10) + 'T00:00:00'), n = new Date(); var a = n.getFullYear() - b.getFullYear(); if (n.getMonth() < b.getMonth() || (n.getMonth() === b.getMonth() && n.getDate() < b.getDate())) a--; return isFinite(a) ? a : ''; }
+function _bioDate(d, fmt) {
+  if (!d) return '';
+  var x = new Date(String(d).slice(0, 10) + 'T00:00:00'); if (isNaN(x)) return String(d);
+  var M = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  return fmt === 'long' ? M[x.getMonth()].toUpperCase() + ' ' + x.getDate() + ', ' + x.getFullYear() : ('0' + (x.getMonth() + 1)).slice(-2) + '/' + ('0' + x.getDate()).slice(-2) + '/' + x.getFullYear();
+}
+function _bioDrawerTab(app, panel) {
+  var uuid = app._dbId || app.id;
+  if (app.piiMasked) { panel.innerHTML = '<div style="padding:18px;color:var(--muted);font-size:13px">🔒 Personal data is hidden for your role, so the bio-data cannot be shown or printed.</div>'; return; }
+  var b = app.bio || {}, ch = (b.chores && typeof b.chores === 'object') ? b.chores : {};
+  var row = function(k, v) { return '<div style="padding:8px 10px;background:var(--s2);border:1px solid var(--border);border-radius:8px"><div style="font-size:10.5px;color:var(--muted);font-weight:700;margin-bottom:2px">' + k + '</div><div style="font-size:12.5px;white-space:pre-wrap">' + (v === '' || v == null ? '<span style="color:var(--muted)">—</span>' : escapeHtml(String(v))) + '</div></div>'; };
+  var h = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">' +
+    '<button class="btn btn-p btn-sm" onclick="openBiodata(\'' + escapeHtml(uuid) + '\',\'card\')">🖨 Golden Faith card</button>' +
+    '<button class="btn btn-s btn-sm" onclick="openBiodata(\'' + escapeHtml(uuid) + '\',\'form\')">🖨 Application form</button>' +
+    (hasPermission('Edit Applicants') && !app.archived ? '<button class="btn btn-ghost btn-sm" onclick="editApplicant(\'' + escapeHtml(uuid) + '\')">✎ Edit bio-data</button>' : '') + '</div>';
+  var groups = [['Reference', [['Ref. no.', b.ref_no]]],
+    ['Personal', [['Religion', b.religion], ['Place of birth', b.place_of_birth], ['Marital status', b.marital_status], ['Children', [b.children_count, b.children_ages].filter(function(x) { return x != null && x !== ''; }).join(' · ')],
+      ['Height', b.height], ['Weight', b.weight_kg ? b.weight_kg + ' kg' : ''], ['Education', b.education], ['Address', b.address]]],
+    ['Passport', [['Issued', b.passport_issue_date], ['Expires', b.passport_expiry_date], ['Place of issue', b.passport_place_of_issue]]],
+    ['Experience & language', [['Experience abroad', b.experience_abroad], ['English', b.english_level], ['Arabic', b.arabic_level], ['Work experience', b.work_experience]]],
+    ['Job terms', [['Salary', b.salary ? b.salary + ' ' + (b.salary_currency || '') : ''], ['Contract', b.contract_years ? b.contract_years + ' years' : '']]],
+    ['Next of kin', [['Name', [b.next_of_kin_name, b.next_of_kin_relation ? '(' + b.next_of_kin_relation + ')' : ''].filter(Boolean).join(' ')], ['Contact', b.next_of_kin_phone], ['Address', b.next_of_kin_address]]],
+    ['Other', [['Special skills', b.special_skills], ['Remarks', b.remarks]]]];
+  var gh = function(t) { return '<div style="font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:12px 0 6px">' + t + '</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'; };
+  groups.forEach(function(g) { h += gh(g[0]) + g[1].map(function(f) { return row(f[0], f[1]); }).join('') + '</div>'; });
+  h += gh('Skills') + _BIO_CHORES.map(function(c) { return row(c[1], ch[c[0]] ? _BIO_CH_LABEL[ch[c[0]]] : ''); }).join('') + '</div>';
+  panel.innerHTML = h;
+}
+// fresh data + photos, then the preview window
+async function openBiodata(id, layout) {
+  var uuid = _apUuid(id);
+  if (!_apIsUUID(uuid)) { toast('Save the applicant to the server first', 'error'); return; }
+  var r = await apiFetch('/applicants/' + encodeURIComponent(uuid) + '?_=' + Date.now());
+  if (!r.ok || !r.data) { toast(_acctMsg(r, 'Could not load the applicant'), 'error'); return; }
+  if (r.data.pii_masked) { toast('Your role cannot print bio-data (personal data is hidden)', 'error'); return; }
+  var dr = await apiFetch('/documents?applicant_id=' + uuid + '&limit=100&status=&_=' + Date.now());
+  var docs = dr.ok && dr.data && Array.isArray(dr.data.data) ? dr.data.data : [];
+  var usable = function(d) { return d.has_file && d.preview === 'image' && !d.voided && ['Rejected', 'Superseded'].indexOf(d.status) === -1; };
+  var photos = docs.filter(function(d) { return d.type === 'Photo' && usable(d); }).slice(0, 2);
+  var passport = docs.filter(function(d) { return d.type === 'Passport' && usable(d); })[0];
+  var urls = await Promise.all(photos.concat(passport ? [passport] : []).map(function(d) { return _dcGetLink(d.id, true); }));
+  var ph = urls.slice(0, photos.length).map(function(l) { return l && l.url ? l.url : ''; });
+  var pass = passport && urls[photos.length] && urls[photos.length].url ? urls[photos.length].url : '';
+  var prof = {}; try { var pr = await apiFetch('/company-profile'); if (pr.ok && pr.data) prof = pr.data; } catch (e) {}
+  window._bioCtx = { row: r.data, photos: ph, passport: pass, profile: prof, layout: layout === 'form' ? 'form' : 'card' };
+  _bioShow();
+}
+function _bioShow() {
+  var C = window._bioCtx; if (!C) return;
+  var ov = document.getElementById('bio-overlay');
+  if (!ov) {
+    ov = document.createElement('div'); ov.id = 'bio-overlay';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(15,23,42,.55);display:flex;flex-direction:column;align-items:center;padding:14px';
+    ov.innerHTML = '<div style="background:var(--surface,#fff);border-radius:12px;width:min(900px,100%);flex:1;display:flex;flex-direction:column;overflow:hidden">' +
+      '<div style="display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border)"><b style="flex:1">Bio-data preview</b>' +
+      '<select id="bio-layout" class="form-input" style="width:auto" onchange="window._bioCtx.layout=this.value;_bioShow()"><option value="card">Golden Faith card</option><option value="form">Application form (English / Arabic)</option></select>' +
+      '<button class="btn btn-p btn-sm" onclick="_bioPrint()">🖨 Print / Save as PDF</button><button class="btn btn-ghost btn-sm" onclick="_bioClose()">Close</button></div>' +
+      '<iframe id="bio-frame" style="flex:1;border:0;background:#e5e7eb"></iframe></div>';
+    document.body.appendChild(ov);
+  }
+  document.getElementById('bio-layout').value = C.layout;
+  document.getElementById('bio-frame').srcdoc = _bioHtml(C);
+}
+function _bioClose() { var ov = document.getElementById('bio-overlay'); if (ov) ov.remove(); }
+function _bioPrint() { var f = document.getElementById('bio-frame'); if (f && f.contentWindow) { f.contentWindow.focus(); f.contentWindow.print(); } }
+function _bioHtml(C) {
+  var r = C.row, e = escapeHtml, P = C.profile || {};
+  var name = [r.first_name, r.middle_name, r.last_name && r.last_name !== '.' ? r.last_name : ''].filter(Boolean).join(' ').toUpperCase();
+  var ch = (r.chores && typeof r.chores === 'object') ? r.chores : {};
+  var cv = function(k) { return ch[k] ? _BIO_CH_LABEL[ch[k]] : ''; };
+  var co = P.name || P.company_name || 'GOLDEN FAITH INTERNATIONAL EMPLOYMENT SERVICES CO.';
+  var foot = [P.address, [P.phone && ('Tel: ' + P.phone), P.mobile && ('Mobile: ' + P.mobile)].filter(Boolean).join('   '), P.email && ('Email: ' + P.email)].filter(Boolean);
+  if (!foot.length) foot = ['Unit A-102 to 105 LJHENSON BUILDING, 491 Sonado St. Ermita Manila', 'Tel: (02)562 8617   Mobile: 09258072410 / 09267287500', 'Email: goldenfaith.recruitment@gmail.com'];
+  var css = '@page{size:A4;margin:8mm}*{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#111;font-size:11px;background:#fff}.pg{width:194mm;min-height:280mm;margin:0 auto;position:relative}' +
+    '.ar{direction:rtl;font-size:10px;color:#333}.lbl{font-size:8.5px;color:#444;font-weight:700;text-transform:uppercase}.v{font-weight:700;color:#1d4ed8;font-size:12px}.red{color:#dc2626;font-weight:700}' +
+    'table{border-collapse:collapse;width:100%}td,th{border:1px solid #333;padding:3px 5px;vertical-align:top}.hd{font-weight:800;text-align:center}' +
+    '.photo{border:1px solid #888;background:#f3f4f6;display:flex;align-items:center;justify-content:center;color:#9ca3af;font-size:10px;overflow:hidden;text-align:center}.photo img{width:100%;height:100%;object-fit:cover}.cell{min-height:36px}' +
+    '.brk{page-break-before:always}.ft{text-align:center;font-size:9.5px;color:#333;margin-top:6px}';
+  var photo = function(i, w, h) { return '<div class="photo" style="width:' + w + ';height:' + h + '">' + (C.photos[i] ? '<img src="' + e(C.photos[i]) + '" alt="">' : 'PHOTO') + '</div>'; };
+  var cell = function(en, ar, val, extra) { return '<td class="cell" ' + (extra || '') + '><div class="ar">' + ar + '</div><div class="lbl">' + en + '</div><div class="v">' + e(val == null ? '' : val) + '</div></td>'; };
+  var html;
+  if (C.layout === 'card') {
+    var cook = ch.cooking_filipino === 'yes' || ch.cooking_arabic === 'yes' ? 'YES' : (ch.cooking_filipino === 'willing' || ch.cooking_arabic === 'willing' ? 'WILLING TO LEARN' : (ch.cooking_filipino || ch.cooking_arabic ? 'NO' : ''));
+    var rem = [r.special_skills, r.remarks].filter(Boolean).join('\n');
+    var kin = r.next_of_kin_name ? '\nNEXT OF KIN: ' + r.next_of_kin_name + (r.next_of_kin_relation ? ' (' + r.next_of_kin_relation + ')' : '') + (r.next_of_kin_phone ? '\nNEXT OF KIN CONTACT NUMBER: ' + r.next_of_kin_phone : '') + (r.next_of_kin_address ? '\nNEXT OF KIN COMPLETE ADDRESS: ' + r.next_of_kin_address : '') : '';
+    html = '<div class="pg"><div style="text-align:center;background:#5b2a86;color:#fff;padding:8px 6px;margin-bottom:6px"><div style="font-size:15px;font-weight:800">' + e(co) + '</div></div>' +
+      '<div style="display:flex;gap:8px"><div style="flex:1"><table>' +
+      '<tr><td><span class="lbl">REF. NO.:</span> <span class="v">' + e(r.ref_no || '') + '</span></td></tr>' +
+      '<tr>' + cell('Religion', 'الديانة', (r.religion || '').toUpperCase()) + '</tr>' +
+      '<tr>' + cell('Position Applied', 'الوظيفة', r.position || (r.job_title || '')) + '</tr>' +
+      '<tr>' + cell('Contact Number', 'رقم الاتصال', r.phone || '') + '</tr>' +
+      '<tr>' + cell('Name', 'الاسم', name) + '</tr>' +
+      '<tr>' + cell('Date of Birth', 'تاريخ الميلاد', _bioDate(r.date_of_birth, 'long')) + '</tr>' +
+      '<tr>' + cell('Place of Birth', 'مكان الميلاد', (r.place_of_birth || '').toUpperCase()) + '</tr></table></div>' +
+      '<div style="display:flex;gap:6px">' + photo(0, '33mm', '42mm') + photo(1, '52mm', '88mm') + '</div></div>' +
+      '<table style="margin-top:6px"><tr>' + cell('Passport No.', 'رقم جواز السفر', r.passport_number) + cell('Date of Issue', 'تاريخ الإصدار', _bioDate(r.passport_issue_date)) + cell('Date of Expiry', 'تاريخ الانتهاء', _bioDate(r.passport_expiry_date)) + cell('Place of Issue', 'مكان الإصدار', (r.passport_place_of_issue || '').toUpperCase()) + '</tr>' +
+      '<tr>' + cell('Nationality', 'الجنسية', (r.nationality || 'FILIPINO').toUpperCase()) + cell('Status', 'الحالة الاجتماعية', (r.marital_status || '').toUpperCase()) + cell('Number of Children', 'عدد الأطفال', r.children_count != null ? r.children_count + (r.children_count === 1 ? ' KID' : ' KIDS') : '') + cell('Education', 'المستوى الدراسي', (r.education || '').toUpperCase()) + '</tr>' +
+      '<tr>' + cell('Experience Abroad', 'الخبرة في الخارج', (r.experience_abroad || '').toUpperCase()) + cell('English Speaking', 'اللغة الإنجليزية', (r.english_level || '').toUpperCase()) +
+      '<td colspan="2" rowspan="3" class="cell"><div class="ar">ملاحظات :</div><div class="lbl">Remarks :</div><div class="red" style="white-space:pre-wrap;font-size:10.5px">' + e((rem + kin).toUpperCase()) + '</div></td></tr>' +
+      '<tr>' + cell('Decorating', 'الديكور', cv('decorating')) + cell('Sewing', 'الخياطة', cv('sewing')) + '</tr>' +
+      '<tr>' + cell('Washing', 'الغسيل', cv('washing')) + cell('Cleaning', 'التنظيف', cv('cleaning')) + '</tr>' +
+      '<tr>' + cell('Babysitting', 'رعاية الأطفال', cv('babysitting')) + cell('Cooking', 'الطبخ', cook) + cell('Height', 'الطول', r.height || '') + cell('Weight', 'الوزن', r.weight_kg ? Number(r.weight_kg) + 'KG' : '') + '</tr>' +
+      '<tr>' + cell('Contract', 'مدة العقد', r.contract_years ? r.contract_years + (r.contract_years === 1 ? ' Year' : ' Years') : '') + cell('Salary', 'الراتب', r.salary ? Number(r.salary) + ' ' + (r.salary_currency || '') : '') +
+      '<td class="cell" style="height:48px"><div class="ar">توقيع مقدم الطلب</div><div class="lbl">Signature of Applicant</div></td><td class="cell"><div class="ar">مقابلة بواسطة</div><div class="lbl">Interviewed by</div></td></tr></table>' +
+      '<div class="ft">' + foot.map(e).join('<br>') + '</div></div>';
+  } else {
+    var T = function(en, ar, val) { return '<tr><td style="width:36%"><b>' + en + '</b></td><td style="width:34%;font-weight:700;white-space:pre-wrap">' + e(val == null ? '' : val) + '</td><td class="ar" style="width:30%;text-align:right">' + ar + '</td></tr>'; };
+    var H = function(t, ar) { return '<tr><td colspan="3" class="hd" style="background:#9ec3ea">' + t + ' &nbsp; ' + ar + '</td></tr>'; };
+    var kids = [r.children_count != null ? r.children_count : '', r.children_ages ? '(' + r.children_ages + ')' : ''].filter(function(x) { return x !== ''; }).join(' ');
+    html = '<div class="pg"><div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px"><div style="font-size:16px;font-weight:800">' + e(co) + '</div><div style="text-align:right"><b>APPLICATION FORM FOR EMPLOYMENT</b><br><span class="lbl">Contact No.</span> <span class="v">' + e(r.ref_no || r.display_id || '') + '</span></div></div>' +
+      '<div style="display:flex;gap:8px"><table style="flex:1">' + T('DATE APPLIED', 'تاريخ التقديم', _bioDate(r.created_at)) + T('POSITION PREFERRED', 'الوظيفة المفضلة', (r.position || r.job_title || '').toUpperCase()) + T('DESTINATION', 'وجهة', (r.destination || '').toUpperCase()) +
+      H('PERSONAL DETAILS', 'البيانات الشخصية') + T('FULL NAME', 'الاسم الكامل', name) + T('RELIGION', 'دين', (r.religion || '').toUpperCase()) + T('ADDRESS', 'عنوان', (r.address || '').toUpperCase()) + T('AGE', 'عمر', _bioAge(r.date_of_birth)) +
+      T('DATE OF BIRTH', 'تاريخ الميلاد', _bioDate(r.date_of_birth, 'long')) + T('MARITAL STATUS', 'الحالة الاجتماعية', (r.marital_status || '').toUpperCase()) + T('NO. OF CHILDREN AND AGES', 'عدد الأطفال وأعمارهم', kids) +
+      T('HEIGHT (FEET)', 'الطول (بالقدم)', r.height || '') + T('WEIGHT (KILOGRAMS)', 'الوزن (كيلوجرام)', r.weight_kg ? Number(r.weight_kg) : '') + T('EDUCATIONAL ATTAINMENT', 'التحصيل العلمي', (r.education || '').toUpperCase()) +
+      T('WORK EXPERIENCE', 'خبرة في العمل', [r.experience_abroad, r.work_experience].filter(Boolean).join('\n').toUpperCase()) + T('LANGUAGE (ENGLISH)', 'اللغة (الإنجليزية)', (r.english_level || '').toUpperCase()) + T('LANGUAGE (ARABIC)', 'اللغة (العربية)', (r.arabic_level || '').toUpperCase()) +
+      H('AWARENESS CHORES', 'مهام التوعية') + T('HOUSEKEEPING', 'خدمات تنظيف الغرف', cv('housekeeping')) + T('CLEANING', 'تنظيف', cv('cleaning')) + T('WASHING', 'غسل', cv('washing')) + T('IRONING', 'كي الملابس', cv('ironing')) +
+      T('CAREGIVER', 'مقدم رعاية', cv('caregiver')) + T('CARE FOR ELDERLY', 'رعاية المسنين', cv('care_elderly')) + T('BABYSITTING', 'جليسة أطفال', cv('babysitting')) + T('TUTORING', 'الدروس الخصوصية', cv('tutoring')) +
+      T('FILIPINO COOKING', 'الطبخ الفلبيني', cv('cooking_filipino')) + T('ARABIC COOKING', 'الطبخ العربي', cv('cooking_arabic')) + H('SPECIAL SKILLS', 'مهارات خاصة') +
+      '<tr><td colspan="3" style="height:60px;white-space:pre-wrap;font-weight:700">' + e((r.special_skills || '').toUpperCase()) + '</td></tr></table>' +
+      '<div style="width:46mm">' + photo(0, '46mm', '58mm') + '<div style="height:6px"></div>' + photo(1, '46mm', '90mm') + '</div></div>' +
+      '<div class="ft">' + foot.map(e).join(' · ') + '</div></div>' +
+      '<div class="pg brk"><div style="font-weight:800;margin-bottom:6px">PASSPORT &nbsp; <span style="font-weight:400">' + e([r.passport_number, r.passport_issue_date && 'issued ' + _bioDate(r.passport_issue_date), r.passport_expiry_date && 'expires ' + _bioDate(r.passport_expiry_date), r.passport_place_of_issue].filter(Boolean).join(' · ')) + '</span></div>' +
+      (C.passport ? '<img src="' + e(C.passport) + '" style="max-width:100%;max-height:250mm" alt="">' : '<div class="photo" style="height:120mm">Passport copy — upload it in the Documents tab (type Passport, image) to show it here</div>') + '</div>';
+  }
+  return '<!doctype html><html><head><meta charset="utf-8"><title>Bio-data ' + e(name) + '</title><style>' + css + '</style></head><body>' + html + '</body></html>';
+}
 var _AP_FIELD_INPUT = { first_name: 'a-first', middle_name: 'a-middle', last_name: 'a-last', email: 'a-email', phone: 'a-contact', passport_number: 'a-passport', date_of_birth: 'a-dob',
   gender: 'a-gender', nationality: 'a-nationality', category: 'a-category', job_order_id: 'a-job-order', agent_id: 'a-agent', status: 'a-status', medical_status: 'a-medical',
-  consent_date: 'a-consent', retention_until: 'a-retention', destination: 'a-destination', position: 'a-job', notes: 'a-notes', salary: 'a-salary' };
+  consent_date: 'a-consent', retention_until: 'a-retention', destination: 'a-destination', position: 'a-job', notes: 'a-notes', salary: 'ab-salary' };
+_BIO_KEYS.forEach(function(k) { _AP_FIELD_INPUT[k] = 'ab-' + k; }); _AP_FIELD_INPUT.chores = 'ab-chore-housekeeping';
 function _apSetVal(id, v) { var el = document.getElementById(id); if (el) el.value = v === null || v === undefined ? '' : String(v); }
 function _apVal(id) { var el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; }
 function _apClearErrors() {
@@ -8323,6 +8519,7 @@ function _apFillForm(r) {
   var masked = !!r.pii_masked;
   ['a-contact', 'a-email', 'a-passport', 'a-dob'].forEach(function(id) { var el = document.getElementById(id); if (el) { el.readOnly = masked; el.style.background = masked ? 'var(--s2)' : ''; } });
   var mn = document.getElementById('a-masked-note'); if (mn) mn.style.display = masked ? 'block' : 'none';
+  _apBioFill(r);
 }
 function openAddApplicant() {
   if (!hasPermission('Create Applicants')) { toast('Your role cannot create applicants', 'error'); return; }
@@ -8351,20 +8548,24 @@ function _apCollect() {
   var agentUuid = _apVal('a-agent-uuid');
   if (!_apIsUUID(agentUuid)) { var nm = _apVal('a-agent'); var ag = nm ? DB.agents.find(function(a) { return a.name === nm; }) : null; agentUuid = ag ? (ag._dbId || ag.id) : ''; }
   var jo = _apVal('a-job-order-id') || _apVal('a-job-order');
-  return {
+  return Object.assign({
     first_name: _apVal('a-first'), middle_name: _apVal('a-middle'), last_name: _apVal('a-last'),
     phone: _apVal('a-contact'), email: _apVal('a-email'), passport_number: _apVal('a-passport'), date_of_birth: _apVal('a-dob'),
     gender: _apVal('a-gender'), nationality: _apVal('a-nationality'), category: _apVal('a-category'),
     destination: _apVal('a-destination'), position: _apVal('a-job'), job_order_id: _apIsUUID(jo) ? jo : '', agent_id: _apIsUUID(agentUuid) ? agentUuid : '',
     medical_status: _apVal('a-medical') || 'Pending', consent_date: _apVal('a-consent'), retention_until: _apVal('a-retention'), notes: document.getElementById('a-notes') ? document.getElementById('a-notes').value : '',
-  };
+  }, _apBioCollect());
 }
 function _apNorm(v) { if (v === null || v === undefined) return ''; return String(v).slice(0, 10) === String(v) ? String(v).trim() : String(v).trim(); }
 function _apDiff(p, row) {
   var out = {}, personal = ['phone', 'email', 'passport_number', 'date_of_birth'];
   Object.keys(p).forEach(function(k) {
-    if (row.pii_masked && personal.indexOf(k) !== -1) return;
+    if (row.pii_masked && (personal.indexOf(k) !== -1 || _BIO_PI.indexOf(k) !== -1)) return;
+    if (k === 'chores') { var ca = p.chores || {}, cb = (row.chores && typeof row.chores === 'object') ? row.chores : {}; var ka = Object.keys(ca).sort(), kb = Object.keys(cb).sort();
+      if (JSON.stringify(ka.map(function(x) { return [x, ca[x]]; })) !== JSON.stringify(kb.map(function(x) { return [x, cb[x]]; }))) out.chores = ca; return; }
     var a = p[k] == null ? '' : String(p[k]).trim(), b = row[k] == null ? '' : String(row[k]).trim();
+    if (_BIO_NUM.indexOf(k) !== -1 && a !== '' && b !== '' && Number(a) === Number(b)) return;
+    if (k === 'passport_issue_date' || k === 'passport_expiry_date') b = b.slice(0, 10);
     if (k === 'date_of_birth' || k === 'consent_date' || k === 'retention_until') b = b.slice(0, 10);
     if (k === 'last_name' && b === '.') b = '';
     if (k === 'position' && !b) b = row.job_title == null ? '' : String(row.job_title).trim();
@@ -8380,7 +8581,7 @@ async function saveApplicant(dupReason) {
   var body, res, newStatus = null;
   if (_apForm.mode === 'create') {
     body = Object.assign({}, p, { status: _apVal('a-status') || 'Applied' });
-    Object.keys(body).forEach(function(k) { if (body[k] === '') delete body[k]; });
+    Object.keys(body).forEach(function(k) { if (body[k] === '' || (k === 'chores' && !Object.keys(body[k]).length)) delete body[k]; });
   } else {
     var row = _apForm.row || {};
     body = _apDiff(p, row);
