@@ -8413,7 +8413,8 @@ function _bioDrawerTab(app, panel) {
   var b = app.bio || {}, ch = (b.chores && typeof b.chores === 'object') ? b.chores : {};
   var row = function(k, v) { return '<div style="padding:8px 10px;background:var(--s2);border:1px solid var(--border);border-radius:8px"><div style="font-size:10.5px;color:var(--muted);font-weight:700;margin-bottom:2px">' + k + '</div><div style="font-size:12.5px;white-space:pre-wrap">' + (v === '' || v == null ? '<span style="color:var(--muted)">—</span>' : escapeHtml(String(v))) + '</div></div>'; };
   var h = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">' +
-    '<button class="btn btn-p btn-sm" onclick="openBiodata(\'' + escapeHtml(uuid) + '\',\'card\')">🖨 Golden Faith card</button>' +
+    '<button class="btn btn-p btn-sm" onclick="openBiodata(\'' + escapeHtml(uuid) + '\',\'full\')">🖨 Complete bio-data</button>' +
+    '<button class="btn btn-s btn-sm" onclick="openBiodata(\'' + escapeHtml(uuid) + '\',\'card\')">🖨 Golden Faith card</button>' +
     '<button class="btn btn-s btn-sm" onclick="openBiodata(\'' + escapeHtml(uuid) + '\',\'form\')">🖨 Application form</button>' +
     (hasPermission('Edit Applicants') && !app.archived ? '<button class="btn btn-ghost btn-sm" onclick="editApplicant(\'' + escapeHtml(uuid) + '\')">✎ Edit bio-data</button>' : '') + '</div>';
   var groups = [['Reference', [['Ref. no.', b.ref_no]]],
@@ -8448,7 +8449,7 @@ async function openBiodata(id, layout) {
   var ph = urls.slice(0, photos.length).map(function(l) { return l && l.url ? l.url : ''; });
   var pass = passport && urls[photos.length] && urls[photos.length].url ? urls[photos.length].url : '';
   var prof = {}; try { var pr = await apiFetch('/company-profile'); if (pr.ok && pr.data) prof = pr.data; } catch (e) {}
-  window._bioCtx = { row: r.data, photos: ph, passport: pass, profile: prof, layout: layout === 'form' ? 'form' : 'card' };
+  window._bioCtx = { row: r.data, photos: ph, passport: pass, profile: prof, layout: layout === 'form' || layout === 'card' ? layout : 'full', internal: false };
   _bioShow();
 }
 function _bioShow() {
@@ -8459,8 +8460,8 @@ function _bioShow() {
     ov.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(15,23,42,.55);display:flex;flex-direction:column;align-items:center;padding:14px';
     ov.innerHTML = '<div style="background:var(--surface,#fff);border-radius:12px;width:min(900px,100%);flex:1;display:flex;flex-direction:column;overflow:hidden">' +
       '<div style="display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border)"><b style="flex:1">Bio-data preview</b>' +
-      '<select id="bio-layout" class="form-input" style="width:auto" onchange="window._bioCtx.layout=this.value;_bioShow()"><option value="card">Golden Faith card</option><option value="form">Application form (English / Arabic)</option></select>' +
-      '<button class="btn btn-p btn-sm" onclick="_bioPrint()">🖨 Print / Save as PDF</button><button class="btn btn-ghost btn-sm" onclick="_bioClose()">Close</button></div>' +
+      '<select id="bio-layout" class="form-input" style="width:auto" onchange="window._bioCtx.layout=this.value;_bioShow()"><option value="full">Complete bio-data (photos + passport)</option><option value="card">Golden Faith card</option><option value="form">Application form (English / Arabic)</option></select>' +
+      '<label style="font-size:12px;display:flex;gap:4px;align-items:center;white-space:nowrap"><input type="checkbox" id="bio-internal" onchange="window._bioCtx.internal=this.checked;_bioShow()"> Include office details</label><button class="btn btn-p btn-sm" onclick="_bioPrint()">🖨 Print / Save as PDF</button><button class="btn btn-ghost btn-sm" onclick="_bioClose()">Close</button></div>' +
       '<iframe id="bio-frame" style="flex:1;border:0;background:#e5e7eb"></iframe></div>';
     document.body.appendChild(ov);
   }
@@ -8481,10 +8482,53 @@ function _bioHtml(C) {
     '.ar{direction:rtl;font-size:10px;color:#333}.lbl{font-size:8.5px;color:#444;font-weight:700;text-transform:uppercase}.v{font-weight:700;color:#1d4ed8;font-size:12px}.red{color:#dc2626;font-weight:700}' +
     'table{border-collapse:collapse;width:100%}td,th{border:1px solid #333;padding:3px 5px;vertical-align:top}.hd{font-weight:800;text-align:center}' +
     '.photo{border:1px solid #888;background:#f3f4f6;display:flex;align-items:center;justify-content:center;color:#9ca3af;font-size:10px;overflow:hidden;text-align:center}.photo img{width:100%;height:100%;object-fit:cover}.cell{min-height:36px}' +
-    '.brk{page-break-before:always}.ft{text-align:center;font-size:9.5px;color:#333;margin-top:6px}';
+    '.brk{page-break-before:always}.ft{text-align:center;font-size:9.5px;color:#333;margin-top:6px}' +
+    '.full .band{display:flex;justify-content:space-between;align-items:center;background:#4c1d95;color:#fff;padding:8px 12px;border-radius:4px;margin-bottom:8px;-webkit-print-color-adjust:exact;print-color-adjust:exact}.full .co{font-size:14px;font-weight:800}.full .sub{font-size:10px;letter-spacing:.14em;text-transform:uppercase;opacity:.85;margin-top:2px}' +
+    '.full .refbox{text-align:right}.full .refbox .fl{color:#ddd6fe}.full .refv{font-size:15px;font-weight:800}.full .refbox .fv{color:#fff}' +
+    '.full .body{display:flex;gap:10px;align-items:flex-start}.full .side{width:52mm;flex:none}.full .main{flex:1;min-width:0}' +
+    '.full .ph{border:1px solid #94a3b8;background:#f1f5f9;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:9px;text-align:center;overflow:hidden;padding:4px}.full .ph img{width:100%;height:100%;object-fit:cover}.full .cap{font-size:8px;color:#64748b;text-align:center;margin-top:2px;text-transform:uppercase;letter-spacing:.08em}' +
+    '.full .nm{font-size:19px;font-weight:800;color:#1e1b4b;line-height:1.1}.full .pos{font-size:11px;font-weight:700;color:#6d28d9;margin:2px 0 6px}' +
+    '.full .sec{margin-bottom:6px;break-inside:avoid}.full .st{font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#4c1d95;border-bottom:1.5px solid #4c1d95;padding-bottom:1px;margin-bottom:3px}' +
+    '.full .grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px 8px}.full .fld.w2{grid-column:span 3}.full .fl{font-size:7.5px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em}.full .fv{font-size:10.5px;font-weight:700;color:#0f172a;white-space:pre-wrap;word-break:break-word}.full .na{color:#cbd5e1;font-weight:400}' +
+    '.full .sks{display:grid;grid-template-columns:1fr 1fr;gap:2px 14px}.full .sk{display:flex;justify-content:space-between;align-items:center;border-bottom:1px dotted #cbd5e1;padding:1px 0;font-size:10px}' +
+    '.full .pl{font-size:8px;font-weight:800;padding:1px 6px;border-radius:8px;-webkit-print-color-adjust:exact;print-color-adjust:exact}.full .pl.yes{background:#dcfce7;color:#166534}.full .pl.willing{background:#fef3c7;color:#92400e}.full .pl.no{background:#f1f5f9;color:#64748b}' +
+    '.full .sigs{display:flex;gap:30mm;margin-top:10px;font-size:9px;color:#475569}.full .sigs>div{flex:1;text-align:center}.full .line{border-bottom:1px solid #334155;height:14px;font-weight:700;color:#1d4ed8;margin-bottom:2px}' +
+    '.full .pdet{font-size:11px;font-weight:700;margin:4px 0 8px;color:#1e293b}';
   var photo = function(i, w, h) { return '<div class="photo" style="width:' + w + ';height:' + h + '">' + (C.photos[i] ? '<img src="' + e(C.photos[i]) + '" alt="">' : 'PHOTO') + '</div>'; };
   var cell = function(en, ar, val, extra) { return '<td class="cell" ' + (extra || '') + '><div class="ar">' + ar + '</div><div class="lbl">' + en + '</div><div class="v">' + e(val == null ? '' : val) + '</div></td>'; };
   var html;
+  if (C.layout === 'full') {
+    var agentN = '', jobN = '';
+    try { var _ag = (DB.agents || []).find(function(a) { return a._dbId === r.agent_id || a.id === r.agent_id; }); if (_ag) agentN = _ag.name || ''; } catch (e1) {}
+    try { var _jb = (DB.jobs || []).find(function(j) { return j._dbId === r.job_order_id || j.id === r.job_order_id; }); if (_jb) jobN = [_jb.orderId, _jb.title, _jb.employer].filter(Boolean).join(' · '); } catch (e2) {}
+    var up = function(x) { return x == null || x === '' ? '' : String(x).toUpperCase(); };
+    var F = function(l, v, wide) { return '<div class="fld' + (wide ? ' w2' : '') + '"><div class="fl">' + l + '</div><div class="fv">' + (v === '' || v == null ? '<span class="na">—</span>' : e(String(v))) + '</div></div>'; };
+    var S = function(t, body) { return '<div class="sec"><div class="st">' + t + '</div><div class="grid">' + body + '</div></div>'; };
+    var pill = function(k) { var v = ch[k]; return v ? '<span class="pl ' + v + '">' + _BIO_CH_LABEL[v] + '</span>' : '<span class="na">—</span>'; };
+    var kidsT = [r.children_count != null ? r.children_count : '', r.children_ages ? '(' + r.children_ages + ')' : ''].filter(function(x) { return x !== ''; }).join(' ');
+    var ageV = _bioAge(r.date_of_birth);
+    var pdet = [r.passport_number && ('No. ' + r.passport_number), r.passport_issue_date && ('Issued ' + _bioDate(r.passport_issue_date)), r.passport_expiry_date && ('Expires ' + _bioDate(r.passport_expiry_date)), r.passport_place_of_issue].filter(Boolean).join('  ·  ');
+    var skillsH = _BIO_CHORES.map(function(c) { return '<div class="sk"><span>' + c[1] + '</span>' + pill(c[0]) + '</div>'; }).join('');
+    var internalH = C.internal ? S('Office use only', F('Applicant ID', r.display_id) + F('Status', r.status) + F('Category', r.category) + F('Agent', agentN) + F('Job order', jobN, true) + F('Medical', r.medical_status) + F('Deployment date', _bioDate(r.deployment_date)) + F('Consent date', _bioDate(r.consent_date)) + F('Email', r.email) + F('Summary note', r.notes, true)) : '';
+    html = '<div class="pg full"><div class="band"><div><div class="co">' + e(co) + '</div><div class="sub">Applicant Bio-Data</div></div><div class="refbox"><div class="fl">Ref. no.</div><div class="refv">' + e(r.ref_no || r.display_id || '') + '</div><div class="fl" style="margin-top:3px">Date applied</div><div class="fv">' + e(_bioDate(r.created_at)) + '</div></div></div>' +
+      '<div class="body"><div class="side"><div class="ph" style="height:52mm">' + (C.photos[0] ? '<img src="' + e(C.photos[0]) + '" alt="">' : '<span>FACE PHOTO</span>') + '</div><div class="cap">Face photo</div>' +
+      '<div class="ph" style="height:96mm;margin-top:4mm">' + (C.photos[1] ? '<img src="' + e(C.photos[1]) + '" alt="">' : '<span>FULL BODY PHOTO</span>') + '</div><div class="cap">Full body photo</div></div>' +
+      '<div class="main"><div class="nm">' + e(name) + '</div><div class="pos">' + e(up(r.position || r.job_title || '')) + (r.destination ? ' &nbsp;•&nbsp; ' + e(up(r.destination)) : '') + '</div>' +
+      S('Personal details', F('Nationality', up(r.nationality || 'Filipino')) + F('Gender', r.gender) + F('Date of birth', _bioDate(r.date_of_birth, 'long')) + F('Age', ageV !== '' ? ageV + ' years' : '') + F('Place of birth', up(r.place_of_birth)) + F('Religion', up(r.religion)) +
+        F('Marital status', up(r.marital_status)) + F('Children', kidsT) + F('Height', r.height) + F('Weight', r.weight_kg ? Number(r.weight_kg) + ' kg' : '') + F('Education', up(r.education)) + F('Contact no.', r.phone) + F('Home address', up(r.address), true)) +
+      S('Passport', F('Passport no.', r.passport_number) + F('Place of issue', up(r.passport_place_of_issue)) + F('Date of issue', _bioDate(r.passport_issue_date)) + F('Date of expiry', _bioDate(r.passport_expiry_date))) +
+      S('Experience &amp; languages', F('Experience abroad', up(r.experience_abroad)) + F('English', up(r.english_level)) + F('Arabic', up(r.arabic_level)) + F('Job terms', [r.contract_years ? r.contract_years + (Number(r.contract_years) === 1 ? ' year' : ' years') : '', r.salary ? Number(r.salary) + ' ' + (r.salary_currency || '') : ''].filter(Boolean).join(' · ')) + F('Work experience', r.work_experience, true)) +
+      '<div class="sec"><div class="st">Skills</div><div class="sks">' + skillsH + '</div></div>' +
+      S('Special skills &amp; remarks', F('Special skills', r.special_skills, true) + F('Remarks', r.remarks, true)) +
+      S('Next of kin', F('Name', [r.next_of_kin_name, r.next_of_kin_relation ? '(' + r.next_of_kin_relation + ')' : ''].filter(Boolean).join(' ')) + F('Contact no.', r.next_of_kin_phone) + F('Address', up(r.next_of_kin_address), true)) +
+      internalH + '</div></div>' +
+      '<div class="sigs"><div><div class="line"></div>Signature of applicant</div><div><div class="line">' + e(r.interviewed_by || '') + '</div>Interviewed by</div></div>' +
+      '<div class="ft">' + foot.map(e).join(' &nbsp;|&nbsp; ') + '</div></div>' +
+      '<div class="pg full brk"><div class="band"><div><div class="co">' + e(co) + '</div><div class="sub">Passport copy &nbsp;—&nbsp; ' + e(name) + '</div></div><div class="refbox"><div class="fl">Ref. no.</div><div class="refv">' + e(r.ref_no || r.display_id || '') + '</div></div></div>' +
+      '<div class="pdet">' + e(pdet) + '</div>' +
+      (C.passport ? '<div style="text-align:center"><img src="' + e(C.passport) + '" style="max-width:100%;max-height:235mm;border:1px solid #cbd5e1" alt=""></div>' : '<div class="ph" style="height:120mm"><span>Passport copy — upload it in the Documents tab (type Passport, image) or from the applicant form to show it here</span></div>') +
+      '<div class="ft">' + foot.map(e).join(' &nbsp;|&nbsp; ') + '</div></div>';
+  } else
   if (C.layout === 'card') {
     var cook = ch.cooking_filipino === 'yes' || ch.cooking_arabic === 'yes' ? 'YES' : (ch.cooking_filipino === 'willing' || ch.cooking_arabic === 'willing' ? 'WILLING TO LEARN' : (ch.cooking_filipino || ch.cooking_arabic ? 'NO' : ''));
     var rem = [r.special_skills, r.remarks].filter(Boolean).join('\n');
