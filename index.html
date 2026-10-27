@@ -8396,7 +8396,7 @@ function _apBioCollect() {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// BIO-DATA — drawer tab + printable bio-data in two layouts (Golden Faith card / application form)
+// BIO-DATA — drawer tab + printable bilingual (English / Arabic) bio-data
 // ══════════════════════════════════════════════════════════════════════
 var _BIO_CH_LABEL = { yes: 'YES', no: 'NO', willing: 'WILLING TO LEARN' };
 function _bioPick(row) { var o = {}; _BIO_KEYS.concat(['chores', 'salary', 'salary_currency']).forEach(function(k) { if (row[k] !== undefined) o[k] = row[k]; }); return o; }
@@ -8413,9 +8413,7 @@ function _bioDrawerTab(app, panel) {
   var b = app.bio || {}, ch = (b.chores && typeof b.chores === 'object') ? b.chores : {};
   var row = function(k, v) { return '<div style="padding:8px 10px;background:var(--s2);border:1px solid var(--border);border-radius:8px"><div style="font-size:10.5px;color:var(--muted);font-weight:700;margin-bottom:2px">' + k + '</div><div style="font-size:12.5px;white-space:pre-wrap">' + (v === '' || v == null ? '<span style="color:var(--muted)">—</span>' : escapeHtml(String(v))) + '</div></div>'; };
   var h = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">' +
-    '<button class="btn btn-p btn-sm" onclick="openBiodata(\'' + escapeHtml(uuid) + '\',\'full\')">🖨 Complete bio-data</button>' +
-    '<button class="btn btn-s btn-sm" onclick="openBiodata(\'' + escapeHtml(uuid) + '\',\'card\')">🖨 Golden Faith card</button>' +
-    '<button class="btn btn-s btn-sm" onclick="openBiodata(\'' + escapeHtml(uuid) + '\',\'form\')">🖨 Application form</button>' +
+    '<button class="btn btn-p btn-sm" onclick="openBiodata(\'' + escapeHtml(uuid) + '\',\'full\')">🖨 Print bio-data (English / عربي)</button>' +
     (hasPermission('Edit Applicants') && !app.archived ? '<button class="btn btn-ghost btn-sm" onclick="editApplicant(\'' + escapeHtml(uuid) + '\')">✎ Edit bio-data</button>' : '') + '</div>';
   var groups = [['Reference', [['Ref. no.', b.ref_no]]],
     ['Personal', [['Religion', b.religion], ['Place of birth', b.place_of_birth], ['Marital status', b.marital_status], ['Children', [b.children_count, b.children_ages].filter(function(x) { return x != null && x !== ''; }).join(' · ')],
@@ -8449,7 +8447,7 @@ async function openBiodata(id, layout) {
   var ph = urls.slice(0, photos.length).map(function(l) { return l && l.url ? l.url : ''; });
   var pass = passport && urls[photos.length] && urls[photos.length].url ? urls[photos.length].url : '';
   var prof = {}; try { var pr = await apiFetch('/company-profile'); if (pr.ok && pr.data) prof = pr.data; } catch (e) {}
-  window._bioCtx = { row: r.data, photos: ph, passport: pass, profile: prof, layout: layout === 'form' || layout === 'card' ? layout : 'full', internal: false };
+  window._bioCtx = { row: r.data, photos: ph, passport: pass, profile: prof, layout: 'full', internal: false };
   _bioShow();
 }
 function _bioShow() {
@@ -8460,12 +8458,10 @@ function _bioShow() {
     ov.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(15,23,42,.55);display:flex;flex-direction:column;align-items:center;padding:14px';
     ov.innerHTML = '<div style="background:var(--surface,#fff);border-radius:12px;width:min(900px,100%);flex:1;display:flex;flex-direction:column;overflow:hidden">' +
       '<div style="display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border)"><b style="flex:1">Bio-data preview</b>' +
-      '<select id="bio-layout" class="form-input" style="width:auto" onchange="window._bioCtx.layout=this.value;_bioShow()"><option value="full">Complete bio-data (photos + passport)</option><option value="card">Golden Faith card</option><option value="form">Application form (English / Arabic)</option></select>' +
       '<label style="font-size:12px;display:flex;gap:4px;align-items:center;white-space:nowrap"><input type="checkbox" id="bio-internal" onchange="window._bioCtx.internal=this.checked;_bioShow()"> Include office details</label><button class="btn btn-p btn-sm" onclick="_bioPrint()">🖨 Print / Save as PDF</button><button class="btn btn-ghost btn-sm" onclick="_bioClose()">Close</button></div>' +
       '<iframe id="bio-frame" style="flex:1;border:0;background:#e5e7eb"></iframe></div>';
     document.body.appendChild(ov);
   }
-  document.getElementById('bio-layout').value = C.layout;
   document.getElementById('bio-frame').srcdoc = _bioHtml(C);
 }
 function _bioClose() { var ov = document.getElementById('bio-overlay'); if (ov) ov.remove(); }
@@ -8493,84 +8489,53 @@ function _bioHtml(C) {
     '.full .sks{display:grid;grid-template-columns:1fr 1fr;gap:2px 14px}.full .sk{display:flex;justify-content:space-between;align-items:center;border-bottom:1px dotted #cbd5e1;padding:1px 0;font-size:10px}' +
     '.full .pl{font-size:8px;font-weight:800;padding:1px 6px;border-radius:8px;-webkit-print-color-adjust:exact;print-color-adjust:exact}.full .pl.yes{background:#dcfce7;color:#166534}.full .pl.willing{background:#fef3c7;color:#92400e}.full .pl.no{background:#f1f5f9;color:#64748b}' +
     '.full .sigs{display:flex;gap:30mm;margin-top:10px;font-size:9px;color:#475569}.full .sigs>div{flex:1;text-align:center}.full .line{border-bottom:1px solid #334155;height:14px;font-weight:700;color:#1d4ed8;margin-bottom:2px}' +
+    '.full .arl{direction:rtl;unicode-bidi:isolate;font-weight:600;color:#6d28d9;margin-inline-start:3px;text-transform:none;letter-spacing:0;font-size:8.5px}.full .st .arl{color:#4c1d95;font-size:10px;float:right}.full .band .arl,.full .refbox .arl{color:#ddd6fe}.full .sk .arl{color:#6d28d9}' +
     '.full .pdet{font-size:11px;font-weight:700;margin:4px 0 8px;color:#1e293b}';
   var photo = function(i, w, h) { return '<div class="photo" style="width:' + w + ';height:' + h + '">' + (C.photos[i] ? '<img src="' + e(C.photos[i]) + '" alt="">' : 'PHOTO') + '</div>'; };
   var cell = function(en, ar, val, extra) { return '<td class="cell" ' + (extra || '') + '><div class="ar">' + ar + '</div><div class="lbl">' + en + '</div><div class="v">' + e(val == null ? '' : val) + '</div></td>'; };
   var html;
-  if (C.layout === 'full') {
+  {
     var agentN = '', jobN = '';
     try { var _ag = (DB.agents || []).find(function(a) { return a._dbId === r.agent_id || a.id === r.agent_id; }); if (_ag) agentN = _ag.name || ''; } catch (e1) {}
     try { var _jb = (DB.jobs || []).find(function(j) { return j._dbId === r.job_order_id || j.id === r.job_order_id; }); if (_jb) jobN = [_jb.orderId, _jb.title, _jb.employer].filter(Boolean).join(' · '); } catch (e2) {}
     var up = function(x) { return x == null || x === '' ? '' : String(x).toUpperCase(); };
-    var F = function(l, v, wide) { return '<div class="fld' + (wide ? ' w2' : '') + '"><div class="fl">' + l + '</div><div class="fv">' + (v === '' || v == null ? '<span class="na">—</span>' : e(String(v))) + '</div></div>'; };
-    var S = function(t, body) { return '<div class="sec"><div class="st">' + t + '</div><div class="grid">' + body + '</div></div>'; };
-    var pill = function(k) { var v = ch[k]; return v ? '<span class="pl ' + v + '">' + _BIO_CH_LABEL[v] + '</span>' : '<span class="na">—</span>'; };
+    var AR = { 'Ref. no.': 'الرقم المرجعي', 'Date applied': 'تاريخ التقديم', 'Face photo': 'صورة الوجه', 'Full body photo': 'صورة كاملة للجسم', 'Applicant Bio-Data': 'السيرة الذاتية للمتقدم', 'Passport copy': 'نسخة جواز السفر',
+      'Personal details': 'البيانات الشخصية', 'Passport': 'جواز السفر', 'Experience &amp; languages': 'الخبرة واللغات', 'Skills': 'المهارات', 'Special skills &amp; remarks': 'مهارات خاصة وملاحظات', 'Next of kin': 'أقرب الأقارب', 'Office use only': 'للاستخدام الداخلي',
+      'Nationality': 'الجنسية', 'Gender': 'الجنس', 'Date of birth': 'تاريخ الميلاد', 'Age': 'العمر', 'Place of birth': 'مكان الميلاد', 'Religion': 'الديانة', 'Marital status': 'الحالة الاجتماعية', 'Children': 'الأطفال', 'Height': 'الطول', 'Weight': 'الوزن',
+      'Education': 'المستوى الدراسي', 'Contact no.': 'رقم الاتصال', 'Home address': 'العنوان', 'Passport no.': 'رقم جواز السفر', 'Place of issue': 'مكان الإصدار', 'Date of issue': 'تاريخ الإصدار', 'Date of expiry': 'تاريخ الانتهاء',
+      'Experience abroad': 'الخبرة في الخارج', 'English': 'اللغة الإنجليزية', 'Arabic': 'اللغة العربية', 'Job terms': 'شروط العمل', 'Work experience': 'الخبرة العملية', 'Special skills': 'مهارات خاصة', 'Remarks': 'ملاحظات', 'Name': 'الاسم', 'Address': 'العنوان',
+      'Signature of applicant': 'توقيع مقدم الطلب', 'Interviewed by': 'مقابلة بواسطة', 'Applicant ID': 'رقم المتقدم', 'Status': 'الحالة', 'Category': 'الفئة', 'Agent': 'الوكيل', 'Job order': 'أمر العمل', 'Medical': 'الفحص الطبي', 'Deployment date': 'تاريخ السفر',
+      'Consent date': 'تاريخ الموافقة', 'Email': 'البريد الإلكتروني', 'Summary note': 'ملاحظة موجزة',
+      'Housekeeping': 'تدبير المنزل', 'Cleaning': 'التنظيف', 'Washing': 'الغسيل', 'Ironing': 'الكي', 'Caregiver': 'رعاية المرضى', 'Care for elderly': 'رعاية المسنين', 'Babysitting': 'رعاية الأطفال', 'Tutoring': 'التدريس',
+      'Filipino cooking': 'الطبخ الفلبيني', 'Arabic cooking': 'الطبخ العربي', 'Decorating': 'الديكور', 'Sewing': 'الخياطة' };
+    var AL = { yes: 'YES · نعم', willing: 'WILLING TO LEARN · مستعد للتعلم', no: 'NO · لا' };
+    var bi = function(t) { return t + (AR[t] ? ' <span class="arl">' + AR[t] + '</span>' : ''); };
+    var F = function(l, v, wide) { return '<div class="fld' + (wide ? ' w2' : '') + '"><div class="fl">' + bi(l) + '</div><div class="fv">' + (v === '' || v == null ? '<span class="na">—</span>' : e(String(v))) + '</div></div>'; };
+    var S = function(t, body) { return '<div class="sec"><div class="st">' + bi(t) + '</div><div class="grid">' + body + '</div></div>'; };
+    var pill = function(k) { var v = ch[k]; return v ? '<span class="pl ' + v + '">' + AL[v] + '</span>' : '<span class="na">—</span>'; };
     var kidsT = [r.children_count != null ? r.children_count : '', r.children_ages ? '(' + r.children_ages + ')' : ''].filter(function(x) { return x !== ''; }).join(' ');
     var ageV = _bioAge(r.date_of_birth);
     var pdet = [r.passport_number && ('No. ' + r.passport_number), r.passport_issue_date && ('Issued ' + _bioDate(r.passport_issue_date)), r.passport_expiry_date && ('Expires ' + _bioDate(r.passport_expiry_date)), r.passport_place_of_issue].filter(Boolean).join('  ·  ');
-    var skillsH = _BIO_CHORES.map(function(c) { return '<div class="sk"><span>' + c[1] + '</span>' + pill(c[0]) + '</div>'; }).join('');
+    var skillsH = _BIO_CHORES.map(function(c) { return '<div class="sk"><span>' + bi(c[1]) + '</span>' + pill(c[0]) + '</div>'; }).join('');
     var internalH = C.internal ? S('Office use only', F('Applicant ID', r.display_id) + F('Status', r.status) + F('Category', r.category) + F('Agent', agentN) + F('Job order', jobN, true) + F('Medical', r.medical_status) + F('Deployment date', _bioDate(r.deployment_date)) + F('Consent date', _bioDate(r.consent_date)) + F('Email', r.email) + F('Summary note', r.notes, true)) : '';
-    html = '<div class="pg full"><div class="band"><div><div class="co">' + e(co) + '</div><div class="sub">Applicant Bio-Data</div></div><div class="refbox"><div class="fl">Ref. no.</div><div class="refv">' + e(r.ref_no || r.display_id || '') + '</div><div class="fl" style="margin-top:3px">Date applied</div><div class="fv">' + e(_bioDate(r.created_at)) + '</div></div></div>' +
-      '<div class="body"><div class="side"><div class="ph" style="height:52mm">' + (C.photos[0] ? '<img src="' + e(C.photos[0]) + '" alt="">' : '<span>FACE PHOTO</span>') + '</div><div class="cap">Face photo</div>' +
-      '<div class="ph" style="height:96mm;margin-top:4mm">' + (C.photos[1] ? '<img src="' + e(C.photos[1]) + '" alt="">' : '<span>FULL BODY PHOTO</span>') + '</div><div class="cap">Full body photo</div></div>' +
+    html = '<div class="pg full"><div class="band"><div><div class="co">' + e(co) + '</div><div class="sub">Applicant Bio-Data &nbsp;·&nbsp; ' + AR['Applicant Bio-Data'] + '</div></div><div class="refbox"><div class="fl">' + bi('Ref. no.') + '</div><div class="refv">' + e(r.ref_no || r.display_id || '') + '</div><div class="fl" style="margin-top:3px">' + bi('Date applied') + '</div><div class="fv">' + e(_bioDate(r.created_at)) + '</div></div></div>' +
+      '<div class="body"><div class="side"><div class="ph" style="height:52mm">' + (C.photos[0] ? '<img src="' + e(C.photos[0]) + '" alt="">' : '<span>FACE PHOTO</span>') + '</div><div class="cap">Face photo · صورة الوجه</div>' +
+      '<div class="ph" style="height:96mm;margin-top:4mm">' + (C.photos[1] ? '<img src="' + e(C.photos[1]) + '" alt="">' : '<span>FULL BODY PHOTO</span>') + '</div><div class="cap">Full body photo · صورة كاملة للجسم</div></div>' +
       '<div class="main"><div class="nm">' + e(name) + '</div><div class="pos">' + e(up(r.position || r.job_title || '')) + (r.destination ? ' &nbsp;•&nbsp; ' + e(up(r.destination)) : '') + '</div>' +
       S('Personal details', F('Nationality', up(r.nationality || 'Filipino')) + F('Gender', r.gender) + F('Date of birth', _bioDate(r.date_of_birth, 'long')) + F('Age', ageV !== '' ? ageV + ' years' : '') + F('Place of birth', up(r.place_of_birth)) + F('Religion', up(r.religion)) +
         F('Marital status', up(r.marital_status)) + F('Children', kidsT) + F('Height', r.height) + F('Weight', r.weight_kg ? Number(r.weight_kg) + ' kg' : '') + F('Education', up(r.education)) + F('Contact no.', r.phone) + F('Home address', up(r.address), true)) +
       S('Passport', F('Passport no.', r.passport_number) + F('Place of issue', up(r.passport_place_of_issue)) + F('Date of issue', _bioDate(r.passport_issue_date)) + F('Date of expiry', _bioDate(r.passport_expiry_date))) +
       S('Experience &amp; languages', F('Experience abroad', up(r.experience_abroad)) + F('English', up(r.english_level)) + F('Arabic', up(r.arabic_level)) + F('Job terms', [r.contract_years ? r.contract_years + (Number(r.contract_years) === 1 ? ' year' : ' years') : '', r.salary ? Number(r.salary) + ' ' + (r.salary_currency || '') : ''].filter(Boolean).join(' · ')) + F('Work experience', r.work_experience, true)) +
-      '<div class="sec"><div class="st">Skills</div><div class="sks">' + skillsH + '</div></div>' +
+      '<div class="sec"><div class="st">' + bi('Skills') + '</div><div class="sks">' + skillsH + '</div></div>' +
       S('Special skills &amp; remarks', F('Special skills', r.special_skills, true) + F('Remarks', r.remarks, true)) +
       S('Next of kin', F('Name', [r.next_of_kin_name, r.next_of_kin_relation ? '(' + r.next_of_kin_relation + ')' : ''].filter(Boolean).join(' ')) + F('Contact no.', r.next_of_kin_phone) + F('Address', up(r.next_of_kin_address), true)) +
       internalH + '</div></div>' +
-      '<div class="sigs"><div><div class="line"></div>Signature of applicant</div><div><div class="line">' + e(r.interviewed_by || '') + '</div>Interviewed by</div></div>' +
+      '<div class="sigs"><div><div class="line"></div>' + bi('Signature of applicant') + '</div><div><div class="line">' + e(r.interviewed_by || '') + '</div>' + bi('Interviewed by') + '</div></div>' +
       '<div class="ft">' + foot.map(e).join(' &nbsp;|&nbsp; ') + '</div></div>' +
-      '<div class="pg full brk"><div class="band"><div><div class="co">' + e(co) + '</div><div class="sub">Passport copy &nbsp;—&nbsp; ' + e(name) + '</div></div><div class="refbox"><div class="fl">Ref. no.</div><div class="refv">' + e(r.ref_no || r.display_id || '') + '</div></div></div>' +
+      '<div class="pg full brk"><div class="band"><div><div class="co">' + e(co) + '</div><div class="sub">Passport copy · نسخة جواز السفر &nbsp;—&nbsp; ' + e(name) + '</div></div><div class="refbox"><div class="fl">' + bi('Ref. no.') + '</div><div class="refv">' + e(r.ref_no || r.display_id || '') + '</div></div></div>' +
       '<div class="pdet">' + e(pdet) + '</div>' +
       (C.passport ? '<div style="text-align:center"><img src="' + e(C.passport) + '" style="max-width:100%;max-height:235mm;border:1px solid #cbd5e1" alt=""></div>' : '<div class="ph" style="height:120mm"><span>Passport copy — upload it in the Documents tab (type Passport, image) or from the applicant form to show it here</span></div>') +
       '<div class="ft">' + foot.map(e).join(' &nbsp;|&nbsp; ') + '</div></div>';
-  } else
-  if (C.layout === 'card') {
-    var cook = ch.cooking_filipino === 'yes' || ch.cooking_arabic === 'yes' ? 'YES' : (ch.cooking_filipino === 'willing' || ch.cooking_arabic === 'willing' ? 'WILLING TO LEARN' : (ch.cooking_filipino || ch.cooking_arabic ? 'NO' : ''));
-    var rem = [r.special_skills, r.remarks].filter(Boolean).join('\n');
-    var kin = r.next_of_kin_name ? '\nNEXT OF KIN: ' + r.next_of_kin_name + (r.next_of_kin_relation ? ' (' + r.next_of_kin_relation + ')' : '') + (r.next_of_kin_phone ? '\nNEXT OF KIN CONTACT NUMBER: ' + r.next_of_kin_phone : '') + (r.next_of_kin_address ? '\nNEXT OF KIN COMPLETE ADDRESS: ' + r.next_of_kin_address : '') : '';
-    html = '<div class="pg"><div style="text-align:center;background:#5b2a86;color:#fff;padding:8px 6px;margin-bottom:6px"><div style="font-size:15px;font-weight:800">' + e(co) + '</div></div>' +
-      '<div style="display:flex;gap:8px"><div style="flex:1"><table>' +
-      '<tr><td><span class="lbl">REF. NO.:</span> <span class="v">' + e(r.ref_no || '') + '</span></td></tr>' +
-      '<tr>' + cell('Religion', 'الديانة', (r.religion || '').toUpperCase()) + '</tr>' +
-      '<tr>' + cell('Position Applied', 'الوظيفة', r.position || (r.job_title || '')) + '</tr>' +
-      '<tr>' + cell('Contact Number', 'رقم الاتصال', r.phone || '') + '</tr>' +
-      '<tr>' + cell('Name', 'الاسم', name) + '</tr>' +
-      '<tr>' + cell('Date of Birth', 'تاريخ الميلاد', _bioDate(r.date_of_birth, 'long')) + '</tr>' +
-      '<tr>' + cell('Place of Birth', 'مكان الميلاد', (r.place_of_birth || '').toUpperCase()) + '</tr></table></div>' +
-      '<div style="display:flex;gap:6px">' + photo(0, '33mm', '42mm') + photo(1, '52mm', '88mm') + '</div></div>' +
-      '<table style="margin-top:6px"><tr>' + cell('Passport No.', 'رقم جواز السفر', r.passport_number) + cell('Date of Issue', 'تاريخ الإصدار', _bioDate(r.passport_issue_date)) + cell('Date of Expiry', 'تاريخ الانتهاء', _bioDate(r.passport_expiry_date)) + cell('Place of Issue', 'مكان الإصدار', (r.passport_place_of_issue || '').toUpperCase()) + '</tr>' +
-      '<tr>' + cell('Nationality', 'الجنسية', (r.nationality || 'FILIPINO').toUpperCase()) + cell('Status', 'الحالة الاجتماعية', (r.marital_status || '').toUpperCase()) + cell('Number of Children', 'عدد الأطفال', r.children_count != null ? r.children_count + (r.children_count === 1 ? ' KID' : ' KIDS') : '') + cell('Education', 'المستوى الدراسي', (r.education || '').toUpperCase()) + '</tr>' +
-      '<tr>' + cell('Experience Abroad', 'الخبرة في الخارج', (r.experience_abroad || '').toUpperCase()) + cell('English Speaking', 'اللغة الإنجليزية', (r.english_level || '').toUpperCase()) +
-      '<td colspan="2" rowspan="3" class="cell"><div class="ar">ملاحظات :</div><div class="lbl">Remarks :</div><div class="red" style="white-space:pre-wrap;font-size:10.5px">' + e((rem + kin).toUpperCase()) + '</div></td></tr>' +
-      '<tr>' + cell('Decorating', 'الديكور', cv('decorating')) + cell('Sewing', 'الخياطة', cv('sewing')) + '</tr>' +
-      '<tr>' + cell('Washing', 'الغسيل', cv('washing')) + cell('Cleaning', 'التنظيف', cv('cleaning')) + '</tr>' +
-      '<tr>' + cell('Babysitting', 'رعاية الأطفال', cv('babysitting')) + cell('Cooking', 'الطبخ', cook) + cell('Height', 'الطول', r.height || '') + cell('Weight', 'الوزن', r.weight_kg ? Number(r.weight_kg) + 'KG' : '') + '</tr>' +
-      '<tr>' + cell('Contract', 'مدة العقد', r.contract_years ? r.contract_years + (r.contract_years === 1 ? ' Year' : ' Years') : '') + cell('Salary', 'الراتب', r.salary ? Number(r.salary) + ' ' + (r.salary_currency || '') : '') +
-      '<td class="cell" style="height:48px"><div class="ar">توقيع مقدم الطلب</div><div class="lbl">Signature of Applicant</div></td><td class="cell"><div class="ar">مقابلة بواسطة</div><div class="lbl">Interviewed by</div><div class="v">' + e(r.interviewed_by || '') + '</div></td></tr></table>' +
-      '<div class="ft">' + foot.map(e).join('<br>') + '</div></div>';
-  } else {
-    var T = function(en, ar, val) { return '<tr><td style="width:36%"><b>' + en + '</b></td><td style="width:34%;font-weight:700;white-space:pre-wrap">' + e(val == null ? '' : val) + '</td><td class="ar" style="width:30%;text-align:right">' + ar + '</td></tr>'; };
-    var H = function(t, ar) { return '<tr><td colspan="3" class="hd" style="background:#9ec3ea">' + t + ' &nbsp; ' + ar + '</td></tr>'; };
-    var kids = [r.children_count != null ? r.children_count : '', r.children_ages ? '(' + r.children_ages + ')' : ''].filter(function(x) { return x !== ''; }).join(' ');
-    html = '<div class="pg"><div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px"><div style="font-size:16px;font-weight:800">' + e(co) + '</div><div style="text-align:right"><b>APPLICATION FORM FOR EMPLOYMENT</b><br><span class="lbl">Contact No.</span> <span class="v">' + e(r.ref_no || r.display_id || '') + '</span></div></div>' +
-      '<div style="display:flex;gap:8px"><table style="flex:1">' + T('DATE APPLIED', 'تاريخ التقديم', _bioDate(r.created_at)) + T('POSITION PREFERRED', 'الوظيفة المفضلة', (r.position || r.job_title || '').toUpperCase()) + T('DESTINATION', 'وجهة', (r.destination || '').toUpperCase()) +
-      H('PERSONAL DETAILS', 'البيانات الشخصية') + T('FULL NAME', 'الاسم الكامل', name) + T('RELIGION', 'دين', (r.religion || '').toUpperCase()) + T('ADDRESS', 'عنوان', (r.address || '').toUpperCase()) + T('AGE', 'عمر', _bioAge(r.date_of_birth)) +
-      T('DATE OF BIRTH', 'تاريخ الميلاد', _bioDate(r.date_of_birth, 'long')) + T('MARITAL STATUS', 'الحالة الاجتماعية', (r.marital_status || '').toUpperCase()) + T('NO. OF CHILDREN AND AGES', 'عدد الأطفال وأعمارهم', kids) +
-      T('HEIGHT (FEET)', 'الطول (بالقدم)', r.height || '') + T('WEIGHT (KILOGRAMS)', 'الوزن (كيلوجرام)', r.weight_kg ? Number(r.weight_kg) : '') + T('EDUCATIONAL ATTAINMENT', 'التحصيل العلمي', (r.education || '').toUpperCase()) +
-      T('WORK EXPERIENCE', 'خبرة في العمل', [r.experience_abroad, r.work_experience].filter(Boolean).join('\n').toUpperCase()) + T('LANGUAGE (ENGLISH)', 'اللغة (الإنجليزية)', (r.english_level || '').toUpperCase()) + T('LANGUAGE (ARABIC)', 'اللغة (العربية)', (r.arabic_level || '').toUpperCase()) +
-      H('AWARENESS CHORES', 'مهام التوعية') + T('HOUSEKEEPING', 'خدمات تنظيف الغرف', cv('housekeeping')) + T('CLEANING', 'تنظيف', cv('cleaning')) + T('WASHING', 'غسل', cv('washing')) + T('IRONING', 'كي الملابس', cv('ironing')) +
-      T('CAREGIVER', 'مقدم رعاية', cv('caregiver')) + T('CARE FOR ELDERLY', 'رعاية المسنين', cv('care_elderly')) + T('BABYSITTING', 'جليسة أطفال', cv('babysitting')) + T('TUTORING', 'الدروس الخصوصية', cv('tutoring')) +
-      T('FILIPINO COOKING', 'الطبخ الفلبيني', cv('cooking_filipino')) + T('ARABIC COOKING', 'الطبخ العربي', cv('cooking_arabic')) + H('SPECIAL SKILLS', 'مهارات خاصة') +
-      '<tr><td colspan="3" style="height:60px;white-space:pre-wrap;font-weight:700">' + e((r.special_skills || '').toUpperCase()) + '</td></tr></table>' +
-      '<div style="width:46mm">' + photo(0, '46mm', '58mm') + '<div style="height:6px"></div>' + photo(1, '46mm', '90mm') + '</div></div>' +
-      '<div class="ft">' + foot.map(e).join(' · ') + '</div></div>' +
-      '<div class="pg brk"><div style="font-weight:800;margin-bottom:6px">PASSPORT &nbsp; <span style="font-weight:400">' + e([r.passport_number, r.passport_issue_date && 'issued ' + _bioDate(r.passport_issue_date), r.passport_expiry_date && 'expires ' + _bioDate(r.passport_expiry_date), r.passport_place_of_issue].filter(Boolean).join(' · ')) + '</span></div>' +
-      (C.passport ? '<img src="' + e(C.passport) + '" style="max-width:100%;max-height:250mm" alt="">' : '<div class="photo" style="height:120mm">Passport copy — upload it in the Documents tab (type Passport, image) to show it here</div>') + '</div>';
   }
   return '<!doctype html><html><head><meta charset="utf-8"><title>Bio-data ' + e(name) + '</title><style>' + css + '</style></head><body>' + html + '</body></html>';
 }
