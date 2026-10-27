@@ -8538,7 +8538,7 @@ function _bioHtml(C) {
     try { var _jb = (DB.jobs || []).find(function(j) { return j._dbId === r.job_order_id || j.id === r.job_order_id; }); if (_jb) jobN = [_jb.orderId, _jb.title, _jb.employer].filter(Boolean).join(' · '); } catch (e2) {}
     var up = function(x) { return x == null || x === '' ? '' : String(x).toUpperCase(); };
     var AR = { 'Ref. no.': 'الرقم المرجعي', 'Date applied': 'تاريخ التقديم', 'Face photo': 'صورة الوجه', 'Full body photo': 'صورة كاملة للجسم', 'Applicant Bio-Data': 'السيرة الذاتية للمتقدم', 'Passport copy': 'نسخة جواز السفر',
-      'Personal details': 'البيانات الشخصية', 'Passport': 'جواز السفر', 'Experience &amp; languages': 'الخبرة واللغات', 'Skills': 'المهارات', 'Special skills &amp; remarks': 'مهارات خاصة وملاحظات', 'Next of kin': 'أقرب الأقارب', 'Office use only': 'للاستخدام الداخلي',
+      'Personal details': 'البيانات الشخصية', 'Full name': 'الاسم الكامل', 'Position': 'الوظيفة', 'Destination': 'الوجهة', 'Passport': 'جواز السفر', 'Experience &amp; languages': 'الخبرة واللغات', 'Skills': 'المهارات', 'Special skills &amp; remarks': 'مهارات خاصة وملاحظات', 'Next of kin': 'أقرب الأقارب', 'Office use only': 'للاستخدام الداخلي',
       'Nationality': 'الجنسية', 'Gender': 'الجنس', 'Date of birth': 'تاريخ الميلاد', 'Age': 'العمر', 'Place of birth': 'مكان الميلاد', 'Religion': 'الديانة', 'Marital status': 'الحالة الاجتماعية', 'Children': 'الأطفال', 'Height': 'الطول', 'Weight': 'الوزن',
       'Education': 'المستوى الدراسي', 'Contact no.': 'رقم الاتصال', 'Home address': 'العنوان', 'Passport no.': 'رقم جواز السفر', 'Place of issue': 'مكان الإصدار', 'Date of issue': 'تاريخ الإصدار', 'Date of expiry': 'تاريخ الانتهاء',
       'Experience abroad': 'الخبرة في الخارج', 'English': 'اللغة الإنجليزية', 'Arabic': 'اللغة العربية', 'Job terms': 'شروط العمل', 'Work experience': 'الخبرة العملية', 'Special skills': 'مهارات خاصة', 'Remarks': 'ملاحظات', 'Name': 'الاسم', 'Address': 'العنوان',
@@ -8560,7 +8560,7 @@ function _bioHtml(C) {
       '<div class="body"><div class="side"><div class="ph" style="height:52mm">' + (C.photos[0] ? '<img src="' + e(C.photos[0]) + '" alt="">' : '<span>FACE PHOTO</span>') + '</div><div class="cap">Face photo · صورة الوجه</div>' +
       '<div class="ph" style="height:96mm;margin-top:4mm">' + (C.photos[1] ? '<img src="' + e(C.photos[1]) + '" alt="">' : '<span>FULL BODY PHOTO</span>') + '</div><div class="cap">Full body photo · صورة كاملة للجسم</div></div>' +
       '<div class="main"><div class="nm">' + e(name) + '</div><div class="pos">' + e(up(r.position || r.job_title || '')) + (r.destination ? ' &nbsp;•&nbsp; ' + e(up(r.destination)) : '') + '</div>' +
-      S('Personal details', F('Nationality', up(r.nationality || 'Filipino')) + F('Gender', r.gender) + F('Date of birth', _bioDate(r.date_of_birth, 'long')) + F('Age', ageV !== '' ? ageV + ' years' : '') + F('Place of birth', up(r.place_of_birth)) + F('Religion', up(r.religion)) +
+      S('Personal details', F('Full name', name, true) + F('Position', up(r.position || r.job_title)) + F('Destination', up(r.destination)) + F('Nationality', up(r.nationality || 'Filipino')) + F('Gender', r.gender) + F('Date of birth', _bioDate(r.date_of_birth, 'long')) + F('Age', ageV !== '' ? ageV + ' years' : '') + F('Place of birth', up(r.place_of_birth)) + F('Religion', up(r.religion)) +
         F('Marital status', up(r.marital_status)) + F('Children', kidsT) + F('Height', r.height) + F('Weight', r.weight_kg ? Number(r.weight_kg) + ' kg' : '') + F('Education', up(r.education)) + F('Contact no.', r.phone) + F('Home address', up(r.address), true)) +
       S('Passport', F('Passport no.', r.passport_number) + F('Place of issue', up(r.passport_place_of_issue)) + F('Date of issue', _bioDate(r.passport_issue_date)) + F('Date of expiry', _bioDate(r.passport_expiry_date))) +
       S('Experience &amp; languages', F('Experience abroad', up(r.experience_abroad)) + F('English', up(r.english_level)) + F('Arabic', up(r.arabic_level)) + F('Job terms', [r.contract_years ? r.contract_years + (Number(r.contract_years) === 1 ? ' year' : ' years') : '', r.salary ? Number(r.salary) + ' ' + (r.salary_currency || '') : ''].filter(Boolean).join(' · ')) + F('Work experience', r.work_experience, true)) +
@@ -8636,6 +8636,7 @@ function _bioSet(F, key, val) {
     case 'position': F.position = val; break;
     case 'destination': F.destination = val; break;
     case 'nationality': F.nationality = val; break;
+    case 'gender': { if (/^F/i.test(val)) F.gender = 'Female'; else if (/^M/i.test(val)) F.gender = 'Male'; break; }
     default: F[key] = val;
   }
 }
@@ -8648,7 +8649,7 @@ var _BIO_LABELS = {
   PASSPORTNUMBER: 'passport_number', PASSPORTNO: 'passport_number', DATEOFISSUE: 'passport_issue_date', DATEOFEXPIRY: 'passport_expiry_date', PLACEOFISSUE: 'passport_place_of_issue',
   NEXTOFKIN: 'kin_name', REMARKS: 'remarks', SPECIALSKILLS: 'special_skills', HOUSEKEEPING: 'housekeeping', CLEANING: 'cleaning', WASHING: 'washing', IRONING: 'ironing', CAREGIVER: 'caregiver',
   CAREFORELDERLY: 'care_elderly', BABYSITTING: 'babysitting', TUTORING: 'tutoring', FILIPINOCOOKING: 'cooking_filipino', ARABICCOOKING: 'cooking_arabic', DECORATING: 'decorating', SEWING: 'sewing',
-  CONTRACT: 'contract', SALARY: 'salary'
+  CONTRACT: 'contract', SALARY: 'salary', HOMEADDRESS: 'address', POSITION: 'position', CONTACTNO: 'phone', CHILDREN: 'children', ENGLISH: 'english', ARABIC: 'arabic', GENDER: 'gender', SEX: 'gender', PASSPORT: 'passport_number', REFNO: 'ref_no'
 };
 function _bioNormLabel(s) { return String(s || '').toUpperCase().replace(/[^A-Z]/g, ''); }
 // rows: [{ label, value }] in reading order
@@ -8664,6 +8665,7 @@ function _bioParseRows(rows, F) {
     }
     if (!k) { last = null; return; }
     if (k === 'kin_name') inKin = true;
+    if (inKin && k === 'name') k = 'kin_name';
     if (inKin && k === 'address') k = 'kin_address'; else if (inKin && k === 'phone') k = 'kin_phone';
     last = (k === 'remarks' || k === 'special_skills' || k === 'work_experience' || k === 'address') ? k : null;
     if (last) { F[k] = (pending ? pending + '\n' : '') + r.value; pending = ''; } else _bioSet(F, k, r.value);
@@ -8718,11 +8720,60 @@ function _bioCardParse(page, F) {
   Object.keys(G).forEach(function(k) { if (F[k] === undefined || F[k] === '' || (k === 'chores')) { if (k === 'chores') F.chores = Object.assign({}, G.chores, F.chores); else F[k] = G[k]; } });
   return true;
 }
+// any other PDF (a Word form saved as PDF, a bio-data printed from this system…): read it by its labels.
+//   A) label and value side by side on one line  (label | value | Arabic label — also two pairs per line)
+//   B) labels on one line with the values directly underneath, in the same columns
+var _BIO_AR = /[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]/g;
+function _bioCells(row) {   // one text line → cells split at wide gaps, Arabic text dropped
+  var cells = [], cur = null, prev = null;
+  row.items.forEach(function(it) {
+    var str = String(it.s).replace(_BIO_AR, '');
+    if (!str.trim()) { prev = it; return; }
+    if (cur && prev && it.x - (prev.x + prev.w) <= 9) { cur.t += (it.x - (prev.x + prev.w) > 1.5 ? ' ' : '') + str; cur.items.push(it); }
+    else { cur = { x: it.x, t: str, items: [it] }; cells.push(cur); }
+    prev = it;
+  });
+  cells.forEach(function(c) { c.t = c.t.replace(/\s+/g, ' ').trim(); });
+  return cells.filter(function(c) { return c.t; });
+}
+var _BIO_SKIP = { AGE: 1, DATEAPPLIED: 1, GOLDENFAITH: 1, JOBTERMS: 1, APPLICANTID: 1, CATEGORY: 1, AGENT: 1, JOBORDER: 1, MEDICAL: 1, DEPLOYMENTDATE: 1, CONSENTDATE: 1, EMAIL: 1, SUMMARYNOTE: 1, PHOTOFACE: 1, PHOTOFULLBODY: 1 };
+var _bioIsLabel = function(t) { var n = _bioNormLabel(t); return !!(_BIO_LABELS[n] || _BIO_SKIP[n]); };
+function _bioFill(F, G) { Object.keys(G).forEach(function(k) { if (k === 'chores') F.chores = Object.assign({}, G.chores, F.chores); else if (F[k] === undefined || F[k] === '') F[k] = G[k]; }); }
+function _bioPdfGeneric(pages, F) {
+  var R = [], ref = '';
+  pages.forEach(function(pg) {
+    var lines = _bioLines(pg.items).map(function(r) { return _bioCells(r); });
+    lines.forEach(function(cells, li) {
+      cells.forEach(function(c) { if (!ref && /^[A-Z]{1,6}\s*-\s*\d{1,6}$/.test(c.t.toUpperCase())) ref = c.t; });
+      var labelCells = cells.filter(function(c) { return _bioIsLabel(c.t); });
+      // A: label followed by a value cell on the same line
+      for (var i = 0; i < cells.length; i++) {
+        if (!_bioIsLabel(cells[i].t)) continue;
+        var nx = cells[i + 1];
+        var known = !!_BIO_LABELS[_bioNormLabel(cells[i].t)];
+        if (nx && !_bioIsLabel(nx.t)) { if (known) R.push({ label: cells[i].t, value: nx.t }); i++; } else if (known) R.push({ label: cells[i].t, value: '' });
+      }
+      // B: a line made only of labels, values underneath
+      var nl = lines[li + 1];
+      if (labelCells.length && labelCells.length === cells.length && nl && nl.length && !nl.some(function(c) { return _bioIsLabel(c.t); })) {
+        cells.forEach(function(c, ci) {
+          var x1 = cells[ci + 1] ? cells[ci + 1].x - 3 : 1e9, vs = nl.filter(function(v) { return v.x >= c.x - 4 && v.x < x1; });
+          if (vs.length) R.push({ label: c.t, value: vs.map(function(v) { return v.t; }).join(' ') });
+        });
+      }
+    });
+  });
+  var G = {}; _bioParseRows(R, G);   // one pass in reading order, so the next-of-kin block stays separate
+  _bioFill(F, G);
+  if (ref) _bioSet(F, 'ref_no', ref);
+  return F;
+}
 function _bioParsePdf(pages) {
   var F = {}, card = false;
   // information sheet first (labels + values: the most dependable), then the card for everything the sheet does not carry
   pages.forEach(function(pg) { if (/INFORMATION\s*SHEET/i.test(pg.items.map(function(i) { return i.s; }).join(' ').replace(/\s+/g, ' '))) _bioParseRows(_bioSheetRows(pg), F); });
   pages.forEach(function(pg) { if (!card && pg.items.length > 12) card = _bioCardParse(pg, F) || card; });
+  if (!F.first_name || Object.keys(F).length < 4) _bioPdfGeneric(pages, F);
   return F;
 }
 // ── Word form: tables of  label | value | Arabic label ────────────────────────────────────────────
@@ -8762,9 +8813,17 @@ function _bioLoadScript(url) { return new Promise(function(res, rej) { var s = d
 async function _bioReadFile(file) {
   var name = String(file.name || '').toLowerCase(), buf = await file.arrayBuffer();
   if (/\.pdf$/.test(name)) {
-    if (!window.pdfjsLib) await _bioLoadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
-    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-    var pdf = await window.pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+    if (!window.pdfjsLib) {
+      try { await _bioLoadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'); }
+      catch (e0) { await _bioLoadScript('https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js'); }
+    }
+    // browsers refuse a Web Worker from another site, so the worker script is fetched and started from a local blob
+    var wurl = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    if (!window._bioWorkerBlob) { try { var wr = await fetch(wurl); if (wr.ok) window._bioWorkerBlob = URL.createObjectURL(new Blob([await wr.text()], { type: 'text/javascript' })); } catch (e1) {} }
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = window._bioWorkerBlob || wurl;
+    var pdf;
+    try { pdf = await window.pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise; }
+    catch (e2) { throw new Error('Could not open this PDF (' + (e2 && e2.message ? e2.message : 'unreadable') + '). If it is password-protected or damaged, save it again or use the Word version.'); }
     return _bioFinish(_bioParsePdf(await _bioPdfPages(pdf)));
   }
   if (/\.docx$/.test(name)) {
@@ -8787,7 +8846,7 @@ async function importBiodata(file) {
   var F;
   try { F = await _bioReadFile(file); } catch (e) { toast('⛔ ' + (e && e.message ? e.message : 'Could not read the file'), 'error'); return; }
   var n = Object.keys(F).filter(function(k) { return k !== 'chores' ? F[k] !== '' : Object.keys(F.chores || {}).length; }).length;
-  if (n < 3 || (!F.first_name && !F.passport_number)) { toast('⛔ No applicant name or passport was found in ' + file.name + ' — it may be a blank form or a scanned picture (no text). Fill the form by hand instead.', 'error'); return; }
+  if (n < 3) { toast('⛔ Nothing readable was found in ' + file.name + ' — it may be a blank form or a scanned picture (no text). Fill the form by hand instead.', 'error'); return; }
   openAddApplicant();
   _apFillForm(Object.assign({ status: 'Applied', medical_status: 'Pending' }, F));
   var er = document.getElementById('a-error');
