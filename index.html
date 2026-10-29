@@ -9563,7 +9563,7 @@ async function _dcLoad() {
   _dc.loading = false;
   if (!r.ok || !r.data) { _dc.err = _acctMsg(r, 'Could not load documents'); }
   else { _dc.err = null; _dc.data = r.data.data; _dc.total = r.data.total; _dc.counts = r.data.counts || {}; _dc.at = Date.now(); }
-  if (currentPage === 'documents') _dcPaint();
+  if (currentPage === 'documents') { _dcPaint(); _dcWarm(_dc.data); }
 }
 function _dcPerms() {
   return { review: hasPermission('Approve Documents'), upload: hasPermission('Upload Documents'), void: hasPermission('Delete Documents'),
@@ -9699,18 +9699,38 @@ function navigateDocPreview(dir) {
   var d = _previewDocList[_previewDocIdx]; if (!d) return; _previewDocId = d.id; _renderPreviewModal(d);
 }
 function _dcSetText(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; }
-var _dcLinks = {};   // id → { url, preview, at } — reused for 4 minutes (links live 5)
-async function _dcGetLink(id, inline) {
+var _dcLinks = {};   // id:i|a → { url, preview, at, warm } — reused for 50 minutes (links live 60); the same address lets the browser keep the file itself
+async function _dcGetLink(id, inline, warm) {
   var key = id + (inline ? ':i' : ':a'), c = _dcLinks[key];
-  if (c && Date.now() - c.at < 240000) return c;
-  var r = await apiFetch('/documents/' + encodeURIComponent(id) + '/download?' + (inline ? 'inline=1&' : '') + '_=' + Date.now());
+  if (c && Date.now() - c.at < 3000000) {
+    // served without asking the server: tell it the document was opened (the audit trail records every view)
+    if (!warm) { apiFetch('/documents/' + encodeURIComponent(id) + '/viewed', { method: 'POST', body: JSON.stringify({ inline: inline ? '1' : '0' }) }).catch(function() {}); }
+    return c;
+  }
+  var r = await apiFetch('/documents/' + encodeURIComponent(id) + '/download?' + (inline ? 'inline=1&' : '') + (warm ? 'warm=1&' : '') + '_=' + Date.now());
   if (!r.ok || !r.data || !r.data.url) return { error: _acctMsg(r, 'Could not load the file'), code: r.data && r.data.error };
   _dcLinks[key] = { url: r.data.url, preview: r.data.preview, at: Date.now() };
   return _dcLinks[key];
 }
+// warm the documents on screen: one request gets every link, and the first images are fetched into the browser's cache, so opening them is instant
+async function _dcWarm(list) {
+  try {
+    if (!_isLiveSession() || !list || !list.length) return;
+    var pick = list.filter(function(d) { return d && d.has_file && !d.voided && (d.preview === 'image' || d.preview === 'pdf') && !(_dcLinks[d.id + ':i'] && Date.now() - _dcLinks[d.id + ':i'].at < 3000000); }).slice(0, 12);
+    if (!pick.length) return;
+    var r = await apiFetch('/documents/links?inline=1&ids=' + pick.map(function(d) { return d.id; }).join(',') + '&_=' + Date.now());
+    if (!r.ok || !r.data || !r.data.links) return;
+    var imgs = 0;
+    pick.forEach(function(d) {
+      var l = r.data.links[d.id]; if (!l || !l.url) return;
+      _dcLinks[d.id + ':i'] = { url: l.url, preview: l.preview, at: Date.now() };
+      if (l.preview === 'image' && imgs < 4) { imgs++; var im = new Image(); im.decoding = 'async'; im.src = l.url; }
+    });
+  } catch (e) { /* warming is only a speed-up */ }
+}
 function _dcPrefetch(idx) {   // warm the next document so paging through is instant
   var n = _previewDocList[(idx + 1) % (_previewDocList.length || 1)];
-  if (n && n.has_file && n.id !== _previewDocId && (n.preview === 'pdf' || n.preview === 'image')) _dcGetLink(n.id, true).then(function(l) { if (l && l.url && n.preview === 'image') { var im = new Image(); im.src = l.url; } });
+  if (n && n.has_file && n.id !== _previewDocId && (n.preview === 'pdf' || n.preview === 'image')) _dcGetLink(n.id, true, true).then(function(l) { if (l && l.url && n.preview === 'image') { var im = new Image(); im.src = l.url; } });
 }
 async function _renderPreviewModal(d) {
   var P = _dcPerms();
@@ -9843,9 +9863,9 @@ function _setDocFile(file) {
 // Phone photos of IDs are often 5–15 MB; shrink large JPG/PNG photos before sending (PDFs are never touched)
 function _dcShrinkImage(file) {
   return new Promise(function(resolve) {
-    if (!/^image\/(jpeg|png)$/.test(file.type || '') || file.size < 1.5 * 1024 * 1024 || typeof createImageBitmap !== 'function') { resolve(file); return; }
+    if (!/^image\/(jpeg|png)$/.test(file.type || '') || file.size < 400 * 1024 || typeof createImageBitmap !== 'function') { resolve(file); return; }
     createImageBitmap(file).then(function(bmp) {
-      var max = 2200, sc = Math.min(1, max / Math.max(bmp.width, bmp.height));
+      var max = 2000, sc = Math.min(1, max / Math.max(bmp.width, bmp.height));
       var c = document.createElement('canvas'); c.width = Math.round(bmp.width * sc); c.height = Math.round(bmp.height * sc);
       var ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(bmp, 0, 0, c.width, c.height);
       c.toBlob(function(b) { resolve(b && b.size < file.size ? new File([b], file.name.replace(/\.(png|jpe?g)$/i, '') + '.jpg', { type: 'image/jpeg' }) : file); }, 'image/jpeg', 0.85);
@@ -9967,7 +9987,7 @@ async function _dcDrawerTab(app, panel) {
   var res = await Promise.all([apiFetch('/applicants/' + uuid + '/documents/checklist?_=' + Date.now()), apiFetch('/documents?applicant_id=' + uuid + '&limit=100&status=&_=' + Date.now())]);
   var cl = res[0].ok ? res[0].data : null, list = res[1].ok && res[1].data ? res[1].data.data : [];
   if (!res[1].ok) { panel.innerHTML = '<div style="color:var(--red);padding:12px">' + escapeHtml(_acctMsg(res[1], 'Could not load documents')) + '</div>'; return; }
-  _dcDrawerDocs = list;
+  _dcDrawerDocs = list; _dcWarm(list);
   var P = _dcPerms();
   var stIcon = { approved: '✅', expiring: '⚠️', pending: '⏳', rejected: '❌', expired: '⛔', missing: '○' };
   var stLabel = { approved: 'approved', expiring: 'expiring soon', pending: 'waiting for review', rejected: 'rejected — upload again', expired: 'expired', missing: 'missing' };
