@@ -1236,7 +1236,7 @@ button[disabled][data-rbac-locked] {
       <div class="filter-bar">
         <div class="filter-search">
           <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input type="text" id="app-search" placeholder="Search name, APP-ID, passport, phone…" oninput="clearTimeout(window._apQT);window._apQT=setTimeout(filterApplicants,200)" aria-label="Search applicants">
+          <input type="text" id="app-search" placeholder="Search name, APP-ID, passport, phone…" oninput="_apTyping()" aria-label="Search applicants">
         </div>
         <!-- Multi-select status filter. The hidden input holds a comma-separated
              list of selected statuses and keeps the id `app-status-filter`, so
@@ -8043,6 +8043,27 @@ function _apParams(extra) {
 }
 function _apQS(p) { return Object.keys(p).filter(function(k) { return p[k] !== '' && p[k] !== null && p[k] !== undefined; }).map(function(k) { return encodeURIComponent(k) + '=' + encodeURIComponent(p[k]); }).join('&'); }
 
+// typing in the search box: show the matching rows already on screen at once, then let the server confirm (short wait so a burst of keys is one request)
+function _apTyping() {
+  clearTimeout(window._apQT);
+  try { _apInstant(); } catch (e) {}
+  window._apQT = setTimeout(filterApplicants, 90);
+}
+function _apRowText(r) { return (r._txt || (r._txt = [r.full_name, r.display_id, r.email, r.phone, r.passport_number, r.ref_no, r.agent_name, r.job_title, r.employer, r.position, r.destination, r.status].filter(Boolean).join(' ').toLowerCase())); }
+function _apInstant() {
+  var el = document.getElementById('app-search'), tb = document.getElementById('app-tbody');
+  if (!el || !tb || !_ap.data || !_ap.data.length) return;
+  var q = el.value.trim().toLowerCase(); if (!q || q === _ap.shown) return;
+  var prev = (_ap.shown != null ? _ap.shown : String(_ap.q || '').toLowerCase());
+  // only narrowing (the new words extend what is already filtered); widening or erasing waits for the server
+  if (prev && q.indexOf(prev) !== 0) return;
+  var words = q.split(/\s+/).filter(Boolean);
+  var rows = _ap.data.filter(function(r) { var t = _apRowText(r); return words.every(function(w) { return t.indexOf(w) >= 0; }); });
+  _ap.shown = q;
+  var P = _apPerms();
+  tb.innerHTML = rows.length ? rows.map(function(r) { return _apRowHtml(r, P); }).join('') : '<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--muted)">Searching…</td></tr>';
+  var lbl = document.getElementById('applicant-count-label'); if (lbl) lbl.textContent = rows.length + ' shown · updating…';
+}
 function filterApplicants() { _apReadControls(); if (!window._keepAppPage) _ap.page = 1; _ap.sel = {}; renderApplicants(true); }
 function _reapplyFiltersIfActive() { if (typeof currentPage !== 'undefined' && currentPage === 'applicants') renderApplicants(true); }
 function sortTable(col) {
@@ -8094,7 +8115,7 @@ async function _apLoad() {
   var tb2 = document.getElementById('app-tbody'); if (tb2) tb2.style.opacity = '';
   if (!r.ok || !r.data || !Array.isArray(r.data.data)) { _ap.err = _acctMsg(r, 'Could not load applicants'); }
   else {
-    _ap.err = null; _ap.data = r.data.data; _ap.total = r.data.total; _ap.masked = !!r.data.pii_masked; _ap.at = Date.now();
+    _ap.err = null; _ap.data = r.data.data; _ap.total = r.data.total; _ap.masked = !!r.data.pii_masked; _ap.at = Date.now(); _ap.shown = null;
     var maxPage = Math.max(1, Math.ceil(_ap.total / APP_PER_PAGE));
     if (_ap.page > maxPage && _ap.total > 0) { _ap.page = maxPage; return _apLoad(); }
     _ap.qc[qs] = { at: Date.now(), data: _ap.data, total: _ap.total, masked: _ap.masked };
