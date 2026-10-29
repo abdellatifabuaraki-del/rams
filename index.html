@@ -9474,7 +9474,7 @@ async function _dcOpenById(id) {
 // required-documents checklist come from the server.
 // ════════════════════════════════════════════════════════
 var DOC_TYPE_ICONS = { 'Passport': '🛂', 'Government ID': '🪪', 'Medical Certificate': '🏥', 'Visa': '🛃', 'Work Contract': '📝', 'Work Permit': '📋', 'OWWA': '🏛', 'Training Certificate': '🎓', 'NBI Clearance': '🔎', 'Photo': '🖼', 'Other': '📎' };
-var _dc = { tab: 'Pending', q: '', type: '', page: 1, limit: 24, data: null, total: 0, counts: {}, meta: null, sel: {}, loading: false, seq: 0, at: 0, err: null, bound: false };
+var _dc = { key: null, qc: {}, tab: 'Pending', q: '', type: '', page: 1, limit: 24, data: null, total: 0, counts: {}, meta: null, sel: {}, loading: false, seq: 0, at: 0, err: null, bound: false };
 var _dcUp = { applicant: null, replaces: null, xhr: null, results: [] };
 var _previewDocList = [], _previewDocIdx = 0, _previewDocId = null, _previewBlobUrl = null;
 
@@ -9551,19 +9551,47 @@ function renderDocs(force) {
   _dcPaint();
   if (force === true || !_dc.data || (Date.now() - _dc.at) > 10000) _dcLoad();
 }
+function _dcQuery(tab, page) {
+  var p = { status: tab === 'All' ? '' : tab, q: _dc.q, type: _dc.type, page: page || 1, limit: _dc.limit };
+  var fdoc = _focusOn('document'); if (fdoc && fdoc.ids.length) p = { ids: fdoc.ids.join(','), page: page || 1, limit: _dc.limit, include_voided: '1', archived: '1' };
+  if (tab === 'Expiring') p.sort = 'expires_on', p.order = 'asc';
+  return Object.keys(p).filter(function(k) { return p[k] !== '' && p[k] !== undefined; }).map(function(k) { return k + '=' + encodeURIComponent(p[k]); }).join('&');
+}
+function _dcApply(h) { _dc.data = h.data; _dc.total = h.total; _dc.counts = h.counts || {}; _dc.err = null; }
 async function _dcLoad() {
   var seq = ++_dc.seq; _dc.loading = true;
+  var qs = _dcQuery(_dc.tab, _dc.page); _dc.qc = _dc.qc || {};
+  // another tab / search: show what we already know for it at once (or a loading state) — never the previous tab's list, which looked like "No documents here"
+  if (_dc.key !== qs) {
+    var hit = _dc.qc[qs];
+    if (hit && Date.now() - hit.at < 120000) _dcApply(hit); else { _dc.data = null; _dc.err = null; }
+    if (currentPage === 'documents') _dcPaint();
+  }
   await _dcMeta();
-  var p = { status: _dc.tab === 'All' ? '' : _dc.tab, q: _dc.q, type: _dc.type, page: _dc.page, limit: _dc.limit, _: Date.now() };
-  var fdoc = _focusOn('document'); if (fdoc && fdoc.ids.length) p = { ids: fdoc.ids.join(','), page: _dc.page, limit: _dc.limit, include_voided: '1', archived: '1', _: Date.now() };
-  if (_dc.tab === 'Expiring') p.sort = 'expires_on', p.order = 'asc';
-  var qs = Object.keys(p).filter(function(k) { return p[k] !== '' && p[k] !== undefined; }).map(function(k) { return k + '=' + encodeURIComponent(p[k]); }).join('&');
-  var r = await apiFetch('/documents?' + qs);
+  var r = await apiFetch('/documents?' + qs + '&_=' + Date.now());
   if (seq !== _dc.seq) return;
   _dc.loading = false;
-  if (!r.ok || !r.data) { _dc.err = _acctMsg(r, 'Could not load documents'); }
-  else { _dc.err = null; _dc.data = r.data.data; _dc.total = r.data.total; _dc.counts = r.data.counts || {}; _dc.at = Date.now(); }
-  if (currentPage === 'documents') { _dcPaint(); _dcWarm(_dc.data); }
+  if (!r.ok || !r.data) { _dc.err = _acctMsg(r, 'Could not load documents'); _dc.data = null; }
+  else {
+    var h = { at: Date.now(), data: r.data.data, total: r.data.total, counts: r.data.counts || {} };
+    _dcApply(h); _dc.at = Date.now(); _dc.key = qs; _dc.qc[qs] = h;
+    var ks = Object.keys(_dc.qc); if (ks.length > 24) delete _dc.qc[ks[0]];
+  }
+  if (currentPage === 'documents') { _dcPaint(); _dcWarm(_dc.data); _dcTabsAhead(); }
+}
+// the other tabs with documents in them are fetched quietly, so switching tabs is instant
+async function _dcTabsAhead() {
+  if (_dcTabsAhead._busy || !_dc.counts) return; _dcTabsAhead._busy = true;
+  try {
+    var tabs = ['Pending', 'Approved', 'All', 'Rejected', 'Expiring', 'Expired'], keyNow = _dc.key;
+    for (var i = 0; i < tabs.length; i++) {
+      var t = tabs[i]; if (!(_dc.counts[t] > 0)) continue;
+      var qs = _dcQuery(t, 1); if (_dc.qc[qs] && Date.now() - _dc.qc[qs].at < 120000) continue;
+      var r = await apiFetch('/documents?' + qs + '&_=' + Date.now());
+      if (_dc.key !== keyNow && currentPage !== 'documents') break;
+      if (r.ok && r.data) _dc.qc[qs] = { at: Date.now(), data: r.data.data, total: r.data.total, counts: r.data.counts || {} };
+    }
+  } catch (e) { /* only a speed-up */ } finally { _dcTabsAhead._busy = false; }
 }
 function _dcPerms() {
   return { review: hasPermission('Approve Documents'), upload: hasPermission('Upload Documents'), void: hasPermission('Delete Documents'),
@@ -9637,7 +9665,7 @@ function _dcBind() {
   });
 }
 function _dcAfterChange() {
-  _dc.at = 0; if (typeof _dashReset === 'function') _dashReset();
+  _dc.at = 0; _dc.qc = {}; if (typeof _dashReset === 'function') _dashReset();
   if (typeof _cache !== 'undefined') Object.keys(_cache).forEach(function(k) { if (k.indexOf('/documents') !== -1) delete _cache[k]; });
   if (currentPage === 'documents') renderDocs(true);
   if (typeof currentDrawerApplicant !== 'undefined' && currentDrawerApplicant) { var dt = document.getElementById('dtab-docs'); if (dt && dt.classList.contains('active')) switchDrawerTab('docs', null); }
