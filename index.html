@@ -8974,12 +8974,19 @@ function _apDiff(p, row) {
 }
 // photos / passport copy chosen in the form → the applicant's Documents (same server checks as any upload)
 async function _apUploadAttachments(applicantId) {
-  var jobs = [['ab-file-photo1', 'Photo', 'Photo — face'], ['ab-file-photo2', 'Photo', 'Photo — full body'], ['ab-file-passport', 'Passport', 'Passport copy']], ok = 0, bad = [];
+  var jobs = [['ab-file-photo1', 'Photo', 'Photo — face', /face|head/i], ['ab-file-photo2', 'Photo', 'Photo — full body', /full|body/i], ['ab-file-passport', 'Passport', 'Passport copy', /./]], ok = 0, bad = [];
+  // a new picture replaces the one already on file (the old version is kept in the history), so the bio-data always uses the latest
+  var existing = [];
+  if (jobs.some(function(j) { var i = document.getElementById(j[0]); return i && i.files && i.files.length; })) {
+    try { var er = await apiFetch('/documents?applicant_id=' + encodeURIComponent(applicantId) + '&limit=100&status=&_=' + Date.now()); if (er.ok && er.data && Array.isArray(er.data.data)) existing = er.data.data; } catch (e) {}
+  }
   for (var i = 0; i < jobs.length; i++) {
     var inp = document.getElementById(jobs[i][0]), f = inp && inp.files && inp.files[0]; if (!f) continue;
     try {
       var file = await _dcShrinkImage(f), form = new FormData();
       form.append('applicant_id', applicantId); form.append('type', jobs[i][1]); form.append('name', jobs[i][2]); form.append('file', file, file.name);
+      var old = existing.filter(function(d) { return d.type === jobs[i][1] && !d.voided && d.status !== 'Superseded' && (jobs[i][1] === 'Passport' || jobs[i][3].test(d.name || '')); })[0];
+      if (old) form.append('replaces_id', old.id);
       var r = await fetch(RAILWAY_URL + '/api/documents/upload', { method: 'POST', headers: { Authorization: 'Bearer ' + (window._ramsSessionToken || '') }, body: form });
       if (r.ok) ok++; else { var j = {}; try { j = await r.json(); } catch (e) {} bad.push(jobs[i][2] + ': ' + (j.message || j.error || 'HTTP ' + r.status)); }
     } catch (e) { bad.push(jobs[i][2] + ': network error'); }
@@ -9001,7 +9008,8 @@ async function saveApplicant(dupReason) {
     var row = _apForm.row || {};
     body = _apDiff(p, row);
     var st = _apVal('a-status'); if (st && st !== row.status) newStatus = st;
-    if (!Object.keys(body).length && !newStatus) { toast('No changes to save', 'info'); closeOverlay('overlay-applicant'); return; }
+    var _newFiles = ['ab-file-photo1', 'ab-file-photo2', 'ab-file-passport'].some(function(id) { var f = document.getElementById(id); return f && f.files && f.files.length; });
+    if (!Object.keys(body).length && !newStatus && !_newFiles) { toast('No changes to save', 'info'); closeOverlay('overlay-applicant'); return; }
     body.expected_updated_at = row.updated_at;
   }
   if (dupReason) { body.allow_duplicate = true; body.duplicate_reason = dupReason; }
