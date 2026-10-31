@@ -16440,7 +16440,7 @@ async function removeExpenseReceipt(rid) {
 
 // ── add expense ─────────────────────────────────────────────────────────
 async function openAddExpense(preselect) {
-  ['e-desc', 'e-amount', 'e-ref', 'e-cc'].forEach(function(id) { var el = document.getElementById(id); if (el) el.value = ''; });
+  ['e-desc', 'e-amount', 'e-ref', 'e-cc'].forEach(function(id) { var el = document.getElementById(id); if (el) { el.value = ''; if (el.dataset) el.dataset.auto = ''; } });
   var dt = document.getElementById('e-date'); if (dt) dt.value = _ymd(new Date());
   var statEl = document.getElementById('e-status'); if (statEl) statEl.value = 'Paid';
   var cur = document.getElementById('e-currency'); if (cur) cur.value = 'PHP';
@@ -16490,12 +16490,13 @@ function onExpenseApplicantChange() {
 
 function onExpenseCategoryChange() {
   var cat = document.getElementById('e-category'), desc = document.getElementById('e-desc');
-  if (!cat || !desc || desc.value) return;
+  // fill the description from the category — and keep it following the category until the person types their own text
+  if (!cat || !desc || (desc.value && desc.value !== (desc.dataset.auto || ''))) return;
   var app = _expSelectedApplicant(), who = app ? ' — ' + app.name : '';
   var s = { 'Medical Exam': 'Medical examination' + who, 'Documentation': 'Document processing' + who, 'Processing Fee': 'POEA processing fee' + who,
     'Training': 'OFW skills training' + who, 'Visa Fee': 'Visa application fee' + who, 'OWWA Fee': 'OWWA membership fee' + who,
     'Ticketing': 'Airfare / ticketing' + who, 'Transportation': 'Transportation expense', 'Accommodation': 'Accommodation cost' };
-  if (s[cat.value]) desc.value = s[cat.value];
+  desc.value = s[cat.value] || ''; desc.dataset.auto = desc.value;
 }
 
 function updateExpenseTotal() {
