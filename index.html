@@ -1084,6 +1084,7 @@ button[disabled][data-rbac-locked] {
     <div class="sb-sec-lbl">Analytics</div>
     <div class="sb-item" onclick="go('analytics',this)" data-page="analytics"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span class="sb-label">Analytics</span></div>
     <div class="sb-item" onclick="go('accounting',this)" data-page="accounting"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><span class="sb-label">Accounting</span></div>
+    <div class="sb-item" onclick="go('myaccount',this)" data-page="myaccount" style="display:none"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>My Account</div>
     <div class="sb-item" onclick="go('audit',this)" data-page="audit"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span class="sb-label">Audit Trail</span></div>
     <div class="sb-item" onclick="go('inquiries',this)" data-page="inquiries"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg><span class="sb-label">Inquiries</span><span class="sb-badge" id="sb-inquiry-count" style="display:none">0</span></div>
     <div class="sb-item" onclick="go('complaints',this)" data-page="complaints"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span class="sb-label">Complaints</span><span class="sb-badge red" id="sb-complaints-count" style="display:none">0</span></div>
@@ -2261,6 +2262,30 @@ button[disabled][data-rbac-locked] {
 <!-- ══════════════════════════════════════════════════════════════════ -->
 <!-- COMPLAINTS PAGE                                                    -->
 <!-- ══════════════════════════════════════════════════════════════════ -->
+<div class="page content-pad" id="page-myaccount">
+  <div class="pg-hdr">
+    <div class="pg-hdr-l">
+      <h1>My Account</h1>
+      <p id="ma-sub">Invoices, payments and fees for your job orders.</p>
+    </div>
+  </div>
+  <div class="stat-grid" id="ma-kpis" style="margin-bottom:20px"></div>
+  <div class="card" style="overflow:hidden;margin-bottom:20px">
+    <div style="padding:12px 16px;font-weight:700;border-bottom:1px solid var(--border)">Invoices</div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr><th>Invoice</th><th>Date</th><th>Due</th><th style="text-align:right">Total</th><th style="text-align:right">Paid</th><th style="text-align:right">Balance</th><th>Status</th></tr></thead>
+      <tbody id="ma-inv"></tbody>
+    </table>
+  </div>
+  <div class="card" style="overflow:hidden">
+    <div style="padding:12px 16px;font-weight:700;border-bottom:1px solid var(--border)">Employer fees</div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr><th>Worker</th><th>Position</th><th style="text-align:right">Fee</th><th style="text-align:right">Paid</th><th style="text-align:right">Balance</th><th>Status</th></tr></thead>
+      <tbody id="ma-fees"></tbody>
+    </table>
+  </div>
+</div>
+
 <div class="page content-pad" id="page-complaints">
   <div class="pg-hdr">
     <div class="pg-hdr-l">
@@ -4515,10 +4540,13 @@ async function syncAllFromAPI(opts) {
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
   if (!isLive) return;
   // All requests start at once (the ones the first screens need are queued first), but the screen does not wait for the heavy lists.
-  var pApps = apiFetch('/applicants?limit=500'), pJobs = apiFetch('/jobs?limit=2000'), pUsers = apiFetch('/users'), pAgents = apiFetch('/agents');
+  // Employers (viewer logins) never load company-internal collections: the server refuses them anyway.
+  var _vw = getCurrentRole() === 'Viewer', _skip = function() { return Promise.resolve({ ok: false, skipped: true, data: null }); };
+  var _g = function(path) { return _vw ? _skip() : apiFetch(path); };
+  var pApps = apiFetch('/applicants?limit=500'), pJobs = apiFetch('/jobs?limit=2000'), pUsers = _g('/users'), pAgents = _g('/agents');
   var pRest = Promise.all([
-    apiFetch('/expenses?limit=500'), apiFetch('/audit?limit=100'), apiFetch('/employer-fees'), apiFetch('/agent-ledger'), apiFetch('/commissions'),
-    apiFetch('/country-rules'), apiFetch('/office-ledger?limit=5000'), apiFetch('/complaints'), apiFetch('/office-funds'),
+    _g('/expenses?limit=500'), _g('/audit?limit=100'), apiFetch('/employer-fees'), _g('/agent-ledger'), _g('/commissions'),
+    _g('/country-rules'), _g('/office-ledger?limit=5000'), apiFetch('/complaints'), _g('/office-funds'),
   ]);
   var core = await Promise.all([pApps, pJobs, pUsers, pAgents]);
   var apps = core[0], jobs = core[1], users = core[2], agentsR = core[3];
@@ -5711,7 +5739,7 @@ let currentSettingsSection = 'general';
 const PAGE_TITLES = {
   dashboard:'Dashboard', pipeline:'Pipeline', applicants:'Applicants',
   documents:'Documents', jobs:'Job Orders', analytics:'Analytics',
-  accounting:'Accounting', audit:'Audit Trail', inquiries:'Inquiries', complaints:'Complaints', chat:'Chat', integrations:'Integrations', settings:'Settings', roles:'Roles & Permissions',
+  accounting:'Accounting', audit:'Audit Trail', inquiries:'Inquiries', complaints:'Complaints', myaccount:'My Account', chat:'Chat', integrations:'Integrations', settings:'Settings', roles:'Roles & Permissions',
   chat:'Team Chat', integrations:'Integrations', settings:'Settings', roles:'Roles & Permissions',
   whatsapp:'WhatsApp'
 };
@@ -5740,6 +5768,7 @@ function nav(page) {
   if (page === 'jobs') renderJobs();
   if (page === 'analytics') renderAnalytics();
   if (page === 'accounting') renderAccounting();
+  if (page === 'myaccount') renderMyAccount();
   if (page === 'audit') renderAudit();
   if (page === 'chat') { renderChat(); }
   // Chat poll always runs regardless of page — for badge updates
@@ -6878,7 +6907,7 @@ function openDrawer(appId, initialTab) {
 
   // Hide restricted tabs from Viewers
   var isViewer = (typeof getCurrentRole === 'function') && getCurrentRole() === 'Viewer';
-  var restrictedTabs = ['expenses','agent','history','bio'];
+  var restrictedTabs = ['expenses','agent','history'].concat(hasPermission('Print Bio-data') ? [] : ['bio']);
   document.querySelectorAll('.dtab').forEach(function(btn) {
     var tabName = (btn.getAttribute('onclick') || '').match(/switchDrawerTab\('([^']+)'/);
     if (tabName && restrictedTabs.indexOf(tabName[1]) !== -1) {
@@ -8464,6 +8493,14 @@ function _bioDate(d, fmt) {
 }
 function _bioDrawerTab(app, panel) {
   var uuid = app._dbId || app.id;
+  if (app.piiMasked && hasPermission('Print Bio-data') && !app._bioTried) {   // employers: pull the bio-data fields of their own applicant
+    app._bioTried = true; panel.innerHTML = '<div style="padding:18px;color:var(--muted)">Loading…</div>';
+    apiFetch('/applicants/' + encodeURIComponent(uuid) + '?_=' + Date.now()).then(function(r) {
+      if (r.ok && r.data && r.data.bio_ok) { app.bio = _bioPick(r.data); app.piiMasked = false; }
+      _bioDrawerTab(app, panel);
+    });
+    return;
+  }
   if (app.piiMasked) { panel.innerHTML = '<div style="padding:18px;color:var(--muted);font-size:13px">🔒 Personal data is hidden for your role, so the bio-data cannot be shown or printed.</div>'; return; }
   var b = app.bio || {}, ch = (b.chores && typeof b.chores === 'object') ? b.chores : {};
   var row = function(k, v) { return '<div style="padding:8px 10px;background:var(--s2);border:1px solid var(--border);border-radius:8px"><div style="font-size:10.5px;color:var(--muted);font-weight:700;margin-bottom:2px">' + k + '</div><div style="font-size:12.5px;white-space:pre-wrap">' + (v === '' || v == null ? '<span style="color:var(--muted)">—</span>' : escapeHtml(String(v))) + '</div></div>'; };
@@ -8490,7 +8527,7 @@ async function openBiodata(id, layout) {
   if (!_apIsUUID(uuid)) { toast('Save the applicant to the server first', 'error'); return; }
   var r = await apiFetch('/applicants/' + encodeURIComponent(uuid) + '?_=' + Date.now());
   if (!r.ok || !r.data) { toast(_acctMsg(r, 'Could not load the applicant'), 'error'); return; }
-  if (r.data.pii_masked) { toast('Your role cannot print bio-data (personal data is hidden)', 'error'); return; }
+  if (r.data.pii_masked && !r.data.bio_ok) { toast('Your role cannot print bio-data (personal data is hidden)', 'error'); return; }
   var dr = await apiFetch('/documents?applicant_id=' + uuid + '&limit=100&status=&_=' + Date.now());
   var docs = dr.ok && dr.data && Array.isArray(dr.data.data) ? dr.data.data : [];
   var usable = function(d) { return d.has_file && d.preview === 'image' && !d.voided && ['Rejected', 'Superseded'].indexOf(d.status) === -1; };
@@ -8503,6 +8540,7 @@ async function openBiodata(id, layout) {
   var ph = urls.slice(0, photos.length).map(function(l) { return l && l.url ? l.url : ''; });
   var pass = passport && urls[photos.length] && urls[photos.length].url ? urls[photos.length].url : '';
   var prof = {}; try { var pr = await apiFetch('/company-profile'); if (pr.ok && pr.data) prof = pr.data; } catch (e) {}
+  if (r.data.contact_masked) r.data.phone = '';   // employers get the bio-data without the worker's direct contact number
   window._bioCtx = { row: r.data, photos: ph, passport: pass, profile: prof, layout: layout === 'aamal' ? 'aamal' : 'full', internal: false };
   _bioShow();
 }
@@ -8515,7 +8553,7 @@ function _bioShow() {
     ov.innerHTML = '<div style="background:var(--surface,#fff);border-radius:12px;width:min(900px,100%);flex:1;display:flex;flex-direction:column;overflow:hidden">' +
       '<div style="display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border)"><b style="flex:1">Bio-data preview</b>' +
       '<select id="bio-layout" class="form-input" style="width:auto" onchange="window._bioCtx.layout=this.value;_bioShow()"><option value="full">Standard bio-data (English / Arabic)</option><option value="aamal">Aamal CV (Amal Rehatk)</option></select>' +
-      '<label style="font-size:12px;display:flex;gap:4px;align-items:center;white-space:nowrap"><input type="checkbox" id="bio-internal" onchange="window._bioCtx.internal=this.checked;_bioShow()"> Include office details</label><button class="btn btn-p btn-sm" onclick="_bioPrint()">🖨 Print / Save as PDF</button><button class="btn btn-ghost btn-sm" onclick="_bioClose()">Close</button></div>' +
+      (getCurrentRole() === 'Viewer' ? '' : '<label style="font-size:12px;display:flex;gap:4px;align-items:center;white-space:nowrap"><input type="checkbox" id="bio-internal" onchange="window._bioCtx.internal=this.checked;_bioShow()"> Include office details</label>')+'<button class="btn btn-p btn-sm" onclick="_bioPrint()">🖨 Print / Save as PDF</button><button class="btn btn-ghost btn-sm" onclick="_bioClose()">Close</button></div>' +
       '<iframe id="bio-frame" style="flex:1;border:0;background:#e5e7eb"></iframe></div>';
     document.body.appendChild(ov);
   }
@@ -12903,6 +12941,8 @@ const PERMISSIONS=[
   ['Delete Accounting Records',true,false,false,false,false,false],
   ['Manage Viewer Access',true,false,true,false,false,false],
   ['Send Notifications',true,false,true,false,false,false],
+  ['View Own Account',true,false,false,false,false,true],
+  ['Print Bio-data',true,true,true,true,false,true],
   ['Use WhatsApp Inbox',true,true,true,false,false,false],
   ['Approve Expenses',true,false,true,false,true,false],
   ['Post Ledger Adjustments',true,false,true,false,true,false],
@@ -19327,6 +19367,71 @@ function _docIcon(name) {
 
 // ── RENDER ────────────────────────────────────────────────────────────
 function _compSearch() { clearTimeout(window._compQT); window._compQT = setTimeout(function() { window._compNoFetch = true; renderComplaints(); }, 150); }
+// ── My Account (employer / viewer): invoices, payments and fees for their own job orders ──
+var _ma = { data: null, open: {} };
+function _maUsd(v) { return '$' + (Number(v) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function _maPill(inv) {
+  if (inv.pay_status === 'Paid') return '<span class="pill pill-green">Paid</span>';
+  if (inv.overdue) return '<span class="pill pill-red">Overdue ' + inv.days_overdue + 'd</span>';
+  return '<span class="pill ' + (inv.pay_status === 'Partial' ? 'pill-amber' : 'pill-gray') + '">' + escapeHtml(inv.pay_status || 'Unpaid') + '</span>';
+}
+async function renderMyAccount() {
+  var kp = document.getElementById('ma-kpis'), tb = document.getElementById('ma-inv'), fb = document.getElementById('ma-fees');
+  if (!kp || !tb || !fb) return;
+  tb.innerHTML = '<tr><td colspan="7" style="padding:16px;color:var(--muted)">Loading…</td></tr>';
+  var r = await apiFetch('/my-account');
+  if (!r.ok || !r.data) { tb.innerHTML = '<tr><td colspan="7" style="padding:16px;color:var(--muted)">Could not load your account.</td></tr>'; return; }
+  var d = _ma.data = r.data, t = d.totals || {};
+  var sub = document.getElementById('ma-sub');
+  if (sub) sub.textContent = (d.employers && d.employers.length ? d.employers.join(' · ') + ' — ' : '') + 'invoices, payments and fees for your job orders.';
+  var card = function(lbl, val, color) { return '<div class="stat-card" style="border-left:3px solid ' + color + '"><div class="stat-val">' + val + '</div><div class="stat-lbl">' + lbl + '</div></div>'; };
+  kp.innerHTML = card('Invoiced', _maUsd(t.invoiced), 'var(--brand)') + card('Paid', _maUsd(t.paid), 'var(--green)') +
+    card('Outstanding', _maUsd(t.outstanding), 'var(--amber)') + card('Overdue', _maUsd(t.overdue), 'var(--red)') +
+    card('Fees pending', _maUsd(t.fees_pending), 'var(--amber)') + card('Fees settled', _maUsd(t.fees_settled), 'var(--green)');
+  var td = 'padding:10px 12px;border-top:1px solid var(--border);font-size:13px';
+  var ri = 'text-align:right;' + td;
+  tb.innerHTML = (d.invoices || []).length ? d.invoices.map(function(i) {
+    return '<tr style="cursor:pointer" onclick="toggleMyInvoice(\'' + i.id + '\')"><td style="' + td + ';font-weight:700">' + escapeHtml(i.number || '') + '</td><td style="' + td + '">' + escapeHtml(i.date || '') + '</td><td style="' + td + '">' + escapeHtml(i.due_date || '') +
+      '</td><td style="' + ri + '">' + _maUsd(i.total_usd) + '</td><td style="' + ri + '">' + _maUsd(i.paid_usd) + '</td><td style="' + ri + ';font-weight:700">' + _maUsd(i.balance) + '</td><td style="' + td + '">' + _maPill(i) + '</td></tr>' +
+      '<tr id="ma-d-' + i.id + '" style="display:none"><td colspan="7" style="padding:0;background:var(--s2)"></td></tr>';
+  }).join('') : '<tr><td colspan="7" style="padding:18px;color:var(--muted)">No invoices have been issued yet.</td></tr>';
+  fb.innerHTML = (d.fees || []).length ? d.fees.map(function(f) {
+    return '<tr><td style="' + td + '">' + escapeHtml(f.applicant_name || '') + '</td><td style="' + td + '">' + escapeHtml(f.job_title || '') + '</td><td style="' + ri + '">' + _maUsd(f.fee_usd) + '</td><td style="' + ri + '">' + _maUsd(f.amount_paid) +
+      '</td><td style="' + ri + ';font-weight:700">' + _maUsd(f.balance) + '</td><td style="' + td + '"><span class="pill ' + (f.status === 'Settled' ? 'pill-green' : f.status === 'Waived' ? 'pill-gray' : 'pill-amber') + '">' + escapeHtml(f.status) + '</span></td></tr>';
+  }).join('') : '<tr><td colspan="6" style="padding:18px;color:var(--muted)">No employer fees.</td></tr>';
+}
+async function toggleMyInvoice(id) {
+  var row = document.getElementById('ma-d-' + id); if (!row) return;
+  if (row.style.display !== 'none') { row.style.display = 'none'; return; }
+  row.style.display = ''; var cell = row.firstElementChild;
+  cell.innerHTML = '<div style="padding:14px 16px;color:var(--muted)">Loading…</div>';
+  var r = await apiFetch('/my-account/invoices/' + encodeURIComponent(id));
+  if (!r.ok || !r.data) { cell.innerHTML = '<div style="padding:14px 16px;color:var(--muted)">Could not load this invoice.</div>'; return; }
+  var x = r.data, th = 'text-align:left;padding:6px 10px;font-size:11px;color:var(--muted)', tdd = 'padding:6px 10px;font-size:12.5px';
+  var items = (x.items || []).map(function(i) { return '<tr><td style="' + tdd + '">' + escapeHtml(i.applicant || '') + '</td><td style="' + tdd + '">' + escapeHtml(i.particular || '') + '</td><td style="' + tdd + ';text-align:right">' + _maUsd(i.usd) + '</td></tr>'; }).join('');
+  var pays = (x.payments || []).map(function(p) { return '<tr><td style="' + tdd + '">' + escapeHtml(p.paid_at || '') + '</td><td style="' + tdd + '">' + escapeHtml(p.method || '') + '</td><td style="' + tdd + '">' + escapeHtml(p.reference || '') + '</td><td style="' + tdd + ';text-align:right">' + _maUsd(p.amount) + '</td></tr>'; }).join('');
+  cell.innerHTML = '<div style="padding:12px 16px;display:grid;grid-template-columns:1fr 1fr;gap:18px">' +
+    '<div><div style="font-weight:700;margin-bottom:6px">Items</div><table style="width:100%;border-collapse:collapse"><thead><tr><th style="' + th + '">Worker</th><th style="' + th + '">Particular</th><th style="' + th + ';text-align:right">Amount</th></tr></thead><tbody>' + (items || '<tr><td colspan="3" style="' + tdd + ';color:var(--muted)">No lines</td></tr>') + '</tbody></table></div>' +
+    '<div><div style="font-weight:700;margin-bottom:6px">Payments received</div><table style="width:100%;border-collapse:collapse"><thead><tr><th style="' + th + '">Date</th><th style="' + th + '">Method</th><th style="' + th + '">Reference</th><th style="' + th + ';text-align:right">Amount</th></tr></thead><tbody>' + (pays || '<tr><td colspan="4" style="' + tdd + ';color:var(--muted)">No payments yet</td></tr>') + '</tbody></table></div></div>' +
+    '<div style="padding:0 16px 12px"><button class="btn btn-s btn-sm" onclick="printMyInvoice(\'' + id + '\')">🖨 Print statement</button></div>';
+  _ma.open[id] = x;
+}
+function printMyInvoice(id) {
+  var x = _ma.open[id]; if (!x) return;
+  var inv = x.invoice, w = window.open('', '_blank'); if (!w) { toast('Allow pop-ups to print', 'error'); return; }
+  var pr = (inv.data && inv.data.profile) || {};
+  var rows = (x.items || []).map(function(i) { return '<tr><td>' + escapeHtml(i.applicant || '') + '</td><td>' + escapeHtml(i.particular || '') + '</td><td style="text-align:right">' + _maUsd(i.usd) + '</td></tr>'; }).join('');
+  var pays = (x.payments || []).map(function(p) { return '<tr><td>' + escapeHtml(p.paid_at || '') + '</td><td>' + escapeHtml(p.method || '') + '</td><td>' + escapeHtml(p.reference || '') + '</td><td style="text-align:right">' + _maUsd(p.amount) + '</td></tr>'; }).join('');
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Invoice ' + escapeHtml(inv.number || '') + '</title><style>body{font:13px system-ui,Arial;padding:28px;color:#111}h1{font-size:20px;margin:0}table{width:100%;border-collapse:collapse;margin:10px 0 18px}th,td{border-bottom:1px solid #ddd;padding:6px 8px;text-align:left}th{font-size:11px;color:#666}.r{text-align:right}</style></head><body>' +
+    '<h1>' + escapeHtml(pr.name || 'Invoice') + '</h1><div style="color:#555;margin-bottom:14px">' + escapeHtml(pr.address || '') + '</div>' +
+    '<h2 style="font-size:16px">Invoice ' + escapeHtml(inv.number || '') + '</h2><div>Employer: <b>' + escapeHtml(inv.employer || '') + '</b> · Date: ' + escapeHtml(inv.date || '') + ' · Due: ' + escapeHtml(inv.due_date || '') + '</div>' +
+    '<table><thead><tr><th>Worker</th><th>Particular</th><th class="r">Amount</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+    '<div class="r"><b>Total ' + _maUsd(inv.total_usd) + '</b> · Paid ' + _maUsd(inv.paid_usd) + ' · <b>Balance ' + _maUsd(inv.balance) + '</b></div>' +
+    (pays ? '<h3 style="font-size:14px">Payments received</h3><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th class="r">Amount</th></tr></thead><tbody>' + pays + '</tbody></table>' : '') +
+    '<script>window.onload=function(){window.print();}<\/script></body></html>');
+  w.document.close();
+}
+
 function renderComplaints() {
   if (!DB.complaints) DB.complaints = [];
   if (!window._compNoFetch) apiFetchComplaints().catch(function(){});
@@ -22018,6 +22123,7 @@ var PAGE_PERM_MAP = {
   'jobs':         'View Job Orders',
   'analytics':    'View Analytics',
   'accounting':   'View Accounting',
+  'myaccount':    'View Own Account',
   'audit':        'View Audit Log',
   'inquiries':    'View Inquiries',
   'complaints':   'View Complaints',
@@ -22037,6 +22143,8 @@ function _getRolePages(role) {
     var row = PERMISSIONS.find(function(p){ return p[0] === permName; });
     if (row && row[ri + 1] === true) allowed.push(page);
   });
+  // Employers (viewer logins) with an account page also see their job orders
+  if (allowed.indexOf('myaccount') !== -1 && allowed.indexOf('jobs') === -1) allowed.push('jobs');
   // Admin always gets everything regardless
   if (role === 'Admin') {
     Object.keys(PAGE_PERM_MAP).forEach(function(page){
