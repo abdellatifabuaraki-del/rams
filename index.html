@@ -6952,6 +6952,9 @@ function switchDrawerTab(tab, btn) {
     // Viewers only see status, medical, position and pipeline — no agent/contact/email
     var _infoFields = _isViewer
       ? [['Status',pillHtml(app.status)],['Medical',pillHtml(app.medical,'medical')],
+         ['Deployed',app.deploymentDate
+           ? `<span style="font-family:monospace;font-size:12px;color:var(--green);font-weight:700">${escapeHtml(app.deploymentDate)}</span>`
+           : `<span style="color:var(--muted);font-size:12px">—</span>`],
          ['Position',`<span style="font-size:13px">${escapeHtml((app.job||'').split('·')[0]||'—')}</span>`],
          ['Destination',escapeHtml(app.destination || ((app.job||'').split('·')[1]||'—').trim())],
          ['Category', app.category ? '<span style="background:var(--brand-l);color:var(--brand);padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700">' + escapeHtml(app.category) + '</span>' : '—'],
