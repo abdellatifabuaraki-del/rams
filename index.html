@@ -2120,12 +2120,22 @@ button[disabled][data-rbac-locked] {
             <div style="display:flex;gap:6px">
               <button onclick="toggleChatSearch()" class="hdr-btn" title="Search messages" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:none;cursor:pointer;font-size:12px">🔍</button>
               <button onclick="openChatMembers()" class="hdr-btn" title="Members" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:none;cursor:pointer;font-size:12px">👥</button>
+              <button id="chat-export-btn" onclick="_chExport()" class="hdr-btn" title="Export this conversation (CSV)" style="display:none;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:none;cursor:pointer;font-size:12px">⬇</button>
+              <button id="chat-retention-btn" onclick="_chRetention()" class="hdr-btn" title="Message retention (admin)" style="display:none;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:none;cursor:pointer;font-size:12px">🕘</button>
             </div>
           </div>
 
           <!-- In-chat search bar (hidden by default) -->
           <div id="chat-search-bar" style="display:none;padding:8px 16px;border-bottom:1px solid var(--border);background:var(--s2)">
             <input id="chat-msg-search" type="text" placeholder="Search messages in this room…" oninput="filterChatMessages()" style="width:100%;padding:7px 12px;border:1.5px solid var(--border);border-radius:7px;font-size:13px;background:var(--surface);color:var(--text);outline:none">
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px;font-size:12px;color:var(--muted)">
+              <label style="display:flex;gap:4px;align-items:center;cursor:pointer"><input type="checkbox" id="chat-search-all" onchange="filterChatMessages()"> Search all my rooms</label>
+              <span id="chat-search-filters" style="display:none;gap:6px;align-items:center">
+                <select id="chat-search-user" onchange="filterChatMessages()" class="f-inp" style="width:140px;padding:3px 6px;font-size:12px"><option value="">Anyone</option></select>
+                from <input type="date" id="chat-search-from" onchange="filterChatMessages()" class="f-inp" style="padding:3px 6px;font-size:12px">
+                to <input type="date" id="chat-search-to" onchange="filterChatMessages()" class="f-inp" style="padding:3px 6px;font-size:12px">
+              </span>
+            </div>
           </div>
 
           <!-- Messages -->
@@ -2147,6 +2157,8 @@ button[disabled][data-rbac-locked] {
               </div>
               <button onclick="clearChatAttachment()" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:16px">✕</button>
             </div>
+            <!-- Reply bar -->
+            <div id="chat-reply-bar" style="display:none;margin-bottom:8px;padding:6px 10px;background:var(--s2);border-left:3px solid var(--brand);border-radius:6px;align-items:center;gap:8px;font-size:12px"></div>
             <!-- Input row -->
             <div style="display:flex;align-items:flex-end;gap:8px">
               <label for="chat-file-input" style="cursor:pointer;color:var(--muted);padding:8px;border:1.5px solid var(--border);border-radius:8px;display:flex;align-items:center;background:var(--s2)" title="Attach file">
@@ -2451,6 +2463,7 @@ button[disabled][data-rbac-locked] {
         <button class="btn btn-s btn-xs" onclick="go('integrations')">Go to Integrations</button>
       </div>
 
+      <div id="wa-warn" style="display:none;padding:8px 16px;background:#FEE2E2;color:#991B1B;font-size:12.5px;border-bottom:1px solid var(--border)"></div>
       <div style="display:flex;flex:1;overflow:hidden">
 
         <!-- Sidebar: Conversations -->
@@ -2465,6 +2478,18 @@ button[disabled][data-rbac-locked] {
               <input id="wa-search" type="text" placeholder="Search conversations…" oninput="renderWaConversationList()" style="width:100%;padding:6px 8px 6px 26px;border:1.5px solid var(--border);border-radius:7px;font-size:12px;background:var(--s2);color:var(--text);outline:none">
             </div>
           </div>
+          <div style="padding:6px 12px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;gap:4px">
+              <button id="wa-mode-business" class="btn btn-p btn-xs" onclick="waSetMode('business')" style="flex:1">Business number</button>
+              <button id="wa-mode-personal" class="btn btn-s btn-xs" onclick="waSetMode('personal')" style="flex:1">My WhatsApp</button>
+            </div>
+            <div id="wa-personal-bar" style="display:none;align-items:center;justify-content:space-between;font-size:11.5px;color:var(--muted)"></div>
+            <div id="wa-filters" style="display:flex;gap:4px">
+              <button class="btn btn-s btn-xs" data-wf="" onclick="waSetFilter('')">All</button>
+              <button class="btn btn-s btn-xs" data-wf="mine" onclick="waSetFilter('mine')">Mine</button>
+              <button class="btn btn-s btn-xs" data-wf="unassigned" onclick="waSetFilter('unassigned')">Unassigned</button>
+            </div>
+          </div>
           <div id="wa-conv-list" style="flex:1;overflow-y:auto;padding:6px 0"></div>
           <div id="wa-conv-empty" style="display:none;padding:24px 16px;text-align:center;color:var(--muted);font-size:12.5px">No conversations yet. Messages from applicants will show up here.</div>
         </div>
@@ -2472,6 +2497,7 @@ button[disabled][data-rbac-locked] {
         <!-- Main thread -->
         <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--surface)">
 
+          <div id="wa-personal-panel" style="display:none;flex:1;align-items:center;justify-content:center;padding:24px;overflow-y:auto"></div>
           <div id="wa-thread-empty" style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px;flex-direction:column;gap:8px">
             <div style="font-size:32px">💬</div>
             <div>Select a conversation to view messages</div>
@@ -2483,6 +2509,10 @@ button[disabled][data-rbac-locked] {
               <div style="flex:1;min-width:0">
                 <div style="font-size:14px;font-weight:800" id="wa-thread-name">—</div>
                 <div style="font-size:11px;color:var(--muted)" id="wa-thread-number">—</div>
+              </div>
+              <div id="wa-thread-tools" style="display:flex;gap:6px;align-items:center">
+                <select id="wa-assign" class="f-inp" onchange="waAssign(this.value)" title="Assigned to" style="width:150px;padding:4px 6px;font-size:12px"></select>
+                <button id="wa-tpl-btn" class="btn btn-s btn-xs" onclick="waTemplateModal()">Send template</button>
               </div>
             </div>
 
@@ -6973,7 +7003,7 @@ function switchDrawerTab(tab, btn) {
          ['Deployed',app.deploymentDate
            ? `<span style="font-family:monospace;font-size:12px;color:var(--green);font-weight:700">${app.deploymentDate}</span>`
            : `<span style="color:var(--muted);font-size:12px">—</span>`],
-         ['Contact',escapeHtml(app.contact||'—')],['Email',escapeHtml(app.email||'—')],
+         ['Contact',escapeHtml(app.contact||'—') + (function(d){ return (d.length >= 9 && String(app.contact||'').indexOf('•') < 0) ? ' <a href="https://wa.me/' + d + '" target="_blank" rel="noopener" title="Open a WhatsApp chat on your phone" style="margin-left:6px;text-decoration:none">💬</a>' : ''; })(_waDigits(app.contact))],['Email',escapeHtml(app.email||'—')],
          ['Category', app.category ? '<span style="background:var(--brand-l);color:var(--brand);padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700">' + escapeHtml(app.category) + '</span>' : '—'],
          ['Gender',escapeHtml(app.gender||'—')],['Nationality',escapeHtml(app.nationality||'—')],
          ['Passport',`<span style="font-family:monospace;font-size:12px">${escapeHtml(app.passport||'—')}</span>`],
@@ -11564,7 +11594,7 @@ const THREADS = [
 // ── Chat state (all data lives on the server; nothing is cached on this device) ──
 var _ch = { rooms: [], dms: [], users: [], members: {}, me: null, cur: null, msgs: {}, hasMore: {}, pending: {}, typing: {}, rev: 0, loaded: false, loading: false,
   emoji: ['👍','❤️','😂','😮','😢','🙏','✅','🎉','👀','🔥'], limits: { text: 4000, file: 5242880, edit_minutes: 30 }, divider: {}, unread_total: 0, search: null, showArchived: false,
-  attach: null, editing: null, picks: {}, syncing: false, syncAgain: false, timers: {} };
+  attach: null, editing: null, picks: {}, syncing: false, syncAgain: false, timers: {}, reply: null, filesInDb: false };
 var _currentRoomId = null, _chatSearchOpen = false, _mentionActive = false, _mentionQuery = '', _chatAttachment = null;
 var _chatPollTimer = null;
 var _CH_EXT = { png:1, jpg:1, jpeg:1, gif:1, webp:1, pdf:1, txt:1, csv:1, doc:1, docx:1, xls:1, xlsx:1, pptx:1 };
@@ -11603,6 +11633,8 @@ async function _chLoad() {
       var d = r.data; _ch.rooms = d.rooms; _ch.dms = d.dms; _ch.me = d.me; _ch.unread_total = d.unread_total || 0; _ch.loaded = true;
       if (!_ch.rev) _ch.rev = d.rev || 0;
       if (d.emoji) _ch.emoji = d.emoji; if (d.limits) _ch.limits = d.limits;
+      _ch.filesInDb = !!d.files_in_database;
+      if (_ch.filesInDb && !window._chDbWarned && typeof getCurrentRole === 'function' && getCurrentRole() === 'Admin') { window._chDbWarned = true; setTimeout(function() { toast('Chat files are stored in the database. Connect cloud storage (S3/R2) so they do not fill it up.', 'warning'); }, 1500); }
       if (!_ch.cur || !_chRoom(_ch.cur)) { var g = null; for (var i = 0; i < d.rooms.length; i++) if (d.rooms[i].slug === 'general') g = d.rooms[i]; _ch.cur = (g || d.rooms[0] || d.dms[0] || {}).id || null; _currentRoomId = _ch.cur; if (_ch.cur && currentPage === 'chat') _chOpen(_ch.cur, true); }
       _updateChatSidebarBadge();
       renderChatRooms(); _chHeader();
@@ -11664,6 +11696,9 @@ function _chHeader() {
   if (ic) ic.textContent = r.kind === 'dm' ? (r.peer_name || '?').charAt(0).toUpperCase() : (r.kind === 'private' ? '🔒' : (r.icon || '#'));
   if (nm) nm.textContent = (r.kind === 'dm' ? '' : '') + _chName(r);
   if (sb) sb.textContent = r.kind === 'dm' ? 'Direct message' : ((r.description || (r.kind === 'private' ? 'Private channel' : 'Public channel')) + (r.kind === 'private' ? ' · ' + r.member_count + ' member' + (r.member_count === 1 ? '' : 's') : '') + (r.archived ? ' · archived (read-only)' : ''));
+  var eb = document.getElementById('chat-export-btn'), rb = document.getElementById('chat-retention-btn'), role = (typeof getCurrentRole === 'function' ? getCurrentRole() : '');
+  if (eb) eb.style.display = (role !== 'Viewer' && (r.kind === 'public' ? _chIsMod() : true)) ? '' : 'none';   // public rooms: admins / managers; private and DMs: the people in them
+  if (rb) rb.style.display = role === 'Admin' ? '' : 'none';
   var inp = document.getElementById('chat-input');
   if (inp) { var can = _chCanSend() && !r.archived; inp.disabled = !can; inp.placeholder = can ? 'Message ' + (r.kind === 'dm' ? _chName(r) : '#' + r.name) + '… (@ to mention, Enter to send)' : (r.archived ? 'This channel is archived' : 'Your role is read-only'); }
 }
@@ -11673,7 +11708,7 @@ function selectChatRoom(id) { _chOpen(id, false); }
 async function _chOpen(id, keep) {
   var r = _chRoom(id); if (!r) return;
   var changed = _ch.cur !== id; _ch.cur = id; _currentRoomId = id;
-  if (changed) { _ch.search = null; _ch.editing = null; var s = document.getElementById('chat-msg-search'); if (s) s.value = ''; _ch.divider[id] = r.last_read_seq || 0; }
+  if (changed) { _ch.search = null; _ch.editing = null; _ch.reply = null; _chReplyBar(); var s = document.getElementById('chat-msg-search'); if (s) s.value = ''; _ch.divider[id] = r.last_read_seq || 0; }
   else if (_ch.divider[id] === undefined) _ch.divider[id] = r.last_read_seq || 0;
   renderChatRooms(); _chHeader();
   if (!_ch.msgs[id]) {
@@ -11722,6 +11757,8 @@ function _chMsgHtml(m, ro, prev) {
   if (m.deleted) body = '<div style="font-size:12.5px;color:var(--muted);font-style:italic">🚫 ' + (m.deleted_own ? 'This message was deleted' : 'Removed by ' + _chE(m.deleted_by || 'a moderator') + (m.delete_reason ? ' — ' + _chE(m.delete_reason) : '')) + '</div>';
   else if (_ch.editing === m.id) body = '<textarea id="chat-edit-box" rows="2" style="width:100%;padding:8px;border:1.5px solid var(--brand);border-radius:8px;font-size:13px;background:var(--surface);color:var(--text)">' + _chE(m.msg) + '</textarea><div style="margin-top:4px;display:flex;gap:6px"><button class="btn btn-p btn-xs" onclick="_chSaveEdit(\'' + m.id + '\')">Save</button><button class="btn btn-s btn-xs" onclick="_chCancelEdit()">Cancel</button></div>';
   else body = (m.msg ? '<div style="font-size:13.5px;line-height:1.45;word-break:break-word;' + (m.pendingState ? 'opacity:.6' : '') + '">' + _chBody(m) + (m.edited ? ' <span style="font-size:10.5px;color:var(--muted)">(edited)</span>' : '') + '</div>' : '') + _chAttach(m.attachment);
+  if (m.reply_to && !m.deleted) body = '<div onclick="_chJump(\'' + _chE(m.reply_to.id) + '\')" title="Go to the original message" style="cursor:pointer;border-left:3px solid var(--brand);background:var(--s2);border-radius:4px;padding:3px 8px;margin-bottom:3px;font-size:12px;color:var(--muted);max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">↩ <b>' + _chE(m.reply_to.user) + '</b> ' + (m.reply_to.deleted ? '<i>deleted message</i>' : _chE(m.reply_to.text)) + '</div>' + body;
+  if (m.room_name) body = '<div style="font-size:11px;font-weight:700;color:var(--brand);margin-bottom:2px"><a href="#" onclick="_chOpen(\'' + _chE(m.room_id) + '\');return false">' + (m.room_kind === 'dm' ? '💬 ' : '#') + _chE(m.room_name) + '</a></div>' + body;
   var state = '';
   if (m.pendingState === 'sending') state = '<div style="font-size:11px;color:var(--muted)">Sending…</div>';
   if (m.pendingState === 'failed') state = '<div style="font-size:11.5px;color:var(--red);font-weight:700">Not sent — ' + _chE(m.pendingError || 'check your connection') + ' · <a href="#" onclick="_chRetry(\'' + m.id + '\');return false">Retry</a> · <a href="#" onclick="_chDiscard(\'' + m.id + '\');return false">Discard</a></div>';
@@ -11730,6 +11767,7 @@ function _chMsgHtml(m, ro, prev) {
     var canEdit = mine && (Date.now() - new Date(m.created_at).getTime() < (_ch.limits.edit_minutes || 30) * 60000) && m.msg;
     var r = _chRoom(m.room_id); var canDel = mine || (_chIsMod() && r && r.kind === 'public');
     tools = '<span class="chat-tools" style="display:none;margin-left:6px;gap:4px">' + (_chCanSend() ? '<button type="button" title="React" onclick="addReactionPicker(\'' + m.id + '\')" style="border:none;background:none;cursor:pointer;font-size:13px">😊</button>' : '') +
+      (_chCanSend() ? '<button type="button" title="Reply" onclick="_chReply(\'' + m.id + '\')" style="border:none;background:none;cursor:pointer;font-size:13px">↩</button>' : '') +
       (canEdit ? '<button type="button" title="Edit" onclick="editMessage(\'' + m.id + '\')" style="border:none;background:none;cursor:pointer;font-size:12px">✏️</button>' : '') +
       (m.edited && (mine || _chIsMod()) ? '<button type="button" title="Edit history" onclick="_chShowHistory(\'' + m.id + '\')" style="border:none;background:none;cursor:pointer;font-size:12px">🕘</button>' : '') +
       (canDel ? '<button type="button" title="Delete" onclick="deleteMessage(\'' + m.id + '\')" style="border:none;background:none;cursor:pointer;font-size:12px">🗑</button>' : '') + '</span>';
@@ -11869,10 +11907,10 @@ async function sendChat() {
   if (!text && !_ch.attach) return;
   if (text.length > _ch.limits.text) { toast('Messages are limited to ' + _ch.limits.text + ' characters (this one is ' + text.length + ')', 'error'); return; }
   var p = { id: 'p-' + _chCid(), client_id: _chCid(), room_id: id, user_id: _ch.me, user: (window._ramsSessionUser && window._ramsSessionUser.name) || 'You', msg: text, created_at: new Date().toISOString(), seq: 0, reactions: {},
-    attachment: null, file: _ch.attach, pendingState: 'sending', mentions: _chMentions(text) };
+    attachment: null, file: _ch.attach, pendingState: 'sending', mentions: _chMentions(text), reply_to: _ch.reply ? { id: _ch.reply.id, user: _ch.reply.user, text: _ch.reply.text, deleted: false } : null };
   if (_ch.attach) p.msg = (text ? text + '\n' : '') + '📎 ' + _ch.attach.name;
   (_ch.pending[id] = _ch.pending[id] || []).push(p);
-  inp.value = ''; inp.style.height = ''; clearChatAttachment(); _ch.picks = {}; closeMentionPopup();
+  inp.value = ''; inp.style.height = ''; clearChatAttachment(); _ch.picks = {}; closeMentionPopup(); _ch.reply = null; _chReplyBar();
   renderChatMessages(true);
   _chSendPending(p);
 }
@@ -11886,6 +11924,7 @@ async function _chSendPending(p) {
     }
     var body = { message: p.file ? (p.msg.replace(/\n?📎 .*$/, '')) : p.msg, client_id: p.client_id, mentions: p.mentions };
     if (p.file_id) body.file_id = p.file_id;
+    if (p.reply_to) body.reply_to = p.reply_to.id;
     var r = await apiFetch('/chat/rooms/' + p.room_id + '/messages', { method: 'POST', body: JSON.stringify(body) });
     if (!r.ok) throw { friendly: _chErr(r, 'Not delivered'), http: r.httpStatus };
     _ch.pending[p.room_id] = (_ch.pending[p.room_id] || []).filter(function(x) { return x !== p; });
@@ -12043,13 +12082,59 @@ function filterChatMessages() {
   clearTimeout(_ch.timers.search);
   _ch.timers.search = setTimeout(async function() {
     var q = ((document.getElementById('chat-msg-search') || {}).value || '').trim(), id = _ch.cur;
-    if (q.length < 2) { if (_ch.search) { _ch.search = null; renderChatMessages(true); } return; }
-    var r = await _chGet('/chat/rooms/' + id + '/search?q=' + encodeURIComponent(q));
+    var all = !!(document.getElementById('chat-search-all') || {}).checked, g = function(i) { return ((document.getElementById(i) || {}).value || ''); };
+    var fl = document.getElementById('chat-search-filters'); if (fl) fl.style.display = all ? 'inline-flex' : 'none';
+    if (all) { _chFillSearchUsers(); }
+    var filtered = all && (g('chat-search-user') || g('chat-search-from') || g('chat-search-to'));
+    if (q.length < 2 && !filtered) { if (_ch.search) { _ch.search = null; renderChatMessages(true); } return; }
+    var url = all ? '/chat/search?q=' + encodeURIComponent(q) + (g('chat-search-user') ? '&user_id=' + g('chat-search-user') : '') + (g('chat-search-from') ? '&from=' + g('chat-search-from') : '') + (g('chat-search-to') ? '&to=' + g('chat-search-to') : '')
+                  : '/chat/rooms/' + id + '/search?q=' + encodeURIComponent(q);
+    var r = await _chGet(url);
     if (_ch.cur !== id) return;
-    if (r.ok) { _ch.search = { q: q, messages: r.data.messages }; renderChatMessages(); } else toast(_chErr(r), 'error');
+    if (r.ok) { _ch.search = { q: q || 'filters', messages: r.data.messages, all: all, more: !!r.data.has_more }; renderChatMessages(); } else toast(_chErr(r), 'error');
   }, 350);
 }
 function _chClearSearch() { _ch.search = null; var i = document.getElementById('chat-msg-search'); if (i) i.value = ''; renderChatMessages(true); }
+
+// ── replies ───────────────────────────────────────────────────────────
+function _chReply(mid) {
+  var all = (_ch.msgs[_ch.cur] || []).concat(_ch.search ? _ch.search.messages : []), m = null;
+  for (var i = 0; i < all.length; i++) if (all[i].id === mid) { m = all[i]; break; }
+  if (!m || m.deleted) return;
+  _ch.reply = { id: m.id, user: m.user, text: String(m.msg || (m.attachment ? '📎 ' + m.attachment.name : '')).slice(0, 140) };
+  _chReplyBar(); var inp = document.getElementById('chat-input'); if (inp) inp.focus();
+}
+function _chReplyBar() {
+  var b = document.getElementById('chat-reply-bar'); if (!b) return;
+  if (!_ch.reply) { b.style.display = 'none'; b.innerHTML = ''; return; }
+  b.style.display = 'flex';
+  b.innerHTML = '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">↩ Replying to <b>' + _chE(_ch.reply.user) + '</b>: ' + _chE(_ch.reply.text) + '</span><button type="button" onclick="_ch.reply=null;_chReplyBar()" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:14px" title="Cancel reply">✕</button>';
+}
+async function _chJump(mid) {
+  var box = document.getElementById('chat-msgs'), row = box && box.querySelector('[data-mid="' + mid + '"]');
+  if (!row) { toast('That message is further up — use “Load earlier messages”', 'info'); return; }
+  row.scrollIntoView({ block: 'center' }); row.style.transition = 'background .3s'; row.style.background = 'var(--brand-l)'; setTimeout(function() { row.style.background = ''; }, 1400);
+}
+function _chFillSearchUsers() {
+  var sel = document.getElementById('chat-search-user'); if (!sel || sel.options.length > 1) return;
+  (_ch.users || []).forEach(function(u) { var o = document.createElement('option'); o.value = u.id; o.textContent = u.name; sel.appendChild(o); });
+}
+// ── export and retention ──────────────────────────────────────────────
+async function _chExport() {
+  var r = _chRoom(_ch.cur); if (!r) return;
+  var f = await _srvFile('/chat/rooms/' + encodeURIComponent(r.id) + '/export?format=csv');
+  if (!f.ok) { toast(f.message || 'Could not export this conversation', 'error'); return; }
+  _saveBlob(f.blob, f.filename || 'chat.csv'); toast('Exported — the export is recorded in the audit log', 'success');
+}
+async function _chRetention() {
+  var cur = await apiFetch('/chat/retention'); if (!cur.ok) { toast('Could not read the retention setting', 'error'); return; }
+  var v = window.prompt('Delete chat messages (and their files) older than how many days?\nEnter 0 to keep everything. Minimum 30. This cannot be undone.', String(cur.data.days || 0));
+  if (v === null) return;
+  var n = parseInt(v, 10);
+  if (isNaN(n)) { toast('Enter a number of days', 'error'); return; }
+  var r = await apiFetch('/chat/retention', { method: 'PUT', body: JSON.stringify({ days: n }) });
+  toast(r.ok ? (n ? 'Messages older than ' + n + ' days will be deleted automatically' : 'Messages are kept forever') : _chErr(r, 'Could not save'), r.ok ? 'success' : 'error');
+}
 
 async function _chLoadMembers(id) {
   var r = await _chGet('/chat/rooms/' + id + '/members'); if (r && r.ok) { _ch.members[id] = r.data; return r.data; } return null;
@@ -12293,6 +12378,7 @@ function _waFmtTime(ts) {
 // Unlinked numbers (no matching applicant) are hidden from scoped viewers
 // since there's nothing to verify they belong in that viewer's scope.
 function _waVisibleConversations() {
+  if (window._waMode === 'personal') return window._waPersonalConvs || [];
   var list = window._waConversations || [];
   var scope = (typeof getViewerScopedJobs === 'function') ? getViewerScopedJobs() : null;
   if (scope === null) return list; // unrestricted role — see everything
@@ -12300,10 +12386,34 @@ function _waVisibleConversations() {
   return list.filter(function(c) { return c.applicantId && scopedIds.has(c.applicantId); });
 }
 
+window._waMode = 'business'; window._waFilter = ''; window._waPersonal = { state: 'none' }; window._waPersonalConvs = [];
+function _waBase() { return window._waMode === 'personal' ? '/integrations/whatsapp/personal' : '/integrations/whatsapp'; }
+function _waDigits(n) { var d = String(n || '').replace(/\D/g, ''); if (/^0\d{10}$/.test(d)) d = '63' + d.slice(1); return d; }   // 0917… -> 63917…
+function waSetMode(m) {
+  window._waMode = m; window._waActiveNumber = null; window._waMessages = [];
+  var b = document.getElementById('wa-mode-business'), p = document.getElementById('wa-mode-personal');
+  if (b) b.className = 'btn btn-xs ' + (m === 'business' ? 'btn-p' : 'btn-s'); if (p) p.className = 'btn btn-xs ' + (m === 'personal' ? 'btn-p' : 'btn-s');
+  var f = document.getElementById('wa-filters'); if (f) f.style.display = m === 'business' ? 'flex' : 'none';
+  var pb = document.getElementById('wa-personal-bar'); if (pb) pb.style.display = 'none';
+  document.getElementById('wa-thread').style.display = 'none';
+  if (m === 'personal') { waPersonalRefresh(); } else { var pp = document.getElementById('wa-personal-panel'); if (pp) pp.style.display = 'none'; document.getElementById('wa-thread-empty').style.display = 'flex'; apiFetchWhatsAppConversations(); }
+  renderWaConversationList();
+}
+function waSetFilter(f) { window._waFilter = f; apiFetchWhatsAppConversations(); }
 async function apiFetchWhatsAppConversations() {
+  if (window._waMode === 'personal') {
+    var isLiveP = window._ramsSessionToken && window._ramsSessionToken !== 'demo'; if (!isLiveP) return;
+    var rp = await apiFetch('/integrations/whatsapp/personal/conversations');
+    if (rp.ok && Array.isArray(rp.data)) window._waPersonalConvs = rp.data;
+    if (currentPage === 'whatsapp') renderWaConversationList();
+    return;
+  }
+  return _apiFetchWhatsAppConversationsBusiness();
+}
+async function _apiFetchWhatsAppConversationsBusiness() {
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
   if (!isLive) { window._waConversations = []; return; }
-  var r = await apiFetch('/integrations/whatsapp/conversations');
+  var r = await apiFetch('/integrations/whatsapp/conversations' + (window._waFilter ? '?filter=' + window._waFilter : ''));
   if (r.ok && Array.isArray(r.data)) window._waConversations = r.data;
   _updateWaSidebarBadge();
   if (currentPage === 'whatsapp') renderWaConversationList();
@@ -12312,7 +12422,7 @@ async function apiFetchWhatsAppConversations() {
 function _updateWaSidebarBadge() {
   var badge = document.getElementById('sb-wa-count');
   if (!badge) return;
-  var list = _waVisibleConversations();
+  var _m = window._waMode; window._waMode = 'business'; var list = _waVisibleConversations(); window._waMode = _m;
   var unread = list.reduce(function(sum, c){ return sum + (c.unreadCount || 0); }, 0);
   if (unread > 0) { badge.textContent = unread > 99 ? '99+' : String(unread); badge.style.display = ''; }
   else { badge.style.display = 'none'; }
@@ -12322,6 +12432,8 @@ function renderWhatsAppInbox() {
   var st = window._waStatus || {};
   var banner = document.getElementById('wa-inbox-disconnected');
   if (banner) banner.style.display = st.connected ? 'none' : 'flex';
+  var warn = document.getElementById('wa-warn');
+  if (warn) { var isAdm = typeof getCurrentRole === 'function' && getCurrentRole() === 'Admin'; warn.style.display = (isAdm && st.webhookWarning) ? 'block' : 'none'; warn.textContent = st.webhookWarning || ''; }
   renderWaConversationList();
   if (window._waActiveNumber) renderWaMessages();
 }
@@ -12357,6 +12469,7 @@ function renderWaConversationList() {
         '</div>' +
         '<div style="display:flex;justify-content:space-between;gap:6px">' +
           '<span style="font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(preview) + '</span>' +
+          (c.assignedName ? '<span style="font-size:10px;color:var(--muted);flex-shrink:0">' + escapeHtml(String(c.assignedName).split(' ')[0]) + '</span>' : '') +
           (c.unreadCount ? '<span class="sb-badge amber" style="position:static;flex-shrink:0">' + c.unreadCount + '</span>' : '') +
         '</div>' +
       '</div>' +
@@ -12368,13 +12481,15 @@ async function openWaConversation(waNumber) {
   window._waActiveNumber = waNumber;
   document.getElementById('wa-thread-empty').style.display = 'none';
   document.getElementById('wa-thread').style.display = 'flex';
-  var conv = (window._waConversations || []).find(function(c){ return c.waNumber === waNumber; });
+  var conv = _waVisibleConversations().find(function(c){ return c.waNumber === waNumber; });
   document.getElementById('wa-thread-name').textContent = (conv && conv.applicantName) || ('+' + waNumber);
   document.getElementById('wa-thread-number').textContent = '+' + waNumber;
   document.getElementById('wa-msgs').innerHTML = '<div style="text-align:center;color:var(--muted);font-size:12px;padding:20px">Loading…</div>';
+  var pp = document.getElementById('wa-personal-panel'); if (pp) pp.style.display = 'none';
+  _waThreadTools(conv);
   renderWaConversationList();
 
-  var r = await apiFetch('/integrations/whatsapp/conversations/' + encodeURIComponent(waNumber) + '/messages');
+  var r = await apiFetch(_waBase() + '/conversations/' + encodeURIComponent(waNumber) + '/messages');
   if (r.ok && Array.isArray(r.data)) {
     window._waMessages = r.data;
     // Clear local unread count now that we've fetched (server marked them read)
@@ -12391,25 +12506,137 @@ function renderWaMessages() {
   var el = document.getElementById('wa-msgs');
   if (!el) return;
   var msgs = window._waMessages || [];
+  var conv = _waVisibleConversations().find(function(c){ return c.waNumber === window._waActiveNumber; });
   if (!msgs.length) {
     el.innerHTML = '<div style="text-align:center;color:var(--muted);font-size:12px;padding:20px">No messages yet</div>';
   } else {
+    var base = _waBase();
     el.innerHTML = msgs.map(function(m) {
-      var out = m.direction === 'outbound';
+      var out = m.direction === 'outbound', failed = m.status === 'failed';
+      var media = '';
+      if (m.media && !m.media.unavailable) {
+        var isImg = /^image\//.test(m.media.mime || '');
+        media = (isImg ? '<img data-wa-media="' + m.id + '" alt="" style="display:none;max-width:240px;max-height:240px;border-radius:8px;margin-bottom:4px;cursor:pointer" onclick="waOpenMedia(\'' + m.id + '\')"><div class="wa-img-ph" style="font-size:11px;opacity:.7">Loading photo…</div>'
+                       : '<a href="#" onclick="waOpenMedia(\'' + m.id + '\');return false" style="color:inherit;text-decoration:underline">📎 ' + escapeHtml(m.media.name || 'file') + '</a>') +
+          (conv && conv.applicantId && !out && hasPermission('Upload Documents') ? ' <a href="#" onclick="waSaveMedia(\'' + m.id + '\');return false" style="font-size:11px;color:inherit;opacity:.85;text-decoration:underline">Save to documents</a>' : '');
+      } else if (m.media && m.media.unavailable) media = '<div style="font-size:11px;opacity:.7">[file could not be kept]</div>';
+      var text = m.type === 'text' ? (m.body || '') : (m.type === 'template' ? (m.body || '') : (m.media ? (m.body || '') : ('[' + m.type + ']' + (m.body ? ' ' + m.body : ''))));
       return '<div style="display:flex;justify-content:' + (out ? 'flex-end' : 'flex-start') + '">' +
-        '<div style="max-width:70%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.4;' +
-          (out ? 'background:#25D366;color:#fff;border-bottom-right-radius:3px' : 'background:var(--s2);color:var(--text);border-bottom-left-radius:3px') + '">' +
-          escapeHtml(m.type === 'text' ? (m.body || '') : ('[' + m.type + ']' + (m.body ? ' ' + escapeHtml(m.body) : ''))) +
-          '<div style="font-size:9.5px;opacity:.7;margin-top:3px;text-align:right">' + _waFmtTime(m.createdAt) + (out ? ' · ' + (m.status || 'sent') : '') + '</div>' +
+        '<div style="max-width:70%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.4;white-space:pre-wrap;word-break:break-word;' +
+          (failed ? 'background:#FEE2E2;color:#991B1B;' : (out ? 'background:#25D366;color:#fff;' : 'background:var(--s2);color:var(--text);')) + (out ? 'border-bottom-right-radius:3px' : 'border-bottom-left-radius:3px') + '">' +
+          media + (media && text ? '<br>' : '') + escapeHtml(text) +
+          (failed ? '<div style="font-size:11px;margin-top:3px;font-weight:700">Not delivered' + (m.error ? ' — ' + escapeHtml(m.error) : '') + '</div>' : '') +
+          '<div style="font-size:9.5px;opacity:.7;margin-top:3px;text-align:right">' + _waFmtTime(m.createdAt) + (out && !failed ? ' · ' + (m.status || 'sent') : '') + '</div>' +
         '</div>' +
       '</div>';
     }).join('');
+    Array.prototype.forEach.call(el.querySelectorAll('img[data-wa-media]'), function(img) {
+      waMediaBlob(img.getAttribute('data-wa-media')).then(function(b) { if (!b) return; img.src = URL.createObjectURL(b); img.style.display = ''; var ph = img.nextSibling; if (ph && ph.className === 'wa-img-ph') ph.remove(); });
+    });
   }
   el.scrollTop = el.scrollHeight;
-
-  var conv = (window._waConversations || []).find(function(c){ return c.waNumber === window._waActiveNumber; });
   var notice = document.getElementById('wa-window-notice');
-  if (notice) notice.style.display = (conv && !conv.withinWindow) ? 'block' : 'none';
+  if (notice) notice.style.display = (window._waMode === 'business' && conv && !conv.withinWindow) ? 'block' : 'none';
+}
+var _waBlobCache = {};
+async function waMediaBlob(id) {
+  var key = _waBase() + id; if (_waBlobCache[key]) return _waBlobCache[key];
+  var f = await _srvFile(_waBase() + '/media/' + encodeURIComponent(id)); if (!f.ok) return null;
+  _waBlobCache[key] = f.blob; return f.blob;
+}
+async function waOpenMedia(id) {
+  var f = await _srvFile(_waBase() + '/media/' + encodeURIComponent(id)); if (!f.ok) { toast(f.message, 'error'); return; }
+  if (/^image\//.test(f.blob.type)) window.open(URL.createObjectURL(f.blob), '_blank', 'noopener'); else _saveBlob(f.blob, f.filename);
+}
+async function waSaveMedia(id) {
+  var t = window.prompt('Save this file to the applicant\'s documents as which type?\n(Passport, Government ID, Medical Certificate, Visa, Work Contract, Work Permit, OWWA, Training Certificate, NBI Clearance, Photo, Other)', 'Photo');
+  if (!t) return;
+  var conv = _waVisibleConversations().find(function(c){ return c.waNumber === window._waActiveNumber; });
+  var r = await apiFetch(_waBase() + '/messages/' + encodeURIComponent(id) + '/save-to-documents', { method: 'POST', body: JSON.stringify({ type: t.trim(), applicant_id: conv && conv.applicantId }) });
+  toast(r.ok ? 'Saved to the applicant\'s documents (pending review)' : ((r.data && r.data.error) || 'Could not save'), r.ok ? 'success' : 'error');
+}
+
+// ── assignment, templates ─────────────────────────────────────────────
+function _waThreadTools(conv) {
+  var tools = document.getElementById('wa-thread-tools'); if (!tools) return;
+  var biz = window._waMode === 'business'; tools.style.display = biz ? 'flex' : 'none';
+  if (!biz) return;
+  var sel = document.getElementById('wa-assign'); if (!sel) return;
+  var users = (DB.users || []).filter(function(u) { return u.status !== 'inactive' && u.role !== 'Viewer' && u.role !== 'viewer'; });
+  sel.innerHTML = '<option value="">Unassigned</option>' + users.map(function(u) { return '<option value="' + escapeHtml(u._dbId || u.id) + '">' + escapeHtml(u.name) + '</option>'; }).join('');
+  sel.value = (conv && conv.assignedTo) || '';
+}
+async function waAssign(uid) {
+  var n = window._waActiveNumber; if (!n) return;
+  var r = await apiFetch('/integrations/whatsapp/conversations/' + encodeURIComponent(n) + '/assign', { method: 'PATCH', body: JSON.stringify({ user_id: uid || null }) });
+  if (!r.ok) { toast((r.data && r.data.error) || 'Could not assign', 'error'); return; }
+  var conv = (window._waConversations || []).find(function(c){ return c.waNumber === n; });
+  if (conv) { conv.assignedTo = r.data.assignedTo; conv.assignedName = r.data.assignedName; }
+  renderWaConversationList(); toast(uid ? 'Assigned to ' + r.data.assignedName : 'Unassigned', 'success');
+}
+async function waTemplateModal() {
+  var n = window._waActiveNumber; if (!n) return;
+  var r = await apiFetch('/integrations/whatsapp/templates');
+  if (!r.ok) { toast((r.data && r.data.error) || 'Could not load templates', 'error'); return; }
+  if (!r.data.length) { toast('No approved templates yet — create them in Meta Business Manager', 'info'); return; }
+  var old = document.getElementById('wa-tpl-modal'); if (old) old.remove();
+  var d = document.createElement('div'); d.id = 'wa-tpl-modal'; d.className = 'overlay'; d.style.display = 'flex';
+  d.innerHTML = '<div class="modal" style="max-width:460px"><div class="modal-hdr"><div><h2>Send template</h2><p>Approved WhatsApp templates work outside the 24-hour window.</p></div><button class="close-btn" onclick="document.getElementById(\'wa-tpl-modal\').remove()">✕</button></div>' +
+    '<div class="modal-body"><select id="wa-tpl-sel" class="f-inp" style="width:100%" onchange="waTplFields()">' + r.data.map(function(t, i) { return '<option value="' + i + '">' + escapeHtml(t.name + ' (' + t.language + ')') + '</option>'; }).join('') + '</select>' +
+    '<div id="wa-tpl-body" style="font-size:12.5px;color:var(--muted);margin:10px 0"></div><div id="wa-tpl-params"></div>' +
+    '<button class="btn btn-p" style="margin-top:10px" onclick="waSendTemplate()">Send</button></div></div>';
+  document.body.appendChild(d); window._waTpls = r.data; waTplFields();
+}
+function waTplFields() {
+  var t = window._waTpls[+document.getElementById('wa-tpl-sel').value];
+  document.getElementById('wa-tpl-body').textContent = t.body;
+  var h = ''; for (var i = 1; i <= t.paramCount; i++) h += '<input class="f-inp" data-p="1" placeholder="Value for {{' + i + '}}" style="width:100%;margin-bottom:6px">';
+  document.getElementById('wa-tpl-params').innerHTML = h;
+}
+async function waSendTemplate() {
+  var t = window._waTpls[+document.getElementById('wa-tpl-sel').value], n = window._waActiveNumber;
+  var params = Array.prototype.map.call(document.querySelectorAll('#wa-tpl-params input[data-p]'), function(i) { return i.value.trim(); });
+  if (params.some(function(x) { return !x; })) { toast('Fill in every value', 'error'); return; }
+  var r = await apiFetch('/integrations/whatsapp/conversations/' + encodeURIComponent(n) + '/template', { method: 'POST', body: JSON.stringify({ name: t.name, language: t.language, params: params }) });
+  if (!r.ok) { toast((r.data && r.data.error) || 'Could not send', 'error'); return; }
+  document.getElementById('wa-tpl-modal').remove(); window._waMessages.push(r.data); renderWaMessages(); toast('Template sent', 'success');
+}
+
+// ── My WhatsApp (a staff member's own linked WhatsApp) ────────────────
+async function waPersonalRefresh() {
+  var r = await apiFetch('/integrations/whatsapp/personal/status');
+  window._waPersonal = (r.ok && r.data) || { state: 'none' };
+  var pp = document.getElementById('wa-personal-panel'), te = document.getElementById('wa-thread-empty'), st = window._waPersonal;
+  clearTimeout(window._waPersonalTimer);
+  if (window._waMode !== 'personal') return;
+  if (st.state === 'connected') {
+    if (pp) pp.style.display = 'none'; if (te && !window._waActiveNumber) te.style.display = 'flex';
+    var pb = document.getElementById('wa-personal-bar');
+    if (pb) { pb.style.display = 'flex'; pb.innerHTML = '<span>Linked: +' + escapeHtml(st.number || '') + '</span><a href="#" onclick="waPersonalUnlink();return false" style="color:var(--red)">Unlink</a>'; }
+    apiFetchWhatsAppConversations(); return;
+  }
+  if (te) te.style.display = 'none'; if (!pp) return; pp.style.display = 'flex';
+  var notice = '<div style="max-width:420px;text-align:left;font-size:13px;line-height:1.5">' +
+    '<div style="font-size:16px;font-weight:800;margin-bottom:8px">Link your own WhatsApp</div>' +
+    '<div style="background:#FEF3C7;color:#92400E;border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:10px">' +
+    '<b>Please read.</b> This links your WhatsApp the same way WhatsApp Web does, using an unofficial method. WhatsApp\'s rules do not allow bulk or automated messaging from personal accounts, and accounts that do this can be restricted or banned. RAMS only sends one message at a time, a few per minute, and only to applicants. ' +
+    'Only chats with <b>applicants\' numbers</b> are saved here; family chats, groups and statuses are never stored. Your chats are private to you — other users, admins included, cannot read them. Use at your own risk.</div>';
+  if (!st.available) pp.innerHTML = notice + '<div style="color:var(--red)">Linking is not installed on this server.</div></div>';
+  else if (st.state === 'qr') pp.innerHTML = notice + '<div style="text-align:center"><img src="' + st.qr + '" alt="QR code" style="width:240px;height:240px"><div style="font-size:12px;color:var(--muted);margin-top:6px">On your phone: WhatsApp → Settings → Linked devices → Link a device, then scan this code.</div><button class="btn btn-s btn-sm" style="margin-top:8px" onclick="waPersonalUnlink()">Cancel</button></div></div>';
+  else if (st.state === 'connecting') pp.innerHTML = notice + '<div style="color:var(--muted)">Connecting…</div></div>';
+  else pp.innerHTML = notice + '<label style="display:flex;gap:6px;align-items:flex-start;font-size:12.5px;margin-bottom:10px"><input type="checkbox" id="wa-personal-ack"> <span>I understand and want to link my own WhatsApp.</span></label><button class="btn btn-p" onclick="waPersonalLink()">Show QR code</button></div>';
+  if (st.state === 'qr' || st.state === 'connecting') window._waPersonalTimer = setTimeout(waPersonalRefresh, 2500);
+}
+async function waPersonalLink() {
+  var ack = document.getElementById('wa-personal-ack'); if (!ack || !ack.checked) { toast('Please tick the box to confirm you have read the notice', 'error'); return; }
+  var r = await apiFetch('/integrations/whatsapp/personal/link', { method: 'POST', body: JSON.stringify({ acknowledged: true }) });
+  if (!r.ok) { toast((r.data && r.data.error) || 'Could not start linking', 'error'); return; }
+  setTimeout(waPersonalRefresh, 800);
+}
+async function waPersonalUnlink() {
+  if (!confirm('Unlink your WhatsApp from RAMS? Saved applicant chats stay unless you delete them from your phone link settings.')) return;
+  await apiFetch('/integrations/whatsapp/personal', { method: 'DELETE' });
+  window._waPersonalConvs = []; waPersonalRefresh(); toast('Your WhatsApp was unlinked', 'success');
 }
 
 function waInputKeydown(e) {
@@ -12424,7 +12651,7 @@ async function sendWaMessage() {
   if (btn) btn.disabled = true;
   input.value = '';
   try {
-    var r = await apiFetch('/integrations/whatsapp/conversations/' + encodeURIComponent(window._waActiveNumber) + '/messages', {
+    var r = await apiFetch(_waBase() + '/conversations/' + encodeURIComponent(window._waActiveNumber) + '/messages', {
       method: 'POST', body: JSON.stringify({ text: text }),
     });
     if (!r.ok) {
@@ -12435,7 +12662,7 @@ async function sendWaMessage() {
     window._waMessages.push(r.data);
     renderWaMessages();
     // Update the conversation preview locally rather than waiting on the next poll
-    var conv = (window._waConversations || []).find(function(c){ return c.waNumber === window._waActiveNumber; });
+    var conv = _waVisibleConversations().find(function(c){ return c.waNumber === window._waActiveNumber; });
     if (conv) { conv.lastBody = text; conv.lastDirection = 'outbound'; conv.lastType = 'text'; conv.lastAt = r.data.createdAt; }
     renderWaConversationList();
   } catch (e) {
@@ -12451,9 +12678,10 @@ function startWaPoll() {
   stopWaPoll();
   function _tick() {
     if (document.hidden || !window._ramsSessionToken) { _waPollTimer = setTimeout(_tick, 10000); return; }
-    apiFetchWhatsAppConversations().catch(function(){});
+    _apiFetchWhatsAppConversationsBusiness().catch(function(){});
+    if (window._waMode === 'personal' && window._waPersonal && window._waPersonal.state === 'connected') apiFetchWhatsAppConversations().catch(function(){});
     if (window._waActiveNumber && currentPage === 'whatsapp') {
-      apiFetch('/integrations/whatsapp/conversations/' + encodeURIComponent(window._waActiveNumber) + '/messages').then(function(r) {
+      apiFetch(_waBase() + '/conversations/' + encodeURIComponent(window._waActiveNumber) + '/messages').then(function(r) {
         if (r.ok && Array.isArray(r.data)) { window._waMessages = r.data; renderWaMessages(); }
       }).catch(function(){});
     }
