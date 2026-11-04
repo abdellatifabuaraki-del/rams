@@ -12023,6 +12023,22 @@ async function _chArchiveRoom(on) {
 function _chGoRoom(id) { nav('chat'); var go = function() { if (_chRoom(id)) _chOpen(id); }; if (_ch.loaded) setTimeout(go, 50); else _chLoad().then(go); }
 
 // ── Helpers ───────────────────────────────────────────────────────────
+// Countries that differ only by capitals/spacing ("Saudi Arabia" / "SAUDI ARABIA") are the same country everywhere.
+function _ctryKey(c) { return String(c || '').replace(/\s+/g, ' ').trim().toLowerCase(); }
+function _ctryDedupe(list) {
+  var seen = {};
+  (list || []).forEach(function(c) {
+    var k = _ctryKey(c); if (!k) return;
+    var f = String(c).replace(/\s+/g, ' ').trim(), e = seen[k] || (seen[k] = { forms: {}, n: 0 });
+    e.forms[f] = (e.forms[f] || 0) + 1; e.n++;
+  });
+  return Object.keys(seen).map(function(k) {
+    var fs = Object.keys(seen[k].forms);
+    // prefer a mixed-case spelling over ALL CAPS / all lower, then the most frequent
+    fs.sort(function(a, b) { var ma = (a !== a.toUpperCase() && a !== a.toLowerCase()) ? 1 : 0, mb = (b !== b.toUpperCase() && b !== b.toLowerCase()) ? 1 : 0; return (mb - ma) || (seen[k].forms[b] - seen[k].forms[a]); });
+    return fs[0];
+  }).sort(function(a, b) { return a.toLowerCase().localeCompare(b.toLowerCase()); });
+}
 function stringToColor(str) {
   var colors = ['#5B7FFF','#22C55E','#F59E0B','#EF4444','#8B5CF6','#06B6D4','#EC4899','#10B981'];
   var hash = 0;
@@ -13828,7 +13844,7 @@ function _getFilteredCommissions() {
     if (cm._hideDuplicate) return false; // hide ghost reversed duplicates
     if (fTranche && String(cm.tranche) !== fTranche) return false;
     if (fStatus  && cm.status !== fStatus) return false;
-    if (fCountry && cm.country !== fCountry) return false;
+    if (fCountry && _ctryKey(cm.country) !== _ctryKey(fCountry)) return false;
     if (fFrom || fTo) {
       // Released rows are dated by release; everything else by trigger date
       var d = (cm.status === 'Released' && cm.releaseDate)
@@ -14148,8 +14164,7 @@ function renderCommissions() {
     var coSel = document.getElementById('comm-filter-country');
     if (coSel) {
       var _prevCo = coSel.value || '';
-      var countries = [...new Set(DB.commissions.map(function(cm){ return cm.country; }).filter(Boolean))]
-        .sort(function(a,b){ return a.toLowerCase().localeCompare(b.toLowerCase()); });
+      var countries = _ctryDedupe(DB.commissions.map(function(cm){ return cm.country; }));
       coSel.innerHTML = '<option value="">All Countries</option>' +
         countries.map(function(c){ return '<option value="'+escapeHtml(c)+'">'+escapeHtml(c)+'</option>'; }).join('');
       coSel.value = _prevCo;
