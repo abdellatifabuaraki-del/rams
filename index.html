@@ -10151,7 +10151,7 @@ function _joActions(o, inDetail) {
 function _joCard(o, focusSet) {
   var open = _jo.open[o.order_id] === true || (focusSet && o.positions.some(function(p) { return focusSet[p.id]; }));
   var accent = (_JO_PILL[o.status] || _JO_PILL.Closed)[0];
-  var site = o.on_website ? '<span style="font-size:10.5px;font-weight:700;color:var(--brand);background:var(--brand-l);border-radius:20px;padding:3px 9px" title="Visible on goldenfaith.net right now">🌐 On website</span>'
+  var site = (o.on_website === undefined) ? '' : o.on_website ? '<span style="font-size:10.5px;font-weight:700;color:var(--brand);background:var(--brand-l);border-radius:20px;padding:3px 9px" title="Visible on goldenfaith.net right now">🌐 On website</span>'
     : '<span style="font-size:10.5px;font-weight:700;color:var(--muted);background:var(--s2);border:1px solid var(--border);border-radius:20px;padding:3px 9px" title="' + (o.post_to_website ? 'Switched on, but not shown now (closed, filled or past deadline)' : 'Not shown on goldenfaith.net') + '">' + (o.post_to_website ? '⏸ Not showing' : '🔒 Internal only') + '</span>';
   var rows = o.positions.map(function(p) {
     var pp = p.slots ? Math.min(100, Math.round((p.filled || 0) / p.slots * 100)) : 0;
@@ -11087,6 +11087,7 @@ function renderAnalytics() {
 
 function _anRender(d) {
   var k = d.kpis, money = d.money;
+  ['analytics-agents', 'analytics-dq', 'analytics-backouts'].forEach(function(id) { var el = document.getElementById(id), cd = el && el.closest('.an-sec'); if (cd) cd.style.display = d.viewerScoped ? 'none' : ''; });
   var sub = document.getElementById('analytics-subtitle');
   if (sub) sub.textContent = 'Performance metrics and recruitment insights — ' + d.range.label + ' (' + k.total + ' applicant' + (k.total !== 1 ? 's' : '') + ')' +
     (d.viewerScoped ? ' · limited to your assigned job orders' : '');
