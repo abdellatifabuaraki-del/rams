@@ -21445,6 +21445,11 @@ function renderDrawerAgentPanel(app) {
   var entries  = DB.agentLedger.filter(function(e){ return e.applicantId === app.id; });
   var charged  = entries.filter(function(e){ return e.amount < 0; }).reduce(function(s,e){ return s + Math.abs(e.amount); }, 0);
   var comm     = DB.commissions.find(function(c){ return c.applicantId === app.id; });
+  var commTxt  = (function() {   // every tranche of this worker, each in its own currency
+    var u = 0, ph = 0; DB.commissions.forEach(function(c) { if (c.applicantId !== app.id || c.status === 'Reversed') return; if (c.currency === 'USD') u += c.amount; else ph += c.amount; });
+    var parts = []; if (u) parts.push('$' + u.toLocaleString()); if (ph) parts.push('₱' + ph.toLocaleString());
+    return parts.length ? parts.join(' + ') : '$0';
+  })();
   var risk     = (agent.backouts >= 3 || agent.repatriations >= 2) ? 'High' : agent.backouts >= 1 ? 'Medium' : 'Low';
   var riskC    = risk === 'High' ? 'var(--red)' : risk === 'Medium' ? 'var(--amber)' : 'var(--green)';
   var html = '';
@@ -21467,7 +21472,7 @@ function renderDrawerAgentPanel(app) {
   html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">' +
     '<div style="background:var(--gbg);border:1px solid #86efac;border-radius:8px;padding:12px">' +
       '<div style="font-size:11px;color:var(--muted);margin-bottom:4px">Commission</div>' +
-      '<div style="font-size:16px;font-weight:800;font-family:\'IBM Plex Mono\',monospace;color:var(--green)">' + (comm ? '₱' + comm.amount.toLocaleString() : '₱0') + '</div>' +
+      '<div style="font-size:16px;font-weight:800;font-family:\'IBM Plex Mono\',monospace;color:var(--green)">' + commTxt + '</div>' +
       '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + (comm ? comm.status : 'Not deployed yet') + '</div>' +
     '</div>' +
     '<div style="background:var(--rbg);border:1px solid #fca5a5;border-radius:8px;padding:12px">' +
@@ -21586,7 +21591,7 @@ function renderAgentSummaryInDrawer(app) {
   var ledgerEntries = DB.agentLedger.filter(function(e){ return e.agentId===agent.id && e.applicantId===app.id; });
   var totalCharged  = ledgerEntries.filter(function(e){ return e.amount<0; }).reduce(function(s,e){ return s+Math.abs(e.amount); },0);
   var totalCredit   = ledgerEntries.filter(function(e){ return e.amount>0; }).reduce(function(s,e){ return s+e.amount; },0);
-  var commission    = DB.commissions.find(function(c){ return c.agentId===agent.id && c.applicantId===app.id; });
+  var commissions   = DB.commissions.filter(function(c){ return c.agentId===agent.id && c.applicantId===app.id; }).sort(function(a, b) { return (a.tranche || 0) - (b.tranche || 0); });
   var riskColor     = agent.balance<0?'var(--red)':agent.backouts>=3?'var(--amber)':'var(--green)';
 
   return (
@@ -21617,14 +21622,17 @@ function renderAgentSummaryInDrawer(app) {
           '<div style="font-size:16px;font-weight:800;color:' + (agent.repatriations>0?'var(--red)':'var(--green)') + '">' + agent.repatriations + '</div>' +
         '</div>' +
       '</div>' +
-      (commission ?
-        '<div style="background:' + (commission.status==='Released'?'var(--gbg)':commission.status==='Reversed'?'var(--rbg)':'var(--abg)') +
+      commissions.map(function(commission) {
+        var usd = commission.currency === 'USD';
+        return '<div style="background:' + (commission.status==='Released'?'var(--gbg)':commission.status==='Reversed'?'var(--rbg)':'var(--abg)') +
         ';border:1px solid ' + (commission.status==='Released'?'#86efac':commission.status==='Reversed'?'#fca5a5':'var(--abd)') +
         ';border-radius:8px;padding:10px 12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">' +
-          '<div><div style="font-size:12px;font-weight:700">Commission (' + commission.status + ')</div>' +
+          '<div><div style="font-size:12px;font-weight:700">' + (commission.tranche ? 'T' + commission.tranche + ' ' : '') + 'Commission (' + commission.status + ')</div>' +
           '<div style="font-size:11px;color:var(--muted)">Guarantee ends: ' + (commission.guaranteeEnd||'—') + '</div></div>' +
-          '<div style="font-size:14px;font-weight:800;font-family:\'IBM Plex Mono\',monospace">₱' + commission.amount.toLocaleString() + '</div>' +
-        '</div>' : '') +
+          '<div style="font-size:14px;font-weight:800;font-family:\'IBM Plex Mono\',monospace;text-align:right">' + (usd ? '$' : '₱') + commission.amount.toLocaleString() + ' <span style="font-size:10px;font-weight:600;color:var(--muted)">' + (usd ? 'USD' : 'PHP') + '</span>' +
+          (usd && commission.status==='Released' && commission.phpAmount ? '<div style="font-size:10px;color:var(--muted);font-weight:400">credited ₱' + Math.round(commission.phpAmount).toLocaleString() + '</div>' : '') + '</div>' +
+        '</div>';
+      }).join('') +
       (ledgerEntries.length ?
         '<div style="margin-bottom:10px">' +
           '<div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:6px">TRANSACTIONS FOR THIS APPLICANT</div>' +
