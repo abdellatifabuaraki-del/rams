@@ -5134,9 +5134,9 @@ async function saveViewerScopes() {
   var isLive = window._ramsSessionToken && window._ramsSessionToken !== 'demo';
   if (isLive) {
     Object.keys(viewerScopes).forEach(function(key) {
-      if (key.includes(':chatRooms')) return;
+      if (key.includes(':chatRooms') || key.includes(':allowDm')) return;
       apiFetch('/viewer-scopes', {
-        method:'POST', body: JSON.stringify({ email:key, job_ids:viewerScopes[key]||[], chat_room_ids:viewerScopes[key+':chatRooms']||[] }),
+        method:'POST', body: JSON.stringify({ email:key, job_ids:viewerScopes[key]||[], chat_room_ids:viewerScopes[key+':chatRooms']||[], allow_dm: viewerScopes[key+':allowDm'] === true }),
       }).catch(function(){});
     });
   }
@@ -5153,7 +5153,9 @@ async function loadViewerScopes() {
         var em = (row.email||'').toLowerCase();
         viewerScopes[em] = typeof row.job_ids==='string' ? JSON.parse(row.job_ids||'[]') : (row.job_ids||[]);
         viewerScopes[em+':chatRooms'] = typeof row.chat_room_ids==='string' ? JSON.parse(row.chat_room_ids||'[]') : (row.chat_room_ids||[]);
+        viewerScopes[em+':allowDm'] = row.allow_dm === true;
       });
+      if (typeof applyRBAC === 'function' && getCurrentRole() === 'Viewer') { try { applyRBAC(); } catch (e) {} }
     }
   } catch(e) { console.warn('[viewerScopes] backend fetch failed:', e.message); }
 }
@@ -11469,7 +11471,15 @@ function _chLive() { return typeof _isLiveSession === 'function' && _isLiveSessi
 function _chE(s) { return escapeHtml(String(s === undefined || s === null ? '' : s)); }
 function _chGet(path) { return apiFetch(path + (path.indexOf('?') < 0 ? '?' : '&') + '_=' + Date.now()); }
 function _chCanManage() { return typeof hasPermission === 'function' && hasPermission('Manage Chat Rooms'); }
-function _chCanSend() { return typeof hasPermission === 'function' && hasPermission('Send Chat Messages'); }
+// An employer (viewer) login may message staff directly only when an admin switched that on in its scope.
+function _viewerCanDm() { try { var u = getCurrentUser(); return getCurrentRole() === 'Viewer' && !!u && !!u.email && viewerScopes[String(u.email).toLowerCase() + ':allowDm'] === true; } catch (e) { return false; } }
+function _chCanDm() { return (typeof hasPermission === 'function' && hasPermission('Send Chat Messages')) || _viewerCanDm(); }
+function _chCanSend() {
+  if (typeof hasPermission === 'function' && hasPermission('Send Chat Messages')) return true;
+  if (!_viewerCanDm()) return false;
+  var r = _ch && _ch.cur ? _chRoom(_ch.cur) : null;   // employers: only inside a direct message
+  return !!r && r.kind === 'dm';
+}
 function _chIsMod() { var r = (typeof getCurrentRole === 'function' ? getCurrentRole() : ''); return r === 'Admin' || r === 'Manager' || r === 'Super Admin'; }
 function _chRoom(id) { for (var i = 0; i < _ch.rooms.length; i++) if (_ch.rooms[i].id === id) return _ch.rooms[i]; for (var j = 0; j < _ch.dms.length; j++) if (_ch.dms[j].id === id) return _ch.dms[j]; return null; }
 function _chName(r) { return r ? (r.kind === 'dm' ? (r.peer_name || 'Direct message') : r.name) : ''; }
@@ -11545,9 +11555,9 @@ function renderChatRooms() {
   rl.innerHTML = rooms.map(function(r) { return _chBtn(r, r.id === _ch.cur); }).join('') || '<div style="padding:6px 14px;font-size:12px;color:var(--muted)">' + (_ch.loaded ? 'No channels' : 'Loading…') + '</div>';
   if (_chCanManage()) rl.innerHTML += '<div style="padding:4px 14px"><a href="#" onclick="_chToggleArchived();return false" style="font-size:11px;color:var(--muted)">' + (_ch.showArchived ? 'Hide archived channels' : 'Show archived channels') + '</a></div>';
   dl.innerHTML = dms.map(function(r) { return _chBtn(r, r.id === _ch.cur); }).join('');
-  if (de) de.style.display = (!_ch.dms.length && _ch.loaded && _chCanSend()) ? 'block' : 'none';
+  if (de) de.style.display = (!_ch.dms.length && _ch.loaded && _chCanDm()) ? 'block' : 'none';
   var nb = document.getElementById('btn-new-channel'); if (nb) nb.style.display = _chCanManage() ? '' : 'none';
-  var nd = document.getElementById('btn-new-dm'); if (nd) nd.style.display = _chCanSend() ? '' : 'none';
+  var nd = document.getElementById('btn-new-dm'); if (nd) nd.style.display = _chCanDm() ? '' : 'none';
 }
 function _chToggleArchived() { _ch.showArchived = !_ch.showArchived; _chLoad(); }
 function _updateChatSidebarBadge() {
@@ -21749,6 +21759,8 @@ function _getRolePages(role) {
     var row = PERMISSIONS.find(function(p){ return p[0] === permName; });
     if (row && row[ri + 1] === true) allowed.push(page);
   });
+  // Employer logins whose scope allows direct messages get the chat page
+  if (role === 'Viewer' && allowed.indexOf('chat') === -1 && typeof _viewerCanDm === 'function' && _viewerCanDm()) allowed.push('chat');
   // Employers (viewer logins) with an account page also see their job orders
   if (allowed.indexOf('myaccount') !== -1 && allowed.indexOf('jobs') === -1) allowed.push('jobs');
   // Admin always gets everything regardless
@@ -21876,7 +21888,7 @@ function applyRBAC() {
   if (role === 'Viewer') {
     var newChanBtn = document.getElementById('btn-new-channel');
     if (newChanBtn) newChanBtn.style.display = 'none';
-    document.querySelectorAll('[onclick="openNewDMModal()"]').forEach(function(b){ b.style.display='none'; });
+    if (!_viewerCanDm()) document.querySelectorAll('[onclick="openNewDMModal()"]').forEach(function(b){ b.style.display='none'; });
   }
 
   // 6. If current page is no longer accessible → redirect to dashboard
@@ -22268,6 +22280,7 @@ function openViewerScope(userEmail, userName) {
     }).join('');
   }
   openOverlay('overlay-viewer-scope');
+  var _dmBox = document.getElementById('vs-allow-dm'); if (_dmBox) _dmBox.checked = viewerScopes[_scopingUserEmail + ':allowDm'] === true;
   // Populate chat rooms list
   var roomList = document.getElementById('vs-room-list');
   if (roomList) {
@@ -22322,6 +22335,7 @@ function saveViewerScope() {
   var chatRoomIds = Array.from(checkedRooms).map(function(cb){ return cb.dataset.roomId; });
   viewerScopes[_scopingUserEmail] = jobIds;
   viewerScopes[_scopingUserEmail + ':chatRooms'] = chatRoomIds;
+  viewerScopes[_scopingUserEmail + ':allowDm'] = !!(document.getElementById('vs-allow-dm') || {}).checked;
   // Also store as object for getViewerAllowedRooms
   if (typeof viewerScopes[_scopingUserEmail] === 'object' && !Array.isArray(viewerScopes[_scopingUserEmail])) {
     // already object format
@@ -24077,6 +24091,7 @@ async function loadSharedPermissions() {
       <div style="font-size:12px;font-weight:700;color:var(--muted);margin:16px 0 10px;text-transform:uppercase;letter-spacing:.06em;flex-shrink:0">Allowed Chat Rooms</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:8px;flex-shrink:0">Viewer always has access to #general. Add extra rooms below.</div>
       <div id="vs-room-list" style="display:flex;flex-direction:column;gap:6px;max-height:150px;overflow-y:auto;flex-shrink:0"></div>
+      <label style="display:flex;align-items:flex-start;gap:8px;margin-top:12px;padding:9px 10px;background:var(--s2);border-radius:7px;cursor:pointer;flex-shrink:0"><input type="checkbox" id="vs-allow-dm" style="margin-top:2px"><span style="font-size:13px"><b>Allow direct messages to staff</b><br><span style="font-size:11.5px;color:var(--muted)">The employer can start one-to-one chats with team members. Staff can reply, but cannot start chats with the employer. Channels stay read-only.</span></span></label>
     </div>
     <div class="modal-footer" style="flex-shrink:0;margin:0;padding:16px 0 0">
       <button class="btn btn-ghost" onclick="closeOverlay('overlay-viewer-scope')">Cancel</button>
