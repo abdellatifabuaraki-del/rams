@@ -2530,8 +2530,8 @@ button[disabled][data-rbac-locked] {
           <div class="form-group">
             <label class="form-label">Status</label>
             <select class="form-input" id="a-status">
-              <option>For Selection</option><option>Applied</option><option>Screening</option>
-              <option>Interview</option><option>Selected</option><option>Medical</option>
+              <option>Applied</option><option>Screening</option>
+              <option>Interview</option><option>For Selection</option><option>Selected</option><option>Medical</option>
               <option>OWWA</option><option>Processing</option><option>Visa</option><option>For Booking</option>
               <option>Deployed</option><option>With Complaint</option><option>Backout</option><option>Repatriated</option><option>Rejected</option>
             </select>
@@ -3413,7 +3413,7 @@ function mapApplicant(row) {
     _stageHistory: (function(){
       var s = row.status || 'Applied';
       // Build a minimal history based on the current status position in the pipeline
-      var order = ['For Selection','Applied','Screening','Interview','Selected',
+      var order = ['Applied','Screening','Interview','For Selection','Selected',
                    'Medical','OWWA','Processing','Visa','For Booking','Deployed'];
       var idx = order.indexOf(s);
       // Include all stages up to and including current stage
@@ -6795,7 +6795,7 @@ function switchDrawerTab(tab, btn) {
   }
   if (tab === 'overview') {
     var _isViewer = (typeof getCurrentRole === 'function') && getCurrentRole() === 'Viewer';
-    const stages = ['For Selection','Applied','Screening','Interview','Medical','OWWA','Processing','Visa','For Booking','Deployed'];
+    const stages = ['Applied','Screening','Interview','For Selection','Medical','OWWA','Processing','Visa','For Booking','Deployed'];
     // With Complaint doesn't fit in the linear pipeline — show it as a special state
     const ci = app.status === 'With Complaint' ? -2 : stages.indexOf(app.status);
     // Viewers only see status, medical, position and pipeline — no agent/contact/email
@@ -7286,7 +7286,7 @@ function _dashPaint() {
 // ════════════════════════════════════════════════════════
 // ── Pipeline stages — order is admin-configurable and persisted ────────
 var _DEFAULT_STAGE_ORDER = [
-  'For Selection','Applied','Screening','Interview','Selected',
+  'Applied','Screening','Interview','For Selection','Selected',
   'OWWA','Processing','Visa','For Booking','Deployed',
 ];
 var _STAGE_META = {
@@ -7738,7 +7738,7 @@ function clearFilters() {
 }
 
 // ── INLINE STATUS / MEDICAL EDIT ─────────────────────────────────────
-var _ALL_APP_STATUSES = ['For Selection','Applied','Screening','Interview','Selected',
+var _ALL_APP_STATUSES = ['Applied','Screening','Interview','For Selection','Selected',
   'OWWA','Processing','Visa','For Booking','Deployed','Repatriated','Backout','Rejected','With Complaint'];
 var _ALL_MEDICAL = ['Pending','Passed','Failed','Exempted'];
 
@@ -7748,7 +7748,7 @@ var _ALL_MEDICAL = ['Pending','Passed','Failed','Exempted'];
 // string. Empty = no status filter (show all). A single value behaves exactly
 // like the old single-select, so saved filters from before still load fine.
 // ════════════════════════════════════════════════════════
-var _STATUS_FILTER_OPTS = ['For Selection','Applied','Screening','Interview','Selected',
+var _STATUS_FILTER_OPTS = ['Applied','Screening','Interview','For Selection','Selected',
   'Medical','OWWA','Processing','Visa','For Booking','Deployed','Repatriated','Backout','Rejected','With Complaint'];
 
 function getStatusFilterValues() {
@@ -7868,7 +7868,7 @@ function _inlineSaveStatus(appId, newStatus) {
 // or removed from the list until the server confirms it. Field errors, duplicates and edit conflicts come
 // back from the server and are shown in the form.
 // ════════════════════════════════════════════════════════
-var _AP_STATUSES = ['For Selection', 'Applied', 'Screening', 'Interview', 'Selected', 'Medical', 'OWWA', 'Processing', 'Visa', 'For Booking', 'Deployed', 'With Complaint', 'Backout', 'Repatriated', 'Rejected'];
+var _AP_STATUSES = ['Applied', 'Screening', 'Interview', 'For Selection', 'Selected', 'Medical', 'OWWA', 'Processing', 'Visa', 'For Booking', 'Deployed', 'With Complaint', 'Backout', 'Repatriated', 'Rejected'];
 var _AP_MEDICAL = ['Pending', 'Passed', 'Failed', 'Exempted'];
 var _ap = { q: '', status: '', agent: '', medical: '', employer: '', country: '', category: '', archived: '0', sort: 'created_at', order: 'desc', page: 1,
   data: null, total: 0, masked: false, filters: null, fAt: 0, sel: {}, loading: false, seq: 0, at: 0, err: null, bound: false, restored: false };
@@ -10614,7 +10614,7 @@ function renderAnalyticsLegacy() {
   var total     = apps.length;
   var deployed  = apps.filter(function(a){ return a.status === 'Deployed'; }).length;
   var pipeline  = apps.filter(function(a){
-    return ['For Selection','Applied','Screening','Interview','Medical','OWWA','Processing','Visa','For Booking'].indexOf(a.status) !== -1;
+    return ['Applied','Screening','Interview','For Selection','Medical','OWWA','Processing','Visa','For Booking'].indexOf(a.status) !== -1;
   }).length;
   var backouts    = apps.filter(function(a){ return a.status === 'Backout'; }).length;
   var repatriated = apps.filter(function(a){ return a.status === 'Repatriated'; }).length;
@@ -10896,7 +10896,7 @@ function renderAnalyticsLegacy() {
   // ── Pipeline Funnel, Dwell Time & Drop-off Origin ────────────────────
   var funnelEl = document.getElementById('analytics-funnel');
   if (funnelEl) {
-    var STAGES = ['For Selection','Applied','Screening','Interview','Medical','OWWA','Processing','Visa','For Booking','Deployed'];
+    var STAGES = ['Applied','Screening','Interview','For Selection','Medical','OWWA','Processing','Visa','For Booking','Deployed'];
     var stageIndex = {}; STAGES.forEach(function(s,i){ stageIndex[s] = i; });
 
     var placed = 0, unplaced = 0;
