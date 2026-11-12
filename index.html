@@ -14652,9 +14652,10 @@ async function addLedgerEntry(agentId, type, desc, amount, applicantId, opts) {
   if (!isUUID(agentId)) { var _a = DB.agents.find(function(a) { return a.id === agentId; }); if (_a && isUUID(_a._dbId || _a.id)) agentId = _a._dbId || _a.id; }
   if (!_isLiveSession()) return _addLedgerEntryDemo(agentId, type, desc, amount, applicantId, opts);
   var r = await _acctCall('/agent-ledger', {
-    agent_id: agentId, applicant_id: isUUID(applicantId) ? applicantId : null, type: type, description: desc,
+    agent_id: agentId, applicant_id: isUUID(applicantId) ? applicantId : null, type: type, description: opts.advance ? (opts.advance.desc || desc) : desc,
     amount: amount, entry_date: opts.date || _ymd(new Date()), notes: opts.notes || null, idempotency_key: opts.key || _idemKey(),
     category: opts.category || undefined, override_reason: opts.override_reason || undefined,
+    method: opts.advance ? opts.advance.method : undefined, currency: opts.advance ? opts.advance.currency : undefined, usd_amount: opts.advance && opts.advance.usd ? opts.advance.usd : undefined,
   });
   if (!r.ok && r.httpStatus === 409 && r.data && /debt_limit/.test(String(r.data.error || '')) && !opts.override_reason) {
     if (hasPermission('Manage FX & Funds') || getCurrentRole() === 'Admin') {
@@ -14735,6 +14736,10 @@ async function resetAgentBalanceToZero(agentId) {
   if (typeof renderAgentGrid === 'function' && currentAccTab === 'agents') renderAgentGrid();
 }
 
+function _adjAdvanceUi() {
+  var cat = (document.getElementById('adj-category') || {}).value, type = (document.getElementById('adj-type') || {}).value;
+  var box = document.getElementById('adj-advance-box'); if (box) box.style.display = (cat === 'Advance' && type !== 'credit') ? '' : 'none';
+}
 async function submitAdjustment() {
   if (!hasPermission('Post Ledger Adjustments')) { toast('Your role cannot post adjustments', 'error'); return; }
   var agentId  = (document.getElementById('adj-agent').value || '').trim();
@@ -14751,8 +14756,12 @@ async function submitAdjustment() {
   if (currency === 'USD') { var fx = (DB.officeFunds && DB.officeFunds.fxRate) || 57.5; phpEquiv = Math.round(finalAmt * fx); }
   var fullDesc = desc + (currency === 'USD' ? ' [USD ' + (finalAmt > 0 ? '+' : '') + finalAmt.toFixed(2) + ' @ ₱' + ((DB.officeFunds && DB.officeFunds.fxRate) || 57.5) + ']' : '');
   var ledgerType = ['adjustment', 'penalty', 'bonus'].indexOf(type) !== -1 ? type : 'adjustment';
-  var saved = await addLedgerEntry(agentId, ledgerType, fullDesc, phpEquiv, appId, { date: adjDate, notes: desc, category: (document.getElementById('adj-category') || {}).value || 'Other' });
+  var _cat = (document.getElementById('adj-category') || {}).value || 'Other';
+  var _isAdv = _cat === 'Advance' && finalAmt < 0;   // an advance is cash handed over: the server also takes it out of the office fund
+  var saved = await addLedgerEntry(agentId, ledgerType, fullDesc, phpEquiv, appId, { date: adjDate, notes: desc, category: _cat,
+    advance: _isAdv ? { method: (document.getElementById('adj-method') || {}).value || 'cash', currency: currency, usd: currency === 'USD' ? amount : null, desc: desc } : null });
   if (!saved) return;
+  if (_isAdv) { try { await apiFetchOfficeFunds(); } catch (e) {} }
   var sym = currency === 'PHP' ? '₱' : '$';
   addAudit('CREATE', 'Ledger', 'Manual adjustment: ' + desc + ' (' + sym + amount.toLocaleString() + ' ' + currency + ')');
   toast('Ledger entry posted (' + sym + amount.toLocaleString() + ' ' + currency + ')', 'success');
@@ -15294,6 +15303,9 @@ function openPaymentModal(kind, id) {
   document.getElementById('pay-sub').textContent = sub;
   document.getElementById('pay-amount').value = balance ? balance.toFixed(2) : '';
   document.getElementById('pay-cur').textContent = cur;
+  var _cs = document.getElementById('pay-cur-sel'); if (_cs) { _cs.style.display = kind === 'payout' ? '' : 'none'; _cs.value = 'PHP'; }
+  if (kind === 'payout') _payCtx.phpBalance = balance;
+  _payHint();
   document.getElementById('pay-method').value = 'bank';
   document.getElementById('pay-ref').value = '';
   document.getElementById('pay-notes').value = '';
@@ -15304,6 +15316,25 @@ function openPaymentModal(kind, id) {
   _loadPaymentHistory();
 }
 
+function _payFx() { return parseFloat(DB.officeFunds && DB.officeFunds.fxRate) || 57.5; }
+// Agent payouts can be paid in dollars: the agent's balance stays in pesos, so the dollar amount is converted at the office rate
+function _payCurChange() {
+  var c = _payCtx; if (!c || c.kind !== 'payout') return;
+  var cur = document.getElementById('pay-cur-sel').value; c.currency = cur;
+  c.balance = cur === 'USD' ? Math.floor((c.phpBalance / _payFx()) * 100) / 100 : c.phpBalance;
+  document.getElementById('pay-cur').textContent = cur;
+  document.getElementById('pay-amount').value = c.balance ? c.balance.toFixed(2) : '';
+  _payHint();
+}
+function _payHint() {
+  var c = _payCtx, el = document.getElementById('pay-fx-hint'); if (!c || !el) return;
+  if (c.kind !== 'payout') { el.style.display = 'none'; return; }
+  var a = parseFloat(document.getElementById('pay-amount').value) || 0;
+  el.style.display = '';
+  el.textContent = c.currency === 'USD'
+    ? 'Paid in dollars from the USD cash account · ≈ ₱' + Math.round(a * _payFx()).toLocaleString() + ' debited from the agent at ₱' + _payFx() + ' per $1'
+    : 'Paid in pesos from the PHP cash account';
+}
 async function _loadPaymentHistory() {
   var c = _payCtx; if (!c || !_isLiveSession()) return;
   var q = c.kind === 'invoice' ? 'invoice_id=' : c.kind === 'fee' ? 'fee_id=' : 'agent_id=';
@@ -15352,6 +15383,7 @@ async function submitPayment() {
     amount: amount, method: document.getElementById('pay-method').value, reference: document.getElementById('pay-ref').value.trim(),
     paid_at: document.getElementById('pay-date').value, notes: document.getElementById('pay-notes').value.trim(), idempotency_key: c.key,
   };
+  if (c.kind === 'payout') body.currency = c.currency;
   var path = c.kind === 'invoice' ? '/invoices/' + c.id + '/payments' : c.kind === 'fee' ? '/employer-fees/' + c.id + '/payments' : '/agents/' + c.id + '/payouts';
   var btn = document.getElementById('pay-submit'); if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   try {
@@ -23468,7 +23500,7 @@ async function loadSharedPermissions() {
       <div class="f-row">
         <div class="f-grp">
           <label class="f-lbl">Type <span class="req">*</span></label>
-          <select class="f-inp" id="adj-type">
+          <select class="f-inp" id="adj-type" onchange="_adjAdvanceUi()">
             <option value="credit">Credit (add funds)</option>
             <option value="debit">Debit (charge agent)</option>
             <option value="adjustment">Adjustment</option>
@@ -23478,7 +23510,7 @@ async function loadSharedPermissions() {
         </div>
         <div class="f-grp">
           <label class="f-lbl">Category</label>
-          <select class="f-inp" id="adj-category">
+          <select class="f-inp" id="adj-category" onchange="_adjAdvanceUi()">
             <option value="Other">Other</option><option value="Advance">Advance</option><option value="Penalty">Penalty</option>
             <option value="Bonus">Bonus</option><option value="Correction">Correction</option><option value="Fee">Fee</option><option value="Refund">Refund</option>
           </select>
@@ -23495,6 +23527,12 @@ async function loadSharedPermissions() {
         <label class="f-lbl" id="adj-amount-label">Amount (₱) <span class="req">*</span></label>
         <input class="f-inp" id="adj-amount" type="number" min="0" step="0.01" placeholder="0.00">
         <div id="adj-php-equiv" style="font-size:11px;color:var(--muted);margin-top:4px;display:none"></div>
+      </div>
+      <div id="adj-advance-box" class="f-grp" style="display:none;background:var(--abg);border:1px solid var(--abd);border-radius:8px;padding:10px 12px">
+        <div style="font-size:12px;font-weight:700;margin-bottom:6px">💵 Advance = cash paid out of the office</div>
+        <div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">This is recorded as a payout: it debits the agent <b>and</b> takes the money out of the office fund (in the currency you choose above).</div>
+        <label class="f-lbl">Paid from</label>
+        <select class="f-inp" id="adj-method"><option value="cash">Cash</option><option value="bank">Bank transfer</option><option value="gcash">GCash / e-wallet</option><option value="cheque">Cheque</option><option value="wire">Wire / remittance</option><option value="other">Other</option></select>
       </div>
       <div class="f-grp">
         <label class="f-lbl">Linked Applicant (optional)</label>
@@ -23892,8 +23930,10 @@ async function loadSharedPermissions() {
     <div class="modal-body">
       <div class="f-row">
         <div class="f-grp">
-          <label class="f-lbl">Amount <span class="req">*</span> <span id="pay-cur" style="color:var(--muted);font-weight:600"></span></label>
-          <input class="f-inp" id="pay-amount" type="number" min="0" step="0.01" placeholder="0.00">
+          <label class="f-lbl">Amount <span class="req">*</span> <span id="pay-cur" style="color:var(--muted);font-weight:600"></span>
+            <select id="pay-cur-sel" onchange="_payCurChange()" style="display:none;margin-left:6px;font-size:11.5px;padding:1px 4px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)"><option value="PHP">₱ PHP</option><option value="USD">$ USD</option></select></label>
+          <input class="f-inp" id="pay-amount" type="number" min="0" step="0.01" placeholder="0.00" oninput="_payHint()">
+          <div id="pay-fx-hint" style="font-size:11px;color:var(--muted);margin-top:3px;display:none"></div>
         </div>
         <div class="f-grp">
           <label class="f-lbl">Date <span class="req">*</span></label>
