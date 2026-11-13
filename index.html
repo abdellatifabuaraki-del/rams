@@ -12523,20 +12523,24 @@ function _stEmail() {
   var pill = ok ? (chk ? (chk.ok ? '<span class="pill pill-green">Connected</span>' : '<span class="pill pill-red">Login problem</span>') : '<span class="pill pill-green">Configured</span>') : '<span class="pill pill-red">Not set up</span>';
   var h = head + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><b style="font-size:13.5px">' + E(d.from || 'info@goldenfaith.net') + '</b> ' + pill + '</div>';
   if (chk && !chk.ok) h += '<div style="background:var(--rbg);border:1px solid #fca5a5;color:var(--red);border-radius:8px;padding:9px 12px;font-size:12.5px;margin-bottom:10px">' + E(chk.error || 'The mail server could not be reached') + '</div>';
+  if (chk && chk.ok && chk.note) h += '<div style="background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:12.5px;margin-bottom:10px">' + E(chk.note) + '</div>';
   if (ok) {
-    h += _stRow('Mail server', 'Outgoing (SMTP) server used by the system.', '<code>' + E(d.host) + ':' + E(d.port) + (d.secure ? ' (SSL)' : ' (STARTTLS)') + '</code>') +
-      _stRow('Account', 'The mailbox the system signs in with. The password is stored only on the server and is never shown here.', '<code>' + E(d.user || '') + '</code>') +
+    var viaResend = d.provider === 'resend';
+    h += _stRow('Sending service', viaResend ? 'Mail is sent through Resend over HTTPS (works on every Railway plan). Your key is stored only on the server.' : 'Outgoing (SMTP) server used by the system. The password is stored only on the server.',
+        '<code>' + (viaResend ? 'Resend (api.resend.com)' : E(d.host) + ':' + E(d.port) + (d.secure ? ' (SSL)' : ' (STARTTLS)')) + '</code>') +
+      _stRow('Sent from', 'The address people see.', '<code>' + E(d.from || '') + '</code>') +
+      _stRow('Replies go to', 'Customer replies arrive in this mailbox (your Zoho inbox).', '<code>' + E(d.reply_to || d.user || '') + '</code>') +
       _stRow('Website inquiry alerts', 'New inquiries from goldenfaith.net are e-mailed here.', '<code>' + E(d.inbox || '') + '</code>') +
-      _stRow('Check the connection', 'Logs in to the mail server without sending anything.', '<button class="btn btn-s btn-sm" onclick="_stEmailLoad(true)">Check now</button>') +
+      _stRow('Check the connection', viaResend ? 'Checks the key and that goldenfaith.net is verified in Resend. Sends nothing.' : 'Logs in to the mail server without sending anything.', '<button class="btn btn-s btn-sm" onclick="_stEmailLoad(true)">Check now</button>') +
       _stRow('Send a test e-mail', 'Sends a short test message so you can confirm it arrives.', '<button class="btn btn-p btn-sm" ' + (_stEmailState.busy ? 'disabled' : '') + ' onclick="_stEmailTest()">' + (_stEmailState.busy ? 'Sending…' : 'Send test') + '</button>');
   } else {
     h += '<div style="background:var(--abg);border:1px solid var(--abd);border-radius:10px;padding:12px 14px;font-size:12.5px;line-height:1.6">' +
-      '<b>Finish the connection on Railway</b> (the password must never be typed into RAMS):<ol style="margin:6px 0 0 18px;padding:0">' +
-      '<li>In Zoho Mail: <i>My Account → Security → App Passwords</i> → generate a password named “RAMS”.</li>' +
-      '<li>In Railway → your backend service → <i>Variables</i>, add: <code>SMTP_USER</code> = <code>info@goldenfaith.net</code> and <code>SMTP_PASS</code> = the app password.</li>' +
-      '<li>Optional: <code>SMTP_HOST</code> (default <code>smtp.zoho.com</code>; use <code>smtp.zoho.eu</code> or <code>smtp.zoho.in</code> if your Zoho account is in that region), <code>MAIL_INBOX</code> (who gets website-inquiry alerts).</li>' +
-      '<li>Let Railway redeploy, then come back here and press <b>Check now</b>.</li></ol>' +
-      (d.missing && d.missing.length ? '<div style="margin-top:8px;color:var(--muted)">Still missing: <code>' + d.missing.map(E).join('</code>, <code>') + '</code></div>' : '') + '</div>' +
+      '<b>Finish the connection (recommended: Resend)</b> — Railway blocks normal SMTP on the Free, Trial and Hobby plans, so mail goes out over HTTPS:<ol style="margin:6px 0 0 18px;padding:0">' +
+      '<li>Create a free account at <b>resend.com</b> → <i>Domains</i> → <i>Add domain</i> → <code>goldenfaith.net</code>. Add the DNS records Resend shows at the place that manages goldenfaith.net, then press <i>Verify</i>. (Your Zoho inbox keeps working; Resend only adds records for sending.)</li>' +
+      '<li>Resend → <i>API Keys</i> → create a key named “RAMS” (Sending access) and copy it.</li>' +
+      '<li>Railway → your backend service → <i>Variables</i> → add <code>RESEND_API_KEY</code> = the key. Optional: <code>MAIL_FROM</code> (default <code>Golden Faith &lt;info@goldenfaith.net&gt;</code>), <code>MAIL_REPLY_TO</code>, <code>MAIL_INBOX</code>.</li>' +
+      '<li>After Railway redeploys, come back and press <b>Check now</b>, then <b>Send test</b>.</li></ol>' +
+      '<div style="margin-top:8px;color:var(--muted)">Alternative (Railway Pro plan only): Zoho SMTP with <code>SMTP_USER</code> + <code>SMTP_PASS</code> (a Zoho app password).</div></div>' +
       '<div style="margin-top:10px"><button class="btn btn-s btn-sm" onclick="_stEmailLoad(false)">Re-check</button></div>';
   }
   return h;
