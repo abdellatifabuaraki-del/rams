@@ -8178,6 +8178,7 @@ function _apBind() {
     if (act === 'delete') { deleteApplicantForever(id); return; }
     if (act === 'sel-all-matching') { _apSelectAllMatching(); return; }
     if (act === 'bulk-export') { _apBulkExport(); return; }
+    if (act === 'bulk-email-bio') { bioEmailOpen(Object.keys(_ap.sel), 'full'); return; }
     if (act === 'bulk-archive') { _apBulkArchive(); return; }
     if (act === 'bulk-move') { _apBulkMove(); return; }
     if (act === 'bulk-clear') { clearBulk(); return; }
@@ -8225,6 +8226,7 @@ function updateBulkBar() {
   bar.innerHTML = '<span id="bulk-count-label">' + n + ' selected</span>' +
     (pageAll && _ap.total > n ? '<button ' + btn + ' data-act="sel-all-matching">Select all ' + _ap.total + ' matching</button>' : '') +
     (P.export ? '<button ' + btn + ' data-act="bulk-export">Export selected</button>' : '') +
+    (_isLiveSession() && hasPermission('Print Bio-data') && getCurrentRole() !== 'Viewer' ? '<button ' + btn + ' data-act="bulk-email-bio">✉ E-mail bio-data</button>' : '') +
     (P.move ? '<select id="ap-bulk-to" style="border-radius:6px;padding:3px 6px">' + _AP_STATUSES.map(function(s) { return '<option>' + s + '</option>'; }).join('') + '</select><button ' + btn + ' data-act="bulk-move">Move</button>' : '') +
     (P.archive ? '<button class="btn btn-sm" style="background:rgba(220,38,38,.3);color:#fff;border:none" data-act="bulk-archive">Archive selected</button>' : '') +
     '<button class="btn btn-ghost btn-sm" style="color:rgba(255,255,255,.7)" data-act="bulk-clear">✕ Clear</button>';
@@ -8387,6 +8389,7 @@ function _bioDrawerTab(app, panel) {
     '<button class="btn btn-p btn-sm" onclick="openBiodata(\'' + escapeHtml(uuid) + '\',\'full\')">🖨 Print bio-data (English / عربي)</button>' +
     '<button class="btn btn-s btn-sm" onclick="openBiodata(\'' + escapeHtml(uuid) + '\',\'aamal\')">🖨 Aamal CV (optional)</button>' +
     '<button class="btn btn-s btn-sm" onclick="openBiodata(\'' + escapeHtml(uuid) + '\',\'refaah\')">🖨 Refaah CV (optional)</button>' +
+    (_isLiveSession() && hasPermission('Print Bio-data') && getCurrentRole() !== 'Viewer' ? '<button class="btn btn-s btn-sm" onclick="bioEmailOpen([\'' + escapeHtml(uuid) + '\'],\'full\')">✉ E-mail bio-data (PDF)</button>' : '') +
     (hasPermission('Edit Applicants') && !app.archived ? '<button class="btn btn-ghost btn-sm" onclick="editApplicant(\'' + escapeHtml(uuid) + '\')">✎ Edit bio-data</button>' : '') + '</div>';
   var groups = [['Reference', [['Ref. no.', b.ref_no]]],
     ['Personal', [['Religion', b.religion], ['Place of birth', b.place_of_birth], ['Marital status', b.marital_status], ['Children', [b.children_count, b.children_ages].filter(function(x) { return x != null && x !== ''; }).join(' · ')],
@@ -8402,12 +8405,12 @@ function _bioDrawerTab(app, panel) {
   panel.innerHTML = h;
 }
 // fresh data + photos, then the preview window
-async function openBiodata(id, layout) {
+async function _bioBuildCtx(id, layout) {
   var uuid = _apUuid(id);
-  if (!_apIsUUID(uuid)) { toast('Save the applicant to the server first', 'error'); return; }
+  if (!_apIsUUID(uuid)) { toast('Save the applicant to the server first', 'error'); return null; }
   var r = await apiFetch('/applicants/' + encodeURIComponent(uuid) + '?_=' + Date.now());
-  if (!r.ok || !r.data) { toast(_acctMsg(r, 'Could not load the applicant'), 'error'); return; }
-  if (r.data.pii_masked && !r.data.bio_ok) { toast('Your role cannot print bio-data (personal data is hidden)', 'error'); return; }
+  if (!r.ok || !r.data) { toast(_acctMsg(r, 'Could not load the applicant'), 'error'); return null; }
+  if (r.data.pii_masked && !r.data.bio_ok) { toast('Your role cannot print bio-data (personal data is hidden)', 'error'); return null; }
   var dr = await apiFetch('/documents?applicant_id=' + uuid + '&limit=100&status=&_=' + Date.now());
   var docs = dr.ok && dr.data && Array.isArray(dr.data.data) ? dr.data.data : [];
   var usable = function(d) { return d.has_file && d.preview === 'image' && !d.voided && ['Rejected', 'Superseded'].indexOf(d.status) === -1; };
@@ -8421,8 +8424,11 @@ async function openBiodata(id, layout) {
   var pass = passport && urls[photos.length] && urls[photos.length].url ? urls[photos.length].url : '';
   var prof = {}; try { var pr = await apiFetch('/company-profile'); if (pr.ok && pr.data) prof = pr.data; } catch (e) {}
   if (r.data.contact_masked) r.data.phone = '';   // employers get the bio-data without the worker's direct contact number
-  window._bioCtx = { row: r.data, photos: ph, passport: pass, profile: prof, layout: (layout === 'aamal' || layout === 'refaah') ? layout : 'full', internal: false };
-  _bioShow();
+  return { row: r.data, photos: ph, passport: pass, photoIds: photos.map(function(d) { return d.id; }), passportId: passport ? passport.id : '', profile: prof, layout: (layout === 'aamal' || layout === 'refaah') ? layout : 'full', internal: false };
+}
+async function openBiodata(id, layout) {
+  var c = await _bioBuildCtx(id, layout); if (!c) return;
+  window._bioCtx = c; _bioShow();
 }
 function _bioShow() {
   var C = window._bioCtx; if (!C) return;
@@ -8433,12 +8439,115 @@ function _bioShow() {
     ov.innerHTML = '<div style="background:var(--surface,#fff);border-radius:12px;width:min(900px,100%);flex:1;display:flex;flex-direction:column;overflow:hidden">' +
       '<div style="display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border)"><b style="flex:1">Bio-data preview</b>' +
       '<select id="bio-layout" class="form-input" style="width:auto" onchange="window._bioCtx.layout=this.value;_bioShow()"><option value="full">Standard bio-data (English / Arabic)</option><option value="aamal">Aamal CV (Amal Rehatk)</option><option value="refaah">Refaah CV (Refaah Hasan AlDhafeeri)</option></select>' +
-      (getCurrentRole() === 'Viewer' ? '' : '<label style="font-size:12px;display:flex;gap:4px;align-items:center;white-space:nowrap"><input type="checkbox" id="bio-internal" onchange="window._bioCtx.internal=this.checked;_bioShow()"> Include office details</label>')+'<button class="btn btn-p btn-sm" onclick="_bioPrint()">🖨 Print / Save as PDF</button><button class="btn btn-ghost btn-sm" onclick="_bioClose()">Close</button></div>' +
+      (getCurrentRole() === 'Viewer' ? '' : '<label style="font-size:12px;display:flex;gap:4px;align-items:center;white-space:nowrap"><input type="checkbox" id="bio-internal" onchange="window._bioCtx.internal=this.checked;_bioShow()"> Include office details</label>')+'<button class="btn btn-p btn-sm" onclick="_bioPrint()">🖨 Print / Save as PDF</button>'+(_isLiveSession()&&hasPermission('Print Bio-data')&&getCurrentRole()!=='Viewer'?'<button class="btn btn-s btn-sm" onclick="bioEmailOpen([window._bioCtx.row.id],window._bioCtx.layout)">✉ E-mail</button>':'')+'<button class="btn btn-ghost btn-sm" onclick="_bioClose()">Close</button></div>' +
       '<iframe id="bio-frame" style="flex:1;border:0;background:#e5e7eb"></iframe></div>';
     document.body.appendChild(ov);
   }
   document.getElementById('bio-layout').value = C.layout;
   document.getElementById('bio-frame').srcdoc = _bioHtml(C);
+}
+
+// ── e-mail bio-data as PDF ──────────────────────────────────────────────────
+var _BIO_LIBS = ['https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'];
+var _bioLibP = null;
+function _bioLoadLibs() {
+  if (window.html2canvas && window.jspdf) return Promise.resolve();
+  if (_bioLibP) return _bioLibP;
+  _bioLibP = Promise.all(_BIO_LIBS.map(function(u) { return new Promise(function(ok, no) { var el = document.createElement('script'); el.src = u; el.onload = ok; el.onerror = function() { no(new Error('Could not load the PDF tools — check your internet connection')); }; document.head.appendChild(el); }); }))
+    .then(function() { if (!(window.html2canvas && window.jspdf)) throw new Error('PDF tools did not load'); }, function(e) { _bioLibP = null; throw e; });
+  return _bioLibP;
+}
+// a stored picture as a small JPEG data: URL (fetched through the server so the PDF is not blocked by cross-origin rules)
+async function _bioImgData(docId, maxPx) {
+  if (!docId) return '';
+  var r = await apiFetch('/documents/' + encodeURIComponent(docId) + '/data');
+  if (!r.ok || !r.data || !r.data.data_url) return '';
+  return await new Promise(function(ok) {
+    var im = new Image();
+    im.onload = function() {
+      var k = Math.min(1, maxPx / Math.max(im.naturalWidth, im.naturalHeight)), c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(im.naturalWidth * k)); c.height = Math.max(1, Math.round(im.naturalHeight * k));
+      var x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); x.drawImage(im, 0, 0, c.width, c.height);
+      ok(c.toDataURL('image/jpeg', 0.85));
+    };
+    im.onerror = function() { ok(''); };
+    im.src = r.data.data_url;
+  });
+}
+// the bio-data of one applicant as a PDF (base64). Same layout as the preview; the passport page is added only when asked.
+async function _bioPdf(C, withPassport) {
+  var c2 = Object.assign({}, C);
+  c2.photos = await Promise.all((C.photoIds || []).map(function(id) { return _bioImgData(id, 1000); }));
+  c2.passport = withPassport && C.passportId ? await _bioImgData(C.passportId, 1600) : '';
+  var fr = document.createElement('iframe');
+  fr.style.cssText = 'position:fixed;left:-10000px;top:0;width:820px;height:1200px;border:0;background:#fff';
+  document.body.appendChild(fr);
+  try {
+    await new Promise(function(ok) { fr.onload = ok; fr.srcdoc = _bioHtml(c2); });
+    var d = fr.contentDocument;
+    await Promise.all([].slice.call(d.images).map(function(im) { return im.complete ? 0 : new Promise(function(ok) { im.onload = im.onerror = ok; }); }));
+    var pages = [].slice.call(d.querySelectorAll('.pg')).filter(function(pg) { return withPassport && C.passportId ? true : !pg.classList.contains('brk'); });
+    if (!pages.length) throw new Error('Nothing to put in the PDF');
+    var pdf = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+    for (var i = 0; i < pages.length; i++) {
+      var cv = await window.html2canvas(pages[i], { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false });
+      var w = 210 - 16, hh = cv.height * w / cv.width, maxH = 297 - 16;
+      if (hh > maxH) { w = w * maxH / hh; hh = maxH; }
+      if (i) pdf.addPage();
+      pdf.addImage(cv.toDataURL('image/jpeg', 0.88), 'JPEG', (210 - w) / 2, 8, w, hh);
+    }
+    var out = pdf.output('datauristring'); return out.slice(out.indexOf('base64,') + 7);
+  } finally { fr.remove(); }
+}
+async function bioEmailOpen(ids, layout) {
+  if (!_isLiveSession()) { toast('Sign in to the live system to e-mail bio-data', 'info'); return; }
+  ids = (ids || []).filter(Boolean);
+  if (!ids.length) return;
+  if (ids.length > 10) { toast('Select up to 10 applicants for one e-mail', 'error'); return; }
+  var old = document.getElementById('bio-mail-modal'); if (old) old.remove();
+  var E = escapeHtml, uuids = ids.map(_apUuid);
+  var d = document.createElement('div'); d.id = 'bio-mail-modal'; d.className = 'overlay open';
+  d.style.cssText = 'z-index:10050;display:flex;align-items:center;justify-content:center';
+  var names = ids.map(function(i) { var a = DB.applicants.find(function(x) { return x.id === i || x._dbId === i; }); return a ? (a.name || a.full_name || '') : ''; }).filter(Boolean);
+  d.innerHTML = '<div class="modal" style="max-width:540px;width:94%"><div class="modal-hdr"><div><h2>✉ E-mail bio-data</h2><p>' + (ids.length > 1 ? ids.length + ' applicants · one PDF each' : 'One PDF attached') + ' · sent from the company mailbox</p></div><button class="close-btn" onclick="document.getElementById(\'bio-mail-modal\').remove()">✕</button></div>' +
+    '<div class="modal-body"><div class="f-grp"><label class="f-lbl">To <span class="req">*</span></label><input class="f-inp" id="bm-to" type="email" placeholder="employer@company.com"><div id="bm-hint" style="font-size:11px;color:var(--muted);margin-top:3px"></div></div>' +
+    '<div class="f-grp"><label class="f-lbl">CC (optional)</label><input class="f-inp" id="bm-cc" type="email" placeholder="e.g. your own address"></div>' +
+    '<div class="f-grp"><label class="f-lbl">Layout</label><select class="f-inp" id="bm-layout"><option value="full">Standard bio-data (English / Arabic)</option><option value="aamal">Aamal CV</option><option value="refaah">Refaah CV</option></select></div>' +
+    '<div class="f-grp"><label class="f-lbl">Subject</label><input class="f-inp" id="bm-subj" type="text" value="' + E(ids.length === 1 && names[0] ? 'Bio-data: ' + names[0] : (ids.length > 1 ? ids.length + ' bio-data attached' : 'Bio-data')) + '"></div>' +
+    '<div class="f-grp"><label class="f-lbl">Message</label><textarea class="f-inp" id="bm-msg" rows="4">Dear Sir/Madam,\n\nPlease find attached the bio-data of ' + E(ids.length === 1 && names[0] ? names[0] : 'the candidates') + '.</textarea></div>' +
+    '<label style="font-size:12.5px;display:flex;gap:6px;align-items:center"><input type="checkbox" id="bm-pass"> Also attach the passport copy page</label>' +
+    '<div id="bm-err" style="color:var(--red,#dc2626);font-size:12px;margin-top:8px;display:none"></div></div>' +
+    '<div class="modal-foot"><button class="btn btn-ghost" onclick="document.getElementById(\'bio-mail-modal\').remove()">Cancel</button><button class="btn btn-p" id="bm-send" onclick="_bioEmailSend()">Send</button></div></div>';
+  document.body.appendChild(d);
+  document.getElementById('bm-layout').value = (layout === 'aamal' || layout === 'refaah') ? layout : 'full';
+  d._ids = uuids;
+  var r = await apiFetch('/biodata/recipient?applicant_id=' + encodeURIComponent(uuids[0]) + '&_=' + Date.now());
+  var to = document.getElementById('bm-to');
+  if (r.ok && r.data && r.data.email && to && !to.value) { to.value = r.data.email; var hi = document.getElementById('bm-hint'); if (hi) hi.textContent = 'Filled in from ' + (r.data.employer || 'the employer') + ' — change it if needed.'; }
+}
+async function _bioEmailSend() {
+  var d = document.getElementById('bio-mail-modal'); if (!d) return;
+  var g = function(i) { var el = document.getElementById(i); return el ? el.value.trim() : ''; };
+  var btn = document.getElementById('bm-send'), er = document.getElementById('bm-err');
+  var fail = function(m) { er.textContent = m; er.style.display = 'block'; btn.disabled = false; btn.textContent = 'Send'; };
+  er.style.display = 'none';
+  var to = g('bm-to'); if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) { fail('Enter a valid e-mail address'); return; }
+  var pass = document.getElementById('bm-pass').checked, layout = g('bm-layout'), files = [];
+  btn.disabled = true;
+  try {
+    btn.textContent = 'Loading…'; await _bioLoadLibs();
+    for (var i = 0; i < d._ids.length; i++) {
+      btn.textContent = 'Preparing ' + (i + 1) + '/' + d._ids.length + '…';
+      var C = await _bioBuildCtx(d._ids[i], layout); if (!C) { fail('Could not prepare the bio-data'); return; }
+      files.push({ applicant_id: d._ids[i], content: await _bioPdf(C, pass) });
+    }
+    var total = files.reduce(function(n, f) { return n + f.content.length * 0.75; }, 0);
+    if (total > 6.5 * 1024 * 1024) { fail('The PDFs are too large for one e-mail — send fewer bio-data at a time'); return; }
+    btn.textContent = 'Sending…';
+    var r = await apiFetch('/biodata/email', { method: 'POST', body: JSON.stringify({ to: to, cc: g('bm-cc'), subject: g('bm-subj'), message: document.getElementById('bm-msg').value, files: files }) });
+    if (!r.ok) { fail(_acctMsg(r, 'The e-mail was not sent')); return; }
+    d.remove(); toast('Bio-data e-mailed to ' + to, 'success');
+  } catch (e) { fail(e && e.message ? e.message : 'The e-mail was not sent'); }
 }
 function _bioClose() { var ov = document.getElementById('bio-overlay'); if (ov) ov.remove(); }
 function _bioPrint() { var f = document.getElementById('bio-frame'); if (f && f.contentWindow) { f.contentWindow.focus(); f.contentWindow.print(); } }
