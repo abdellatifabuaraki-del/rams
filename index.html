@@ -18374,6 +18374,13 @@ function _syncEmployerFees() {
   }
 }
 
+// one employer = one name, whatever the capitals, spacing or punctuation
+function _empKey(n) { return String(n == null ? '' : n).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim(); }
+function _empUniq(names, prefer) {
+  var m = {}, pref = {}; (prefer || []).forEach(function(n) { if (n) pref[_empKey(n)] = n; });
+  (names || []).forEach(function(n) { n = String(n || '').replace(/\s+/g, ' ').trim(); if (!n) return; var k = _empKey(n); if (!m[k]) m[k] = pref[k] || n; });
+  return Object.keys(m).map(function(k) { return m[k]; }).sort();
+}
 function renderEmployerFees() {
   if (!DB.employerFees) DB.employerFees = [];
 
@@ -18402,7 +18409,7 @@ function renderEmployerFees() {
   // Populate employer dropdown
   var efEmpSel = document.getElementById('ef-employer-filter');
   if (efEmpSel) {
-    var employers = [...new Set(_feePool.map(function(f){ return f.employer; }).filter(Boolean))].sort();
+    var employers = _empUniq(_feePool.map(function(f){ return f.employer; }));
     var prev = efEmpSel.value;
     efEmpSel.innerHTML = '<option value="">All Employers</option>' +
       employers.map(function(e){ return '<option value="'+e+'"'+(e===prev?' selected':'')+'>'+e+'</option>'; }).join('');
@@ -18412,7 +18419,7 @@ function renderEmployerFees() {
   // Filter
   var fees = _feePool.filter(function(f) {
     if (statusFilter !== 'all' && f.status !== statusFilter) return false;
-    if (employerFilter && f.employer !== employerFilter) return false;
+    if (employerFilter && _empKey(f.employer) !== _empKey(employerFilter)) return false;
     return true;
   }).sort(function(a,b){ return (b.createdAt||'').localeCompare(a.createdAt||''); });
   if (_focusOn('employer_fee')) fees = _focusFilter('employer_fee', _feePool);
@@ -20142,7 +20149,7 @@ function renderInvoices() {
   var invs = _focusOn('invoice') ? _focusFilter('invoice', DB.invoices || []) : (DB.invoices||[]).slice();
   if (!_isLiveSession()) invs.sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
   var canManage = hasPermission('Manage Invoices');
-  var employers = {}; invs.forEach(function(i){ if (i.employer) employers[i.employer] = 1; }); (_invEmployers||[]).forEach(function(e){ employers[e.name] = 1; });
+  var employers = {}; _empUniq(invs.map(function(i){ return i.employer; }).concat((_invEmployers||[]).map(function(e){ return e.name; })), (_invEmployers||[]).map(function(e){ return e.name; })).forEach(function(n){ employers[n] = 1; });
   var opt = function(v, l, cur) { return '<option value="' + escapeHtml(v) + '"' + (cur === v ? ' selected' : '') + '>' + escapeHtml(l) + '</option>'; };
   var header = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div><div style="font-size:15px;font-weight:800">Employer Invoices</div><div style="font-size:12px;color:var(--muted)">' + invs.length + ' shown' + (_invHasMore ? ' (more available)' : '') + '</div></div>' + (canManage ? '<button class="btn btn-p" onclick="openNewInvoice()">+ New Invoice</button>' : '') + '</div>' +
     '<div id="inv-summary"></div>' +
@@ -20198,10 +20205,8 @@ function _invResetForm() {
 function _invFillEmployers(sel) {
   var empSel = document.getElementById('inv-employer'); if (!empSel) return;
   var names = {};
-  (_invEmployers || []).forEach(function(e) { names[e.name] = 1; });
-  (DB.jobs || []).forEach(function(j) { if (j.employer) names[j.employer] = 1; });
-  (DB.invoices || []).forEach(function(i) { if (i.employer) names[i.employer] = 1; });
-  if (sel) names[sel] = 1;
+  var _en = (_invEmployers || []).map(function(e) { return e.name; });
+  _empUniq(_en.concat((DB.jobs || []).map(function(j) { return j.employer; }), (DB.invoices || []).map(function(i) { return i.employer; }), sel ? [sel] : []), _en.concat(sel ? [sel] : [])).forEach(function(n) { names[n] = 1; });
   empSel.innerHTML = '<option value="">— Select employer —</option>' + Object.keys(names).sort().map(function(e) { return '<option value="' + escapeHtml(e) + '">' + escapeHtml(e) + '</option>'; }).join('') + (hasPermission('Manage Invoices') ? '<option value="__new__">＋ New employer…</option>' : '');
   if (sel) empSel.value = sel;
 }
