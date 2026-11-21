@@ -7399,7 +7399,7 @@ function _plFillControls(d) {
   var qv = (document.getElementById('pl-q') || {}).value;
   el.innerHTML =
     sel('employer', 'All employers', F.employers.map(function(x) { return opt(x.value, x.value + ' (' + x.count + ')', f.employer); })) +
-    sel('agent', 'All agents', F.agents.map(function(x) { return opt(x.id, x.name, f.agent); })) +
+    (isViewerRole() ? '' : sel('agent', 'All agents', F.agents.map(function(x) { return opt(x.id, x.name, f.agent); }))) +
     sel('country', 'All countries', F.countries.map(function(x) { return opt(x, x, f.country); })) +
     sel('category', 'All categories', F.categories.map(function(x) { return opt(x, x, f.category); })) +
     sel('medical', 'Any medical', ['Pending', 'Passed', 'Failed', 'Exempted'].map(function(x) { return opt(x, 'Medical: ' + x, f.medical); })) +
@@ -7426,7 +7426,7 @@ function _plCard(c, A) {
     (A.move && !_pl.select ? '<button type="button" data-act="menu" data-id="' + id + '" title="Move to…" aria-label="Move ' + escapeHtml(c.name) + ' to another stage" style="float:right;border:none;background:none;cursor:pointer;color:var(--muted);font-size:15px;line-height:1">⋯</button>' : '') +
     '<div class="kanban-card-name">' + escapeHtml(c.name) + '</div>' +
     '<div class="kanban-card-sub">' + escapeHtml(c.job || '—') + (c.employer ? ' · ' + escapeHtml(c.employer) : '') + '</div>' +
-    '<div class="kanban-card-sub">' + escapeHtml(c.country || '') + (c.agent ? ' · ' + escapeHtml(c.agent) : '') + '</div>' +
+    '<div class="kanban-card-sub">' + escapeHtml(c.country || '') + (c.agent && !isViewerRole() ? ' · ' + escapeHtml(c.agent) : '') + '</div>' +
     '<div class="kanban-card-foot"><span style="font-size:10px;color:var(--dim);font-family:monospace">' + escapeHtml(c.display_id || '') + '</span>' +
     '<span style="display:flex;gap:4px;align-items:center">' + flags + '<span title="Days in this stage" style="font-size:10px;color:' + ageCol + ';font-weight:700">' + age + 'd</span>' + pillHtml(c.medical, 'medical') + '</span></div></div>';
 }
