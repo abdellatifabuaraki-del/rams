@@ -16060,6 +16060,7 @@ function _renderExpensesTabInner() {
     } else {
       if (app) acts += '<button class="btn btn-ghost btn-xs" onclick="openDrawer(\'' + _eh(app.id) + '\')" title="View applicant">👤</button> ';
       if (e.status === 'Pending' && canApprove) acts += '<button class="btn btn-ghost btn-xs" style="color:var(--green)" onclick="approveExpense(\'' + id + '\')" title="Approve">✓</button><button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="rejectExpense(\'' + id + '\')" title="Reject">✗</button> ';
+      if (['Paid', 'Agency'].indexOf(e.status) !== -1 && canApprove) acts += '<button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="rejectExpense(\'' + id + '\')" title="Reject — the amount goes back to the Expenses Fund">✗</button> ';
       if (open && canManage) acts += '<button class="btn btn-s btn-xs" onclick="openExpensePay([\'' + id + '\'])">💵 Pay</button> ';
       if (['Paid', 'Rejected', 'Agency'].indexOf(e.status) !== -1 && canManage) acts += '<button class="btn btn-ghost btn-xs" onclick="reopenExpense(\'' + id + '\')" title="Set back to Pending">↺</button> ';
       if (e.status !== 'Charged' && canManage) acts += '<button class="btn btn-ghost btn-xs" onclick="openExpenseEdit(\'' + id + '\')" title="Edit">✏️</button> ';
@@ -16121,8 +16122,9 @@ async function _expAct(id, body, okMsg) {
 function approveExpense(id) { if (!hasPermission('Approve Expenses')) { toast('Your role cannot approve expenses', 'error'); return; } return _expAct(id, { status: 'Approved' }, 'Expense approved'); }
 function rejectExpense(id) {
   if (!hasPermission('Approve Expenses')) { toast('Your role cannot reject expenses', 'error'); return; }
-  var reason = _askReason('Why is this expense rejected?'); if (!reason) return;
-  return _expAct(id, { status: 'Rejected', reject_reason: reason }, 'Expense rejected');
+  var ex = _expById(id) || {}, wasPaid = ['Paid', 'Agency'].indexOf(ex.status) !== -1;
+  var reason = _askReason(wasPaid ? 'This expense was already paid. Rejecting it returns ' + ((ex.currency === 'USD') ? '$' : '₱') + Number(ex.amount || 0).toLocaleString() + ' to the Expenses Fund. Why is it rejected?' : 'Why is this expense rejected?'); if (!reason) return;
+  return _expAct(id, { status: 'Rejected', reject_reason: reason }, wasPaid ? 'Expense rejected — amount returned to the Expenses Fund' : 'Expense rejected');
 }
 function reopenExpense(id) { if (!confirm('Set this expense back to Pending?')) return; return _expAct(id, { status: 'Pending' }, 'Expense re-opened'); }
 
