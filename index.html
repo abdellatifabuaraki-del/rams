@@ -5898,6 +5898,12 @@ function navigateFromNotif(id) {
         if (nameGuess) app = DB.applicants.find(function(a){ return a.name === nameGuess; });
       }
       if (app) openDrawer(app.id);
+      else if (_isLiveSession() && _apIsUUID(lnk.id)) {
+        apiFetch('/applicants/' + encodeURIComponent(lnk.id) + '?_=' + Date.now()).then(function(r) {
+          var m = r.ok && r.data ? _apCache(r.data) : null;
+          if (m) openDrawer(m.id); else toast('Applicant not found — they may have been removed', 'info');
+        });
+      }
       else toast('Applicant not found — they may have been removed', 'info');
     }, DELAY);
 
@@ -6794,6 +6800,31 @@ function openDrawer(appId, initialTab) {
   document.getElementById('applicant-drawer').classList.add('active');
   switchDrawerTab(initialTab || 'overview', null);
   document.body.style.overflow = 'hidden';
+  _drawerFreshen(app);
+}
+// The list on screen can be older than the server (a status changed by someone else, a notification just arrived):
+// ask the server for this applicant and redraw the drawer if anything shown has changed.
+async function _drawerFreshen(app) {
+  try {
+    if (!_isLiveSession()) return;
+    var uuid = app._dbId || app.id; if (!_apIsUUID(uuid)) return;
+    var r = await apiFetch('/applicants/' + encodeURIComponent(uuid) + '?_=' + Date.now());
+    if (!r.ok || !r.data) return;
+    var sig = function(a) { return [a.status, a.medical, a.job, a.agent, a.name, a.deploymentDate, a.destination, a.archived].join('|'); };
+    var before = sig(app), m = _apCache(r.data); if (!m) return;
+    var cur = currentDrawerApplicant;
+    if (!cur || (cur.id !== m.id && cur._dbId !== m._dbId && cur.id !== uuid)) return;   // the drawer moved on to someone else
+    if (!document.getElementById('applicant-drawer').classList.contains('active')) return;
+    var fresh = DB.applicants.find(function(a) { return a.id === m.id || a._dbId === m._dbId; }) || m;
+    currentDrawerApplicant = fresh;
+    if (sig(fresh) === before) return;
+    var meta = document.getElementById('drawer-meta');
+    if (meta) meta.innerHTML = '<span style="font-family:monospace">' + escapeHtml(fresh.displayId || '') + '</span> · ' + escapeHtml(fresh.job || '') + (fresh.piiMasked ? ' · <span title="Personal data is hidden for your role">🔒</span>' : '');
+    var nm = document.getElementById('drawer-name'); if (nm) nm.textContent = fresh.name;
+    var act = document.querySelector('.dtab.active'), mt = act && (act.getAttribute('onclick') || '').match(/switchDrawerTab\('([^']+)'/);
+    switchDrawerTab(mt ? mt[1] : 'overview', act || null);
+    try { if (typeof _apPaint === 'function' && currentPage === 'applicants') _apPaint(); } catch (e) {}
+  } catch (e) { /* the cached copy stays on screen */ }
 }
 // Alias used by complaints module
 function openApplicantDrawer(appOrId, initialTab) {
