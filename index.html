@@ -14666,6 +14666,76 @@ async function _acctCall(path, body, method) {
   _bustAcctCache();
   return r;
 }
+// ── "Needs attention" review: possible duplicates / unusually large expenses ─────────────────────
+async function openAnomalyReview() {
+  var old = document.getElementById('anom-modal'); if (old) old.remove();
+  var d = document.createElement('div'); d.id = 'anom-modal'; d.className = 'overlay open';
+  d.style.cssText = 'z-index:10040;display:flex;align-items:center;justify-content:center';
+  d.innerHTML = '<div class="modal" style="max-width:880px;width:96%;max-height:90vh;overflow:auto"><div class="modal-hdr" style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:12px"><div><h2 style="margin:0;font-size:18px">Review flagged expenses</h2><p style="margin:2px 0 0;color:var(--muted);font-size:12.5px">Look at each flag, then confirm it is a genuine transaction or remove the extra one. Every decision is recorded in the audit trail.</p></div><button class="close-btn" onclick="document.getElementById(\'anom-modal\').remove()">✕</button></div><div id="anom-body" style="font-size:13px">Loading…</div></div>';
+  d.addEventListener('click', function(e) { if (e.target === d) d.remove(); });
+  document.body.appendChild(d);
+  _anomPaint();
+}
+async function _anomPaint() {
+  var body = document.getElementById('anom-body'); if (!body) return;
+  var r = await apiFetch('/accounting/anomalies?_=' + Date.now());
+  if (!r.ok || !r.data) { body.innerHTML = '<div style="color:var(--red)">' + escapeHtml(_acctMsg(r, 'Could not load the flags')) + '</div>'; return; }
+  var D = r.data, E = escapeHtml, can = !!D.can_review;
+  var canVoid = hasPermission('Delete Expenses'), canRej = hasPermission('Approve Expenses');
+  var row = function(x) {
+    var acts = '';
+    if (can && x.status !== 'Rejected' && x.status !== 'Charged' && canRej) acts += '<button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="_anomAct(\'reject\',\'' + x.id + '\')">Reject</button>';
+    if (can && x.status !== 'Charged' && canVoid) acts += '<button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="_anomAct(\'void\',\'' + x.id + '\')">Void</button>';
+    if (x.status === 'Charged') acts += '<span style="font-size:11px;color:var(--muted)">charged to agent — reverse first</span>';
+    return '<tr><td>' + E(x.expense_date || '') + '<div style="font-size:11px;color:var(--muted)">entered ' + E(String(x.created_at || '').slice(0, 16).replace('T', ' ')) + (x.recorded_by_name ? ' by ' + E(x.recorded_by_name) : '') + '</div></td>' +
+      '<td>' + E(x.description) + '<div style="font-size:11px;color:var(--muted)">' + E(x.category || '') + (x.applicant_name ? ' · ' + E(x.applicant_name) + (x.display_id ? ' (' + E(x.display_id) + ')' : '') : ' · overhead') + '</div></td>' +
+      '<td style="text-align:right;white-space:nowrap;font-weight:700">' + _fmtAmt(x.amount, x.currency) + '</td>' +
+      '<td>' + pillHtml(x.status) + (x.paid_ref ? '<div style="font-size:11px;color:var(--muted)">ref ' + E(x.paid_ref) + '</div>' : '') + '</td>' +
+      '<td style="font-size:12px">' + (x.receipts ? '📎 ' + x.receipts : '<span style="color:var(--muted)">no receipt</span>') + (x.notes ? '<div style="font-size:11px;color:var(--muted)">' + E(String(x.notes).slice(0, 80)) + '</div>' : '') + '</td>' +
+      '<td style="text-align:right;white-space:nowrap">' + acts + '</td></tr>';
+  };
+  var table = function(list) { return '<div style="overflow-x:auto"><table style="width:100%;font-size:12.5px"><thead><tr><th>Date</th><th>Expense</th><th style="text-align:right">Amount</th><th>Status</th><th>Proof</th><th></th></tr></thead><tbody>' + list.map(row).join('') + '</tbody></table></div>'; };
+  var confirmBtn = function(kind, key, label) { return can ? '<button class="btn btn-p btn-sm" onclick="_anomConfirm(\'' + kind + '\',\'' + encodeURIComponent(key) + '\')">✓ ' + label + '</button>' : '<span style="font-size:12px;color:var(--muted)">A senior accountant or admin can confirm this.</span>'; };
+  var h = '';
+  if (!can) h += '<div style="background:var(--abg);border:1px solid var(--amber);border-radius:10px;padding:8px 12px;margin-bottom:12px;font-size:12.5px">You can look at these flags. Confirming or removing them needs a senior accountant, an admin, or the Approve Expenses permission.</div>';
+  h += '<h3 style="font-size:14px;margin:4px 0 8px">Possible duplicates <span style="color:var(--muted);font-weight:500">(' + D.duplicates.length + ')</span></h3>';
+  h += D.duplicates.length ? D.duplicates.map(function(g) {
+    return '<div class="card" style="padding:12px 14px;margin-bottom:10px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px"><div><b>' + E(g.description) + '</b> · ' + _fmtAmt(g.amount, (g.expenses[0] || {}).currency) + ' · ' + E(g.expense_date) + ' — <b>' + g.n + '×</b> the same</div>' + confirmBtn('duplicate', g.key, 'Genuine — keep all ' + g.n) + '</div>' + table(g.expenses) +
+      '<div style="font-size:11.5px;color:var(--muted);margin-top:6px">If one is a mistake, reject or void the extra entry — the flag clears by itself. If they are separate real payments, confirm them as genuine.</div></div>';
+  }).join('') : '<div style="color:var(--green);margin-bottom:12px">✅ No possible duplicates.</div>';
+  h += '<h3 style="font-size:14px;margin:14px 0 8px">Unusually large (unpaid) <span style="color:var(--muted);font-weight:500">(' + D.unusually_large.length + ')</span></h3>';
+  h += D.unusually_large.length ? D.unusually_large.map(function(g) {
+    return '<div class="card" style="padding:12px 14px;margin-bottom:10px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px"><div>Over 3× the usual for <b>' + E(g.expense.category || '') + '</b> (usually about ' + _fmtAmt(g.avg_amt, g.expense.currency) + ')</div>' + confirmBtn('large', g.key, 'Amount is correct') + '</div>' + table([g.expense]) + '</div>';
+  }).join('') : '<div style="color:var(--green);margin-bottom:12px">✅ Nothing unusually large.</div>';
+  if ((D.recent || []).length) {
+    h += '<h3 style="font-size:14px;margin:16px 0 8px">Recent decisions</h3><div style="overflow-x:auto"><table style="width:100%;font-size:12.5px"><thead><tr><th>When</th><th>Flag</th><th>Note</th><th>By</th><th></th></tr></thead><tbody>' +
+      D.recent.map(function(x) { return '<tr><td style="white-space:nowrap">' + E(String(x.reviewed_at || '').slice(0, 16).replace('T', ' ')) + '</td><td>' + E(x.detail || x.key) + '</td><td>' + E(x.note || '') + '</td><td>' + E(x.reviewed_by_name || '') + '</td><td style="text-align:right">' + (can ? '<button class="btn btn-ghost btn-xs" onclick="_anomReopen(\'' + x.kind + '\',\'' + encodeURIComponent(x.key) + '\')">Re-open</button>' : '') + '</td></tr>'; }).join('') + '</tbody></table></div>';
+  }
+  body.innerHTML = h;
+}
+async function _anomConfirm(kind, key) {
+  var note = _askReason(kind === 'duplicate' ? 'Confirm these are separate, genuine transactions.\nWhat makes them genuine? (e.g. "two different medical tests, both receipts checked")' : 'Confirm this amount is correct.\nWhy is it higher than usual?');
+  if (!note) return;
+  var r = await _acctCall('/accounting/anomalies/review', { kind: kind, key: decodeURIComponent(key), decision: 'genuine', note: note });
+  if (!r.ok) { toast(_acctMsg(r, 'Could not save the decision'), 'error'); return; }
+  toast('Confirmed as genuine — recorded in the audit trail', 'success');
+  _anomPaint(); if (typeof renderAccControls === 'function' && currentPage === 'accounting') renderAccControls();
+}
+async function _anomReopen(kind, key) {
+  if (!confirm('Flag this again so it shows under Needs attention?')) return;
+  var r = await _acctCall('/accounting/anomalies/review', { kind: kind, key: decodeURIComponent(key), decision: 'reopen' });
+  if (!r.ok) { toast(_acctMsg(r, 'Could not re-open'), 'error'); return; }
+  _anomPaint(); if (typeof renderAccControls === 'function' && currentPage === 'accounting') renderAccControls();
+}
+async function _anomAct(what, id) {
+  var reason = _askReason(what === 'void' ? 'Void this expense? It stays in the audit history but no longer counts (if it was paid, the amount goes back to the Expenses Fund).' : 'Reject this expense? (if it was paid, the amount goes back to the Expenses Fund)');
+  if (!reason) return;
+  var r = what === 'void' ? await _acctCall('/expenses/' + id + '/void', { reason: reason }) : await _acctCall('/expenses/' + id, { status: 'Rejected', reject_reason: reason }, 'PATCH');
+  if (!r.ok) { toast(_acctMsg(r, 'Could not update the expense'), 'error'); return; }
+  toast(what === 'void' ? 'Expense voided' : 'Expense rejected', 'success');
+  try { if (typeof loadExpensesFromServer === 'function') loadExpensesFromServer(); } catch (e) {}
+  _anomPaint(); if (typeof renderAccControls === 'function' && currentPage === 'accounting') renderAccControls();
+}
 // Ask for a reason; returns '' when cancelled
 function _askReason(title, min) {
   var r = window.prompt(title + '\n\nA reason is required (recorded in the audit trail):', '');
@@ -15708,11 +15778,12 @@ async function renderAccControls() {
     var _go = function(spec) { return ' <a href="#" data-go="' + escapeHtml(JSON.stringify(spec)) + '" style="color:var(--brand);font-weight:700">Show →</a>'; };
     if (al.stale_pending_expenses && al.stale_pending_expenses.length) items.push('<b>' + al.stale_pending_expenses.length + '</b> expense(s) have been Pending for over 14 days' + _go({ entity: 'expense', ids: al.stale_pending_expenses.map(function(x) { return x.id; }), label: 'Expenses pending 14+ days' }));
     var _an = al.expense_anomalies || {};
-    if ((_an.duplicates || []).length) items.push('<b>' + _an.duplicates.length + '</b> possible duplicate expense(s): ' + _an.duplicates.slice(0, 3).map(function(d) { return escapeHtml(d.description) + ' ×' + d.n; }).join(', ') + _go({ entity: 'expense', ids: [].concat.apply([], _an.duplicates.map(function(d) { return d.ids || [d.sample_id]; })), label: 'Possible duplicate expenses' }));
-    if ((_an.unusually_large || []).length) items.push('<b>' + _an.unusually_large.length + '</b> unpaid expense(s) are over 3× the usual for their category: ' + _an.unusually_large.slice(0, 3).map(function(d) { return escapeHtml(d.description) + ' (' + _fmtAmt(d.amount, d.currency) + ')'; }).join(', ') + _go({ entity: 'expense', ids: _an.unusually_large.map(function(x) { return x.id; }), label: 'Unusually large expenses' }));
+    if ((_an.duplicates || []).length) items.push('<b>' + _an.duplicates.length + '</b> possible duplicate expense(s): ' + _an.duplicates.slice(0, 3).map(function(d) { return escapeHtml(d.description) + ' ×' + d.n; }).join(', ') + _go({ entity: 'expense', ids: [].concat.apply([], _an.duplicates.map(function(d) { return d.ids || [d.sample_id]; })), label: 'Possible duplicate expenses' }) + ' <button class="btn btn-s btn-xs" onclick="openAnomalyReview()">Review</button>');
+    if ((_an.unusually_large || []).length) items.push('<b>' + _an.unusually_large.length + '</b> unpaid expense(s) are over 3× the usual for their category: ' + _an.unusually_large.slice(0, 3).map(function(d) { return escapeHtml(d.description) + ' (' + _fmtAmt(d.amount, d.currency) + ')'; }).join(', ') + _go({ entity: 'expense', ids: _an.unusually_large.map(function(x) { return x.id; }), label: 'Unusually large expenses' }) + ' <button class="btn btn-s btn-xs" onclick="openAnomalyReview()">Review</button>');
     if (al.negative_agent_balances && al.negative_agent_balances.length) items.push('<b>' + al.negative_agent_balances.length + '</b> agent(s) owe the agency money: ' + al.negative_agent_balances.slice(0, 5).map(function(a) { return escapeHtml(a.name) + ' ' + _money(a.balance, 'PHP'); }).join(', ') + _go({ entity: 'agent', ids: al.negative_agent_balances.map(function(x) { return x.id; }), label: 'Agents who owe the agency' }));
     if (al.office_negative && (al.office_negative.php || al.office_negative.usd)) items.push('Office fund balance is negative' + (al.office_negative.php ? ' (PHP)' : '') + (al.office_negative.usd ? ' (USD)' : ''));
     if (al.previous_period_open) items.push('Last month (' + al.previous_period + ') is not closed yet');
+    if (_an.confirmed) items.push('<span style="color:var(--muted)">' + _an.confirmed + ' flag(s) already confirmed as genuine</span> <button class="btn btn-ghost btn-xs" onclick="openAnomalyReview()">See decisions</button>');
     if (al.reconciliation_issues) items.push('<b>' + al.reconciliation_issues + '</b> reconciliation issue(s) — see below');
     setTimeout(function() { _focusBindGo(document.getElementById('acc-controls')); }, 0);
     html += card('🔔 Needs attention', items.length ? '<ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.9">' + items.map(function(i) { return '<li>' + i + '</li>'; }).join('') + '</ul>' : '<div style="color:var(--green);font-size:13px">✅ Nothing needs attention right now.</div>');
